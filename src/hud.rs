@@ -94,30 +94,52 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
     let eye = g.player.eye();
 
     // ---- World labels.
+    let mut carrying = [false; CATEGORIES.len()];
+    for &b in &g.held {
+        carrying[g.lib.series[g.lib.books[b as usize].series as usize].category] = true;
+    }
+    // Gather first so guide signs can be drawn last and clear the space under them.
+    let mut plain: Vec<(Pos2, &str, FontId, Color32, Align2)> = Vec::new();
+    let mut guides: Vec<(Pos2, &str, f32, f32)> = Vec::new();
     for l in &g.lib.labels {
         let to_eye = eye - l.pos;
         let d = to_eye.length();
-        if to_eye.dot(l.normal) <= 0.0 {
+        // Signs for categories you carry show from anywhere (dimmed when hidden).
+        let guide = l.is_sign && carrying[l.category];
+        let facing = to_eye.dot(l.normal) > 0.0;
+        if !facing && !guide {
             continue;
         }
         let (max_d, size) = if l.is_sign { (34.0, (22.0 * 6.0 / d.max(3.0)).clamp(10.0, 26.0)) } else { (3.2, 12.0) };
-        if d > max_d {
+        if d > max_d && !guide {
             continue;
         }
-        if !g.line_of_sight(eye, l.pos) {
+        let seen = facing && g.line_of_sight(eye, l.pos);
+        if !seen && !guide {
             continue;
         }
         let Some(p) = project(&vp, l.pos, screen) else { continue };
         let fade = ((max_d - d) / (max_d * 0.3)).clamp(0.0, 1.0);
-        if l.is_sign {
+        if guide {
+            let pulse = (0.8 + 0.2 * (g.time * 3.0).sin()) * if seen { 1.0 } else { 0.55 };
+            guides.push((p, &l.text, size.max(16.0), pulse));
+        } else if l.is_sign {
             let done = g.category_shelved[l.category] == g.lib.category_books[l.category];
             let col = if done { Color32::from_rgb(255, 236, 190) } else { INK };
-            let col = col.gamma_multiply(fade);
-            painter.text(p, Align2::CENTER_CENTER, &l.text, serif(size), col);
+            plain.push((p, &l.text, serif(size), col.gamma_multiply(fade), Align2::CENTER_CENTER));
         } else {
-            let col = DIM.gamma_multiply(fade);
-            painter.text(p + Vec2::new(0.0, 2.0), Align2::CENTER_TOP, &l.text, serif(size), col);
+            plain.push((p + Vec2::new(0.0, 2.0), &l.text, serif(size), DIM.gamma_multiply(fade), Align2::CENTER_TOP));
         }
+    }
+    for (p, text, font, col, align) in plain {
+        if guides.iter().any(|(gp, _, size, _)| (gp.x - p.x).abs() < size * 5.0 && (gp.y - p.y).abs() < size * 1.6) {
+            continue;
+        }
+        painter.text(p, align, text, font, col);
+    }
+    for (p, text, size, pulse) in guides {
+        painter.text(p, Align2::CENTER_CENTER, text, serif(size), GOLD.gamma_multiply(pulse));
+        painter.text(p + Vec2::new(0.0, -size), Align2::CENTER_BOTTOM, "▼", serif(size * 0.6), GOLD.gamma_multiply(pulse));
     }
 
     // ---- Sort Sense marker.

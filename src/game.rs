@@ -1001,6 +1001,15 @@ impl Game {
         self.recompute_heap_bounds();
     }
 
+    /// Look at familiar `i` from a little way off.
+    pub fn script_face_familiar(&mut self, i: usize) {
+        if let Some(f) = self.familiars.get(i) {
+            let p = f.pos;
+            let from = Vec3::new(p.x + 1.2, 0.0, p.z + 1.2);
+            self.look_at(from, p);
+        }
+    }
+
     /// Stand in front of the active book's slot and look at it.
     pub fn script_face_active_slot(&mut self) {
         if let Some(b) = self.active_book() {
@@ -1015,8 +1024,6 @@ impl Game {
 
     pub fn globals(&self, aspect: f32) -> Globals {
         let eye = self.player.eye();
-        let view = Mat4::look_to_rh(eye, self.player.forward(), Vec3::Y);
-        let proj = Mat4::perspective_rh(vfov(aspect), aspect, 0.03, 140.0);
         let mut lights = [GpuLight::default(); MAX_LIGHTS];
         let mut n = 0;
         let mut push = |p: Vec3, r: f32, c: [f32; 3], i: f32| {
@@ -1054,7 +1061,7 @@ impl Game {
         }
         let n = n as f32;
         Globals {
-            view_proj: (proj * view).to_cols_array_2d(),
+            view_proj: self.view_proj(aspect).to_cols_array_2d(),
             cam_pos: [eye.x, eye.y, eye.z, self.time],
             fog: [0.035, 0.03, 0.04, 0.022],
             ambient_top: [0.19, 0.18, 0.24, 0.0],
@@ -1181,18 +1188,22 @@ impl Game {
             dyn_insts.push(Inst::new(p, Quat::IDENTITY, Vec3::new(0.16, 0.28, 0.16), kind::EMISSIVE, [col[0], col[1], col[2], 0.25 + g * 9.0], 0));
         }
 
-        // Familiars: paper cranes.
+        // Familiars: folded-paper cranes with a soft inner glow.
         for f in &self.familiars {
             let heading = if f.vel.length_squared() > 0.01 { f.vel.x.atan2(-f.vel.z) } else { 0.0 };
             let body_rot = Quat::from_rotation_y(-heading);
-            dyn_insts.push(Inst::new(f.pos, body_rot, Vec3::new(0.05, 0.05, 0.3), kind::PAPER, [0.5, 0.6, 0.9, 0.6], 0));
-            let flap = (f.phase).sin() * 0.6;
+            let k = 1.6;
+            let glow = [0.55, 0.65, 1.0, 0.3];
+            dyn_insts.push(Inst::new(f.pos, body_rot, Vec3::new(0.05, 0.05, 0.3) * k, kind::PAPER, glow, 0));
+            let flap = f.phase.sin() * 0.6;
             for s in [-1.0f32, 1.0] {
                 let wing_rot = body_rot * Quat::from_rotation_z(s * (0.2 + flap));
-                let off = body_rot * Quat::from_rotation_z(s * (0.2 + flap)) * Vec3::new(s * 0.14, 0.0, 0.0);
-                dyn_insts.push(Inst::new(f.pos + off, wing_rot, Vec3::new(0.26, 0.008, 0.14), kind::PAPER, [0.5, 0.6, 0.9, 0.4], 0));
+                let off = wing_rot * Vec3::new(s * 0.14 * k, 0.0, 0.0);
+                dyn_insts.push(Inst::new(f.pos + off, wing_rot, Vec3::new(0.26, 0.008, 0.14) * k, kind::PAPER, glow, 0));
             }
-            dyn_insts.push(Inst::new(f.pos + body_rot * Vec3::new(0.0, 0.06, -0.16), body_rot * Quat::from_rotation_x(0.6), Vec3::new(0.025, 0.12, 0.025), kind::PAPER, [0.5, 0.6, 0.9, 0.6], 0));
+            // Neck and tail.
+            dyn_insts.push(Inst::new(f.pos + body_rot * Vec3::new(0.0, 0.06, -0.16) * k, body_rot * Quat::from_rotation_x(0.6), Vec3::new(0.025, 0.12, 0.025) * k, kind::PAPER, glow, 0));
+            dyn_insts.push(Inst::new(f.pos + body_rot * Vec3::new(0.0, 0.05, 0.15) * k, body_rot * Quat::from_rotation_x(-0.7), Vec3::new(0.02, 0.1, 0.02) * k, kind::PAPER, glow, 0));
         }
 
         // Particles and dust motes.
@@ -1333,5 +1344,78 @@ impl Game {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generation_invariants() {
+        let g = Game::new();
+        let lib = &g.lib;
+        // Every book is in exactly one heap, and heaps never mix wings.
+        let mut seen = vec![0u32; lib.books.len()];
+        for h in &lib.heaps {
+            for &b in &h.books {
+                seen[b as usize] += 1;
+                let cat = lib.series[lib.books[b as usize].series as usize].category;
+                assert_eq!(wing_of_category(cat), h.wing);
+            }
+        }
+        assert!(seen.iter().all(|&c| c == 1), "each book must sit in exactly one heap");
+        // Volumes run left to right along each shelf run.
+        for runs in &lib.runs {
+            for row in runs.iter() {
+                for r in row {
+                    let ids = &lib.series_books[r.series as usize];
+                    for w in ids.windows(2) {
+                        let (a, b) = (&lib.books[w[0] as usize], &lib.books[w[1] as usize]);
+                        let f = &lib.faces[a.face as usize];
+                        assert!(b.volume == a.volume + 1);
+                        assert!((b.slot_pos - a.slot_pos).dot(f.right) > 0.0);
+                    }
+                }
+            }
+        }
+        // No pile is unreasonably tall.
+        for b in &lib.books {
+            assert!(b.heap_pos.y < 3.2, "heap book at {:?}", b.heap_pos);
+        }
+        // Generation is deterministic (saves depend on it).
+        let g2 = Game::new();
+        assert_eq!(g2.lib.books.len(), lib.books.len());
+        assert!(g2.lib.books.iter().zip(&lib.books).all(|(a, b)| a.heap_pos == b.heap_pos && a.slot_pos == b.slot_pos));
+    }
+
+    #[test]
+    fn save_round_trip() {
+        let dir = std::env::temp_dir().join(format!("hushfold-test-{}", std::process::id()));
+        // SAFETY: tests in this module don't read the environment concurrently.
+        unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
+        let mut g = Game::new();
+        g.script_fill_category(0, 0.5);
+        // Take a few books from the top of a heap into the arms.
+        let h = g.lib.heaps.iter().position(|h| h.books.len() > 3).unwrap();
+        for _ in 0..3 {
+            let b = g.lib.heaps[h].books.pop().unwrap();
+            g.state[b as usize] = BookState::Held;
+            g.held.push(b);
+        }
+        g.lumens = 42;
+        g.upg[upg_index(Upg::Arms)] = 2;
+        g.save();
+
+        let mut l = Game::new();
+        assert!(l.load());
+        assert_eq!(l.total_shelved(), g.total_shelved());
+        assert_eq!(l.held, g.held);
+        assert_eq!(l.lumens, 42);
+        assert_eq!(l.capacity(), 24);
+        for (a, b) in l.lib.heaps.iter().zip(&g.lib.heaps) {
+            assert_eq!(a.books, b.books);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

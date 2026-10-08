@@ -249,6 +249,7 @@ impl Running {
                 Some("click") => self.input.primary_pressed = true,
                 Some("faceheap") => self.game.script_face_heap(),
                 Some("unveil") => self.game.east_unlocked = true,
+                Some("facefam") => self.game.script_face_familiar(num(1) as usize),
                 Some("fill") => self.game.script_fill_category(num(1) as usize, num(2)),
                 Some("faceslot") => self.game.script_face_active_slot(),
                 Some("cycle") => self.input.cycle += num(1) as i32,

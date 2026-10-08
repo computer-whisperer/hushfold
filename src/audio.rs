@@ -459,3 +459,35 @@ fn music() -> Vec<f32> {
     normalize(&mut out, 0.3);
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn check(name: &str, buf: &[f32]) {
+        assert!(!buf.is_empty(), "{name} is empty");
+        let peak = buf.iter().fold(0.0f32, |a, &x| a.max(x.abs()));
+        assert!(buf.iter().all(|x| x.is_finite()), "{name} has non-finite samples");
+        assert!(peak > 0.01 && peak <= 1.0, "{name} peak {peak}");
+    }
+
+    #[test]
+    fn synthesis_is_sane() {
+        let mut rng = StdRng::seed_from_u64(1);
+        check("thunk", &thunk(&mut rng, 1.0));
+        check("rustle", &rustle(&mut rng));
+        check("whoosh", &whoosh(&mut rng, 1.0));
+        for s in 0..13 {
+            check("chime", &chime(s));
+        }
+        check("fanfare", &fanfare());
+        check("nope", &nope());
+        check("tick", &tick());
+        check("purchase", &purchase());
+        check("ambience", &ambience());
+        let m = music();
+        check("music", &m);
+        // The loop seam should not click: compare the ends.
+        assert!((m[0] - m[m.len() - 1]).abs() < 0.05);
+    }
+}
