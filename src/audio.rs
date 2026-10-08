@@ -126,6 +126,19 @@ impl Audio {
         Audio { sink, banks, last: [None; SFX_COUNT], rng, music_gain, music_on: true }
     }
 
+    /// No output device and no synthesis; every play is a no-op. Used by tests.
+    #[cfg(test)]
+    pub fn silent() -> Self {
+        Audio {
+            sink: None,
+            banks: vec![Vec::new(); SFX_COUNT],
+            last: [None; SFX_COUNT],
+            rng: StdRng::seed_from_u64(0),
+            music_gain: Arc::new(AtomicU32::new(0)),
+            music_on: false,
+        }
+    }
+
     pub fn toggle_music(&mut self) {
         self.music_on = !self.music_on;
         let g: f32 = if self.music_on { 1.0 } else { 0.0 };
@@ -134,12 +147,18 @@ impl Audio {
 
     pub fn play(&mut self, s: Sfx, vol: f32) {
         let n = self.banks[sfx_index(s)].len();
+        if n == 0 {
+            return;
+        }
         let v = self.rng.gen_range(0..n);
         self.play_variant(s, vol, v);
     }
 
     pub fn play_pitched(&mut self, s: Sfx, vol: f32, step: usize) {
         let n = self.banks[sfx_index(s)].len();
+        if n == 0 {
+            return;
+        }
         self.play_variant(s, vol, step.min(n - 1));
     }
 
