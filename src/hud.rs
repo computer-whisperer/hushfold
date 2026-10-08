@@ -12,6 +12,8 @@ pub struct Hud {
     pub show_stats: bool,
     pub fps: f32,
     pub frame_ms: f32,
+    pub cpu_ms: f32,
+    pub render_ms: f32,
 }
 
 pub enum HudAction {
@@ -296,7 +298,14 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
     if hud.show_stats {
         egui::Area::new("perf".into()).anchor(Align2::RIGHT_TOP, [-16.0, 16.0]).interactable(false).show(ctx, |ui| {
             ui.label(
-                RichText::new(format!("{:.0} fps · {:.2} ms · {} instances", hud.fps, hud.frame_ms, g.dyn_insts.len() + g.trans_insts.len()))
+                RichText::new(format!(
+                    "{:.0} fps · {:.2} ms\ncpu {:.2} ms · render {:.2} ms\n{} instances",
+                    hud.fps,
+                    hud.frame_ms,
+                    hud.cpu_ms,
+                    hud.render_ms,
+                    g.dyn_insts.len() + g.trans_insts.len()
+                ))
                     .monospace()
                     .color(INK),
             );

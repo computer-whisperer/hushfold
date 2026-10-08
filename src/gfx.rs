@@ -190,6 +190,10 @@ pub struct Renderer {
     /// When set, the next frame is also written to this PNG path.
     pub capture: Option<std::path::PathBuf>,
     can_capture: bool,
+    /// Diagnostics: time blocked acquiring the swapchain image, and GPU time when `sync_gpu`.
+    pub acquire_ms: f32,
+    pub gpu_ms: f32,
+    pub sync_gpu: bool,
 }
 
 pub struct FrameInput<'a> {
@@ -234,11 +238,13 @@ impl Renderer {
             .copied()
             .find(|f| matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm))
             .unwrap_or(caps.formats[0]);
-        let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
-            wgpu::PresentMode::Mailbox
-        } else {
-            wgpu::PresentMode::Fifo
+        let present_mode = match std::env::var("HUSHFOLD_PRESENT").as_deref() {
+            Ok("immediate") if caps.present_modes.contains(&wgpu::PresentMode::Immediate) => wgpu::PresentMode::Immediate,
+            Ok("fifo") => wgpu::PresentMode::Fifo,
+            _ if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) => wgpu::PresentMode::Mailbox,
+            _ => wgpu::PresentMode::Fifo,
         };
+        eprintln!("hushfold: present mode {present_mode:?} (available {:?})", caps.present_modes);
         let can_capture = caps.usages.contains(wgpu::TextureUsages::COPY_SRC);
         let mut usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
         if can_capture {
@@ -507,6 +513,9 @@ impl Renderer {
             egui,
             capture: None,
             can_capture,
+            acquire_ms: 0.0,
+            gpu_ms: 0.0,
+            sync_gpu: false,
         }
     }
 
@@ -628,6 +637,7 @@ impl Renderer {
     }
 
     pub fn render(&mut self, f: FrameInput) {
+        let t_acquire = std::time::Instant::now();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
@@ -636,6 +646,7 @@ impl Renderer {
             }
             _ => return,
         };
+        self.acquire_ms = t_acquire.elapsed().as_secs_f32() * 1000.0;
         let view = frame.texture.create_view(&Default::default());
 
         self.queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(f.globals));
@@ -798,7 +809,12 @@ impl Renderer {
             );
             (buf, row)
         });
+        let t_gpu = std::time::Instant::now();
         self.queue.submit(extra.into_iter().chain(std::iter::once(enc.finish())));
+        if self.sync_gpu {
+            let _ = self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+            self.gpu_ms = t_gpu.elapsed().as_secs_f32() * 1000.0;
+        }
         if let (Some(path), Some((buf, row))) = (capture, readback) {
             self.save_capture(&path, &buf, row);
         }

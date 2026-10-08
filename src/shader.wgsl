@@ -493,8 +493,8 @@ fn fs_trans(i: VOut) -> @location(0) vec4<f32> {
         let w = i.world;
         let n1 = fbm(vec3<f32>(w.z * 0.6, w.y * 0.4 - t * 0.15, t * 0.1));
         let n2 = fbm(vec3<f32>(w.z * 2.0 + t * 0.2, w.y * 1.5, 3.0));
-        let a = (0.18 + 0.35 * n1 * n2) * g.misc.x;
-        let c = mix(vec3<f32>(0.25, 0.3, 0.9), vec3<f32>(0.8, 0.4, 1.0), n2) * (0.6 + 1.2 * n1);
+        let a = (0.12 + 0.3 * n1 * n2) * g.misc.x;
+        let c = mix(vec3<f32>(0.2, 0.25, 0.7), vec3<f32>(0.55, 0.3, 0.8), n2) * (0.3 + 0.7 * n1);
         return vec4<f32>(c * a, a * 0.7);
     }
     if (i.kind == K_SHAFT) {

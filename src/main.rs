@@ -138,7 +138,9 @@ impl Running {
 
     fn frame(&mut self) {
         let now = Instant::now();
-        let dt = (now - self.last).as_secs_f32().min(0.05);
+        let frame_start = now;
+        // Scripted runs step a fixed 60 Hz so `wait N` means N/60 s of game time.
+        let dt = if self.script.is_some() { 1.0 / 60.0 } else { (now - self.last).as_secs_f32().min(0.05) };
         self.last = now;
         self.fps_acc.0 += dt;
         self.fps_acc.1 += 1;
@@ -201,6 +203,9 @@ impl Running {
         let prims = self.egui_ctx.tessellate(out.shapes, out.pixels_per_point);
 
         let globals = self.game.globals(aspect);
+        let cpu_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
+        let render_start = Instant::now();
+        self.renderer.sync_gpu = self.hud.show_stats;
         self.renderer.render(FrameInput {
             globals: &globals,
             post: PostParams { exposure: 1.15, bloom: 0.55, time: self.game.time, vignette: 0.55 },
@@ -212,6 +217,9 @@ impl Running {
             egui_textures: &out.textures_delta,
             pixels_per_point: out.pixels_per_point,
         });
+        let render_ms = render_start.elapsed().as_secs_f32() * 1000.0;
+        self.hud.cpu_ms = self.hud.cpu_ms * 0.9 + cpu_ms * 0.1;
+        self.hud.render_ms = self.hud.render_ms * 0.9 + render_ms * 0.1;
     }
 }
 
@@ -240,6 +248,7 @@ impl Running {
                 }
                 Some("click") => self.input.primary_pressed = true,
                 Some("faceheap") => self.game.script_face_heap(),
+                Some("unveil") => self.game.east_unlocked = true,
                 Some("fill") => self.game.script_fill_category(num(1) as usize, num(2)),
                 Some("faceslot") => self.game.script_face_active_slot(),
                 Some("cycle") => self.input.cycle += num(1) as i32,
@@ -267,7 +276,12 @@ impl Running {
                     return;
                 }
                 Some("print") => eprintln!(
-                    "script: shelved {} held {} lumens {} aim {:?} pos {:?}",
+                    "script: fps {:.0} cpu {:.2}ms render {:.2}ms (acquire {:.2} gpu {:.2}) | shelved {} held {} lumens {} aim {:?} pos {:?}",
+                    self.hud.fps,
+                    self.hud.cpu_ms,
+                    self.hud.render_ms,
+                    self.renderer.acquire_ms,
+                    self.renderer.gpu_ms,
                     self.game.total_shelved(),
                     self.game.held.len(),
                     self.game.lumens,
@@ -327,7 +341,7 @@ impl ApplicationHandler for App {
             egui_state,
             game,
             audio: Audio::new(),
-            hud: Hud { menu_open: false, show_intro: script.is_none(), show_stats: false, fps: 0.0, frame_ms: 0.0 },
+            hud: Hud { menu_open: false, show_intro: script.is_none(), show_stats: false, fps: 0.0, frame_ms: 0.0, cpu_ms: 0.0, render_ms: 0.0 },
             input: Input::default(),
             keys: HashSet::new(),
             grabbed: false,
@@ -398,8 +412,13 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
-        if let Some(r) = &self.run {
-            r.renderer.window.request_redraw();
+        if let Some(r) = &mut self.run {
+            // Benchmark switch: render as fast as possible instead of on the compositor's frame callback.
+            if std::env::var_os("HUSHFOLD_UNPACED").is_some() {
+                r.frame();
+            } else {
+                r.renderer.window.request_redraw();
+            }
         }
     }
 }

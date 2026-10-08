@@ -564,36 +564,36 @@ impl Library {
                 }
             }
             let (x0, x1) = if wing == 0 { (-HALL_X + 0.8, VEIL_X - 0.8) } else { (VEIL_X + 0.8, HALL_X - 0.8) };
-            let mut tries = 0;
-            while !pool.is_empty() && tries < 20000 {
-                tries += 1;
-                let n = rng.gen_range(50..200).min(pool.len());
-                let radius = 0.4 + 0.06 * (n as f32).sqrt();
-                let p = Vec3::new(rng.gen_range(x0 + radius..x1 - radius), 0.0, rng.gen_range(-HALL_Z + 0.8 + radius..HALL_Z - 0.8 - radius));
-                if !self.heap_spot_ok(p, radius) {
+            // Choose spots first, then share the wing's books evenly between them,
+            // so every pile goes through the settling code and none towers.
+            let spot_r = 1.0;
+            let mut spots: Vec<Vec3> = Vec::new();
+            for _ in 0..20000 {
+                let p = Vec3::new(rng.gen_range(x0 + spot_r..x1 - spot_r), 0.0, rng.gen_range(-HALL_Z + 0.8 + spot_r..HALL_Z - 0.8 - spot_r));
+                if self.heap_spot_ok(p, spot_r, &spots) {
+                    spots.push(p);
+                }
+            }
+            let count = spots.len();
+            for (i, p) in spots.into_iter().enumerate() {
+                let left = count - i;
+                let n = if left == 1 {
+                    pool.len()
+                } else {
+                    ((pool.len() as f32 / left as f32) * rng.gen_range(0.75..1.25)) as usize
+                };
+                let n = n.min(pool.len());
+                if n == 0 {
                     continue;
                 }
+                let radius = 0.4 + 0.06 * (n as f32).sqrt();
                 let books: Vec<u32> = pool.drain(..n).collect();
                 self.add_heap(rng, p, radius, books, wing);
-            }
-            // Anything left joins the smallest heaps of this wing.
-            while let Some(b) = pool.pop() {
-                let h = (0..self.heaps.len())
-                    .filter(|&h| self.heaps[h].wing == wing)
-                    .min_by_key(|&h| self.heaps[h].books.len())
-                    .unwrap();
-                let heap = &mut self.heaps[h];
-                let top = heap.books.last().map(|&t| self.books[t as usize].heap_pos.y).unwrap_or(heap.base.y);
-                heap.books.push(b);
-                let info = &mut self.books[b as usize];
-                info.heap = h as u32;
-                info.heap_pos = heap.base + Vec3::Y * (top - heap.base.y + 0.05);
-                info.heap_rot = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
             }
         }
     }
 
-    fn heap_spot_ok(&self, p: Vec3, r: f32) -> bool {
+    fn heap_spot_ok(&self, p: Vec3, r: f32, spots: &[Vec3]) -> bool {
         for o in &self.obstacles {
             let q = Vec2::new(p.x.clamp(o.min.x, o.max.x), p.z.clamp(o.min.z, o.max.z));
             if q.distance(Vec2::new(p.x, p.z)) < r + 1.1 {
@@ -609,13 +609,8 @@ impl Library {
         if (p.x - VEIL_X).abs() < r + 1.0 {
             return false;
         }
-        for h in &self.heaps {
-            if h.base.y > 0.1 {
-                continue;
-            }
-            if Vec2::new(h.base.x - p.x, h.base.z - p.z).length() < h.radius + r + 1.1 {
-                return false;
-            }
+        if spots.iter().any(|q| Vec2::new(q.x - p.x, q.z - p.z).length() < r * 2.0 + 1.1) {
+            return false;
         }
         true
     }
