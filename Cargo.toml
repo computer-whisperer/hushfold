@@ -1,0 +1,25 @@
+[package]
+name = "hushfold"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wgpu = "29"
+winit = "0.30.13"
+egui = "0.34"
+egui-wgpu = "0.34"
+egui-winit = "0.34"
+glam = { version = "0.30", features = ["bytemuck"] }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+rand = "0.8"
+rodio = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+png = "0.18"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
