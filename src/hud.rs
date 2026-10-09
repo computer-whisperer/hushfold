@@ -261,16 +261,18 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
     let c = Pos2::new(screen.x * 0.5, screen.y * 0.5);
     let mut tip: Option<(String, Color32)> = None;
     match g.aim {
-        Aim::Heap { heap, .. } => {
+        Aim::Loose { book, .. } => {
             painter.circle_stroke(c, 7.0, Stroke::new(1.5_f32, GOLD));
-            let n = g.lib.heaps[heap as usize].books.len();
+            let cat = g.lib.series[g.lib.books[book as usize].series as usize].category;
             let room = g.capacity().saturating_sub(g.held.len());
-            let t = if room == 0 {
-                format!("Heap · {n} books · arms full")
+            let what = if room == 0 {
+                "arms full".to_string()
+            } else if g.level(Upg::Sift) > 0 {
+                "click gather · F sift".to_string()
             } else {
-                format!("Heap · {n} books · gather {}", room.min(n))
+                "click gather".to_string()
             };
-            tip = Some((t, INK));
+            tip = Some((format!("{} · {what}", CATEGORIES[cat].name), INK));
         }
         Aim::Shelf { face, row, run, .. } => {
             let f = &g.lib.faces[face as usize];
@@ -431,7 +433,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                     }
                 } else {
                     ui.label(
-                        RichText::new("Empty-handed. Click a heap to gather books.")
+                        RichText::new("Empty-handed. Click a pile to gather books.")
                             .font(serif(15.0))
                             .color(INK),
                     );
@@ -447,7 +449,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             let m = if hud.settings.music { "on" } else { "off" };
             ui.label(
                 RichText::new(format!(
-                    "Click gather/file · Scroll cycle · Tab Grimoire · M music ({m}) · Esc pause"
+                    "Click gather/file · Hold right toss · Scroll cycle · Tab Grimoire · M music ({m}) · Esc pause"
                 ))
                 .font(serif(12.0))
                 .color(DIM.gamma_multiply(0.8)),
@@ -592,8 +594,8 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 }
                 if fresh {
                     let body = "The night librarian has gone missing, and the library has come undone. \
-                        Thousands of books lie in heaps across the floor.\n\n\
-                        Gather an armful from any heap, then find each book's home: its category's \
+                        Thousands of books lie in piles across the floor.\n\n\
+                        Gather an armful from any pile, then find each book's home: its category's \
                         bookcases (look for the signs), its series (the glowing outlines in its colour), \
                         and its place in the series. Click anywhere on a series' run of outlines to file a volume.\n\n\
                         Every book you file earns a lumen ✦. Spend them in the Grimoire to make the work lighter.";
@@ -625,6 +627,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 ui.label(
                     RichText::new(
                         "WASD walk · Shift hurry · Mouse look · Click gather/file\n\
+                         Hold right mouse to toss a category, release to throw · F sift\n\
                          Scroll or Q/E cycle the active book · Tab Grimoire\n\
                          M music · F11 fullscreen · Esc pause",
                     )

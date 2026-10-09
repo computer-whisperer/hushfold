@@ -1,7 +1,7 @@
 # Hushfold Library
 
 A cozy first-person "tidy the magical library" game in Rust: ~11,700 books in
-~2,300 series lie in heaps across a moonlit hall. Gather armfuls, find each
+~2,300 series lie in piles across a moonlit hall. Gather armfuls, find each
 book's category, series and volume slot, and file it. Lumens earned from filing
 buy abilities that make the work progressively smoother, up to paper-crane
 familiars that shelve on their own.
@@ -22,7 +22,9 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 |---|---|
 | WASD / Shift | walk / hurry |
 | Mouse | look |
-| Left click | gather from a heap · file onto a series run |
+| Left click | gather the top of a pile · file onto a series run |
+| Right mouse (hold) | charge a toss, with an arc showing where it lands; release to throw every book you carry of the active book's category |
+| F | sift: draw only books of the aimed book's category out of a pile (an upgrade) |
 | Scroll, Q / E | cycle the active book |
 | Tab | the Grimoire (upgrades) |
 | M | music on/off (remembered) |
@@ -47,11 +49,15 @@ Windows (delete it to start over); settings sit beside it in `settings.json`.
   you are carrying glow, with a glint sweeping through them. Click anywhere on a
   series' run to file a volume you carry; it flies to its exact slot.
 - The East Wing is veiled until 60% of the West Wing is home.
+- Books are loose: they lie where they fall, piles slump when you pull books
+  out from underneath, and tossed books tumble, bounce off the furniture and
+  land in a scatter. Toss a category's books toward its shelves to pre-sort a
+  pile, then gather the heap you made.
 
 ## Upgrades
 
 Deeper Arms (6 → 96 books), Swift Slippers, Sort Sense (exact-slot pulse and
-compass), Tidy Arms (self-sorting armful, nearest home first), Series Bundle
+compass), Sifting Touch I–II (sift a category out of a pile), Tidy Arms (self-sorting armful, nearest home first), Series Bundle
 (file a whole series at once), Lodestone Grasp (long reach, hold to gather),
 Paper Familiar ×5, Shelving Aura I–III (books drift home as you pass),
 Familiar Wings.
@@ -70,20 +76,27 @@ Familiar Wings.
   `HUSHFOLD_UNPACED=1` renders without compositor pacing for benchmarking.
 - All audio is synthesized at startup (`src/audio.rs`): book thunks, page
   rustles, pentatonic chimes, fire crackle and a generative music-box loop.
-- The world is deterministic from a seed, so a save is just ids and counters.
+- Loose books use semi-physics (`src/loose.rs`): ballistic flight with spin,
+  bounces off furniture, and a 4 cm heightfield that landing books settle onto,
+  sliding downhill while the support is steeper than they rest on.
+- The world is deterministic from a seed, so a save is ids, counters and the
+  poses of books that have moved from where they started.
 
 ## Development
 
-- `cargo test --release`: generation invariants, save round-trip, audio sanity.
+- `cargo test --release`: generation invariants, pile physics (nothing floats or
+  sinks after books are pulled out; tosses land in the open), save round-trip,
+  audio sanity.
 - Scripted runs for screenshots and smoke tests:
   `HUSHFOLD_UNPACED=1 HUSHFOLD_SCRIPT=script.txt HUSHFOLD_SHOT_DIR=out cargo run --release`.
   Scripted runs use a fixed 60 Hz step and never touch the real save. Commands
   (one per line): `pose x y z yaw pitch`, `wait frames`, `walk fwd frames`,
-  `click`, `cycle n`, `faceheap`, `faceslot`, `facefam i`, `fill category fraction`,
+  `click`, `cycle n`, `charge` / `throw` (hold and release the toss), `sift`,
+  `facepile`, `faceslot`, `facefam i`, `lookat x y z dist`, `fill category fraction`,
   `take category n`, `unveil`, `grant lumens`, `buy <Upgrade>`, `menu on|off`,
-  `intro on|off`, `stats on|off`, `shot name`, `print`, `printactive`, `quit`.
-  `fill` and `take` pull books out of the middle of heaps, so use them for shelf
-  shots rather than heap shots.
+  `intro on|off`, `stats on|off`, `shot name`, `print` (includes where a charging
+  toss would land), `printactive`, `quit`. `fill` and `take` pull books from
+  anywhere in the piles, which then settle.
 
 ## License
 

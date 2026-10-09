@@ -21,9 +21,11 @@ pub enum Sfx {
     Tick,
     Purchase,
     Step,
+    /// A tossed book landing.
+    Land,
 }
 
-const SFX_COUNT: usize = 9;
+const SFX_COUNT: usize = 10;
 
 fn sfx_index(s: Sfx) -> usize {
     s as usize
@@ -107,6 +109,7 @@ impl Audio {
             banks[sfx_index(Sfx::Rustle)].push(rustle(&mut rng).into());
             banks[sfx_index(Sfx::Whoosh)].push(whoosh(&mut rng, p).into());
             banks[sfx_index(Sfx::Step)].push(step(&mut rng, p).into());
+            banks[sfx_index(Sfx::Land)].push(land(&mut rng, p).into());
         }
         // Chime variants are indexed by pitch step.
         for step in 0..13 {
@@ -328,6 +331,24 @@ fn rustle(rng: &mut StdRng) -> Vec<f32> {
     }
     normalize(&mut noise, 0.6);
     noise
+}
+
+/// A book landing flat: a papery slap over a dull thud.
+fn land(rng: &mut StdRng, pitch: f32) -> Vec<f32> {
+    let n = secs(0.16);
+    let mut slap: Vec<f32> = (0..n).map(|_| rng.gen_range(-1.0..1.0)).collect();
+    lowpass(&mut slap, 3200.0 * pitch);
+    highpass(&mut slap, 500.0 * pitch);
+    let mut out = vec![0.0; n];
+    let mut ph = 0.0f32;
+    for (i, o) in out.iter_mut().enumerate() {
+        let t = i as f32 / SR as f32;
+        ph += (95.0 + 60.0 * (-t * 50.0).exp()) * pitch / SR as f32;
+        let thud = (ph * std::f32::consts::TAU).sin() * (-t * 45.0).exp();
+        *o = thud * 0.8 + slap[i] * (-t * 70.0).exp() * 1.4;
+    }
+    normalize(&mut out, 0.7);
+    out
 }
 
 fn whoosh(rng: &mut StdRng, pitch: f32) -> Vec<f32> {
@@ -580,6 +601,7 @@ mod tests {
         check("rustle", &rustle(&mut rng));
         check("whoosh", &whoosh(&mut rng, 1.0));
         check("step", &step(&mut rng, 1.0));
+        check("land", &land(&mut rng, 1.0));
         for s in 0..13 {
             check("chime", &chime(s));
         }

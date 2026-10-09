@@ -7,6 +7,7 @@ mod game;
 mod gfx;
 mod hud;
 mod library;
+mod loose;
 mod nav;
 mod platform;
 mod settings;
@@ -83,6 +84,7 @@ impl Running {
             self.grabbed = false;
         }
         self.input.primary_down = false;
+        self.input.toss_down = false;
     }
 
     fn apply_settings(&mut self) {
@@ -150,6 +152,7 @@ impl Running {
                 self.hud.settings.fullscreen = full;
                 self.save_settings();
             }
+            KeyCode::KeyF => self.input.sift_pressed = true,
             KeyCode::KeyQ => self.input.cycle -= 1,
             KeyCode::KeyE => self.input.cycle += 1,
             KeyCode::F12 => {
@@ -199,14 +202,18 @@ impl Running {
             self.input.forward = (k(KeyCode::KeyW) as i32 - k(KeyCode::KeyS) as i32) as f32;
             self.input.strafe = (k(KeyCode::KeyD) as i32 - k(KeyCode::KeyA) as i32) as f32;
             self.input.sprint = k(KeyCode::ShiftLeft) || k(KeyCode::ShiftRight);
+            self.input.sift_down = k(KeyCode::KeyF);
         } else {
             self.input.forward = 0.0;
             self.input.strafe = 0.0;
+            self.input.sift_down = false;
             self.input.look = glam::Vec2::ZERO;
         }
         self.game.update(dt, &self.input, &mut self.audio, playing);
         self.input.look = glam::Vec2::ZERO;
         self.input.primary_pressed = false;
+        self.input.toss_pressed = false;
+        self.input.sift_pressed = false;
         self.input.cycle = 0;
 
         self.save_timer += dt;
@@ -295,7 +302,15 @@ impl Running {
                     return;
                 }
                 Some("click") => self.input.primary_pressed = true,
-                Some("faceheap") => self.game.script_face_heap(),
+                Some("facepile") => self.game.script_face_pile(),
+                // lookat <x> <y> <z> <dist>: stand <dist> m back (toward where you are) and look.
+                Some("lookat") => self
+                    .game
+                    .script_look_at(glam::Vec3::new(num(1), num(2), num(3)), num(4)),
+                // charge … wait N … throw: hold and release the toss button.
+                Some("charge") => self.input.toss_down = true,
+                Some("throw") => self.input.toss_down = false,
+                Some("sift") => self.input.sift_pressed = true,
                 Some("unveil") => self.game.east_unlocked = true,
                 Some("facefam") => self.game.script_face_familiar(num(1) as usize),
                 Some("fill") => self.game.script_fill_category(num(1) as usize, num(2)),
@@ -329,7 +344,7 @@ impl Running {
                     return;
                 }
                 Some("print") => eprintln!(
-                    "script: fps {:.0} cpu {:.2}ms render {:.2}ms (acquire {:.2} gpu {:.2}) | shelved {} held {} lumens {} aim {:?} pos {:?}",
+                    "script: fps {:.0} cpu {:.2}ms render {:.2}ms (acquire {:.2} gpu {:.2}) | shelved {} held {} lumens {} aim {:?} pos {:?} toss lands {:?}",
                     self.hud.fps,
                     self.hud.cpu_ms,
                     self.hud.render_ms,
@@ -339,7 +354,8 @@ impl Running {
                     self.game.held.len(),
                     self.game.lumens,
                     self.game.aim,
-                    self.game.player.pos
+                    self.game.player.pos,
+                    self.game.toss_land
                 ),
                 Some("printactive") => {
                     if let Some(b) = self.game.active_book() {
@@ -403,10 +419,9 @@ impl ApplicationHandler for App {
         let loaded = script.is_none() && game.load();
         game.persist = script.is_none();
         eprintln!(
-            "hushfold: {} books in {} series, {} heaps, generated in {:.0} ms{}",
+            "hushfold: {} books in {} series, generated in {:.0} ms{}",
             game.lib.books.len(),
             game.lib.series.len(),
-            game.lib.heaps.len(),
             t0.elapsed().as_secs_f32() * 1000.0,
             if loaded { " (save loaded)" } else { "" }
         );
@@ -481,6 +496,8 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(s) => r.renderer.resize(s.width, s.height),
             WindowEvent::RedrawRequested => r.frame(),
             WindowEvent::Focused(false) => {
+                // A release that happens in another window never arrives.
+                r.input.toss_down = false;
                 if r.grabbed {
                     r.set_grab(false);
                     r.hud.show_intro = true;
@@ -506,6 +523,16 @@ impl ApplicationHandler for App {
                 } else if pressed && !consumed && !r.hud.menu_open && !r.hud.show_intro {
                     r.set_grab(true);
                 }
+            }
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Right,
+                ..
+            } => {
+                let pressed = state == ElementState::Pressed && r.grabbed;
+                r.input.toss_down = pressed;
+                // Latched so a click shorter than a frame still tosses.
+                r.input.toss_pressed |= pressed;
             }
             WindowEvent::MouseWheel { delta, .. } if r.playing() => {
                 // One book per wheel notch (a line) or per 40 px of touchpad travel. Smooth

@@ -6,7 +6,7 @@ draw, re-uploaded each frame; nothing scales per-object on the CPU beyond a copy
 
 ## Fantasy
 A moonlit, dust-mote library. Two wings of freestanding double-sided bookcases
-around a central reading room with a chandelier. Heaps of books everywhere.
+around a central reading room with a chandelier. Piles of books everywhere.
 Each category's lantern lights up (in its colour) when the category is complete,
 so the hall gets visibly brighter and more colourful as you sort.
 
@@ -23,9 +23,31 @@ so the hall gets visibly brighter and more colourful as you sort.
   The active book's slot (Sort Sense) pulses as a filled block; the active book
   in hand carries a bright rim.
 
+## Loose books
+Every book not shelved or carried is loose (`src/loose.rs`), simulated with
+semi-physics rather than rigid bodies (see SCALING.md for why):
+- A 4 cm heightfield holds the floor, furniture tops (furniture is a solid
+  column) and every resting book's top; a 0.5 m bucket grid indexes resting books
+  for picking and gathering.
+- A resting book is a footprint with a planar underside. Dropping one fits it
+  to the cells under it and, while the support is steeper than the angle of
+  repose (0.6), steps it downhill, so piles spread into natural mounds.
+- Removing books lifts out everything above them (on any heightfield cell both
+  cover), rebuilds the heightfield there and re-drops the lot, each after the
+  books below it. A book whose whole underside still fits keeps its exact pose.
+- Thrown books fly with gravity and spin, bounce off walls, ceiling, the
+  closed veil and furniture; furniture taller than 0.9 m sheds books off its top
+  (tables hold them). They land on the heightfield and skid a little.
+- Generation picks drop points per pile; dropping them through the same code
+  makes the starting piles.
+
 ## Verbs
-- Click heap: grab the top of the heap up to arm capacity (heaps are stacks,
-  so removal never leaves floating books).
+- Click a pile: gather the topmost books within a radius of the aim point, up
+  to arm capacity; whatever lay on them falls.
+- Hold right mouse: charge a toss (the arc and landing ring show where it goes);
+  release to throw every held book of the active book's category as a stream.
+- F (Sifting Touch): draw books of the aimed book's category out of the pile
+  around the aim point, from any depth.
 - Click shelf: aiming anywhere on a series run places a held book of that series
   into its exact slot (forgiving aim; the skill is finding the run).
 - Scroll/Q/E: cycle the active book (HUD shows its category/series/volume).
@@ -34,7 +56,8 @@ so the hall gets visibly brighter and more colourful as you sort.
 ## Progression (Lumens ✦)
 1 per book, +volumes on series completion, +100 per category.
 Upgrades: Deeper Arms I–IV, Swift Slippers I–II, Sort Sense (compass + exact-slot
-pulse), Series Bundle (place whole series at once), Tidy Arms (stack sorted by
+pulse), Sifting Touch I–II (sift a category out of a pile; 0.9 / 1.8 m),
+Series Bundle (place whole series at once), Tidy Arms (stack sorted by
 slot, active = nearest target), Lodestone Grasp (long reach, hold to pull),
 Shelving Aura I–III (books float to nearby slots on their own),
 Paper Familiars ×5 (autonomous helpers), Familiar Wings I–II.
@@ -51,12 +74,14 @@ East wing is veiled until 60% of the West wing is sorted.
 
 Pacing is tuned with two ignored tests (`--ignored --nocapture`): `familiar_throughput`
 runs the real familiar code headless to measure books/s per Wings level, and
-`pacing_simulation` plays an idealised bot (nearest heap, nearest slot, cheapest
-upgrade) using those rates. As of 0.1.1 the bot finishes in ~1.4 h, the East Wing
-takes the last ~30 min, and the last upgrade is affordable at ~86% shelved. The
-late-game engine is Deeper Arms IV × Shelving Aura, so the aura's books-per-second
-rate is the main dial; in 0.1.0 (6/15/40 books/s, 11 m at III) the bot finished in
-~1.0 h with the whole East Wing in ~16 min.
+`pacing_simulation` plays an idealised bot (the pile with the least walking per
+book, clicking until its arms are full, nearest slot, cheapest upgrade; it never
+tosses or sifts) using those rates. The late-game engine is Deeper Arms IV ×
+Shelving Aura, so the aura's books-per-second rate is the main dial. History:
+- 0.1.0 (aura 6/15/40 books/s, 11 m at III): ~1.0 h, the whole East Wing in ~16 min.
+- 0.1.1: ~1.4 h, the East Wing the last ~30 min, last upgrade affordable at ~86% shelved.
+- Loose piles: ~1.5 h, the East Wing still the last ~30 min, last upgrade at ~92%.
+  Piles now spread, and the bot walks to the strays at their edges.
 
 ## Rendering
 Box-only geometry, per-instance `kind` selects procedural material in WGSL
@@ -66,5 +91,8 @@ Box-only geometry, per-instance `kind` selects procedural material in WGSL
 
 ## Persistence
 Deterministic world from a seed; save = seed + shelved/held/in-flight ids +
-lumens + upgrades, JSON in $XDG_DATA_HOME/hushfold/save.json (%APPDATA% on
-Windows), autosaved. Settings live beside it in settings.json.
+lumens + upgrade levels by name + the poses of loose books that moved from where
+they were generated (books in the air are saved where they are and fall on
+load), JSON in $XDG_DATA_HOME/hushfold/save.json (%APPDATA% on Windows),
+autosaved. 0.1.x saves load: their piles keep the generated shape and fall into
+the gaps left by books already taken. Settings live beside it in settings.json.

@@ -4,10 +4,12 @@ use crate::audio::{Audio, Sfx};
 use crate::catalog::{self, CATEGORIES};
 use crate::gfx::{Globals, GpuLight, Inst, MAX_LIGHTS, kind};
 use crate::library::*;
+use crate::loose::{Loose, Rest};
 use crate::nav::{Nav, Route};
 use glam::{Mat4, Quat, Vec2, Vec3};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::f32::consts::PI;
 
 pub const SEED: u64 = 0x4855_5348_464f_4c44;
@@ -19,6 +21,12 @@ const HAND_VISIBLE: usize = 8;
 const AURA_LEVELS: [(f32, f32); 4] = [(0.0, 0.0), (3.0, 2.0), (4.5, 4.0), (6.0, 8.0)];
 /// Familiar Wings by level: (flight speed in m/s, books carried).
 const WINGS_LEVELS: [(f32, usize); 3] = [(2.6, 2), (3.8, 3), (5.0, 5)];
+/// Sifting Touch by level: radius in metres.
+const SIFT_RADIUS: [f32; 3] = [0.0, 0.9, 1.8];
+/// Seconds to charge a toss fully.
+const TOSS_CHARGE: f32 = 0.9;
+/// Toss speed in m/s, uncharged and fully charged.
+const TOSS_SPEED: (f32, f32) = (3.0, 12.0);
 
 /// Vertical FOV: `v_deg` on wide windows, widened on narrow ones so the horizontal
 /// FOV never drops below `v_deg` × 85/70 (85° at the default 70°).
@@ -35,6 +43,7 @@ pub enum Upg {
     Arms,
     Slippers,
     SortSense,
+    Sift,
     Bundle,
     Tidy,
     Lodestone,
@@ -43,10 +52,11 @@ pub enum Upg {
     Wings,
 }
 
-pub const UPGRADES: [Upg; 9] = [
+pub const UPGRADES: [Upg; 10] = [
     Upg::Arms,
     Upg::Slippers,
     Upg::SortSense,
+    Upg::Sift,
     Upg::Tidy,
     Upg::Bundle,
     Upg::Lodestone,
@@ -78,6 +88,11 @@ pub fn upg_def(u: Upg) -> UpgDef {
             blurb: "The active book's exact slot pulses, and a compass points the way.",
             costs: &[60],
         },
+        Upg::Sift => UpgDef {
+            name: "Sifting Touch",
+            blurb: "Press F at a pile to draw out only books of the category you aim at.",
+            costs: &[40, 400],
+        },
         Upg::Tidy => UpgDef {
             name: "Tidy Arms",
             blurb: "Your armful sorts itself, and the book nearest its home rises to the top.",
@@ -90,7 +105,7 @@ pub fn upg_def(u: Upg) -> UpgDef {
         },
         Upg::Lodestone => UpgDef {
             name: "Lodestone Grasp",
-            blurb: "Gather from heaps at a distance; hold the button to keep gathering.",
+            blurb: "Gather from piles at a distance; hold the button to keep gathering.",
             costs: &[300],
         },
         Upg::Familiar => UpgDef {
@@ -115,7 +130,8 @@ pub fn upg_def(u: Upg) -> UpgDef {
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum BookState {
-    Heap,
+    /// Lying in a pile, or in the air after a toss.
+    Loose,
     /// In the player's arms (possibly still flying there).
     Held,
     /// Flying to its slot.
@@ -144,7 +160,8 @@ struct Flight {
 #[derive(Clone, Copy, PartialEq)]
 enum FamTask {
     Idle,
-    ToHeap(u32),
+    /// To the top of a pile.
+    ToPile(Vec3),
     ToSlot,
 }
 
@@ -176,8 +193,10 @@ pub struct Toast {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Aim {
     None,
-    Heap {
-        heap: u32,
+    /// A loose book; `point` is where the ray meets it.
+    Loose {
+        book: u32,
+        point: Vec3,
         dist: f32,
     },
     Shelf {
@@ -196,6 +215,12 @@ pub struct Input {
     pub look: Vec2,
     pub primary_down: bool,
     pub primary_pressed: bool,
+    /// Held to charge a toss; released to throw.
+    pub toss_down: bool,
+    /// Pressed this frame (a press and release within one frame still tosses).
+    pub toss_pressed: bool,
+    pub sift_down: bool,
+    pub sift_pressed: bool,
     pub cycle: i32,
 }
 
@@ -228,6 +253,11 @@ struct SaveData {
     seed: u64,
     lumens: u64,
     earned: u64,
+    /// Upgrade levels by name.
+    #[serde(default)]
+    levels: BTreeMap<String, u32>,
+    /// 0.1.x saves: levels by position in the 0.1 upgrade order.
+    #[serde(default, skip_serializing)]
     upgrades: Vec<u32>,
     shelved: Vec<u32>,
     /// Books mid-flight to a shelf or carried by a familiar; they fly home on load
@@ -238,7 +268,27 @@ struct SaveData {
     player: [f32; 5],
     east_unlocked: bool,
     play_time: f64,
+    /// Loose books that left their generated pose: (book, [x, y, z, ux, uz, su, sv]).
+    /// Absent in 0.1.x saves, whose piles re-settle around the books taken from them.
+    #[serde(default)]
+    loose: Option<Vec<(u32, [f32; 7])>>,
+    /// Books in the air: (book, position). They fall from there on load.
+    #[serde(default)]
+    airborne: Vec<(u32, [f32; 3])>,
 }
+
+/// The 0.1.x upgrade order, for reading old saves.
+const LEGACY_ORDER: [Upg; 9] = [
+    Upg::Arms,
+    Upg::Slippers,
+    Upg::SortSense,
+    Upg::Tidy,
+    Upg::Bundle,
+    Upg::Lodestone,
+    Upg::Familiar,
+    Upg::Aura,
+    Upg::Wings,
+];
 
 pub struct Game {
     pub lib: Library,
@@ -269,6 +319,13 @@ pub struct Game {
     pub time: f32,
     pub play_time: f64,
     grab_cooldown: f32,
+    sift_cooldown: f32,
+    /// Toss charge, 0..1, while the toss button is held.
+    pub toss_charge: f32,
+    toss_was_down: bool,
+    /// While charging: the predicted arc and where it lands.
+    pub toss_arc: Vec<Vec3>,
+    pub toss_land: Option<Vec3>,
     aura_budget: f32,
     pub lantern_glow: Vec<f32>,
     rng: StdRng,
@@ -277,7 +334,7 @@ pub struct Game {
     pub dyn_insts: Vec<Inst>,
     pub trans_insts: Vec<Inst>,
     pub held_insts: Vec<Inst>,
-    pub heap_bounds: Vec<(Vec3, Vec3)>,
+    pub loose: Loose,
     nav: Nav,
     /// Sort Sense: the way to the active book's slot.
     pub sense_route: Option<Route>,
@@ -311,8 +368,9 @@ impl Game {
         for b in &lib.books {
             wing_total[wing_of_category(lib.series[b.series as usize].category)] += 1;
         }
-        let pos = lib.books.iter().map(|b| b.heap_pos).collect();
-        let rot = lib.books.iter().map(|b| b.heap_rot).collect();
+        let loose = Loose::new(&lib);
+        let pos = (0..n as u32).map(|b| loose.pose(b).0).collect();
+        let rot = (0..n as u32).map(|b| loose.pose(b).1).collect();
         let mut rng = StdRng::seed_from_u64(0x5eed);
         let motes = (0..700)
             .map(|_| {
@@ -326,8 +384,8 @@ impl Game {
                 )
             })
             .collect();
-        let mut g = Game {
-            state: vec![BookState::Heap; n],
+        Game {
+            state: vec![BookState::Loose; n],
             pos,
             rot,
             flights: Vec::new(),
@@ -358,6 +416,11 @@ impl Game {
             time: 0.0,
             play_time: 0.0,
             grab_cooldown: 0.0,
+            sift_cooldown: 0.0,
+            toss_charge: 0.0,
+            toss_was_down: false,
+            toss_arc: Vec::new(),
+            toss_land: None,
             aura_budget: 0.0,
             lantern_glow: vec![0.0; CATEGORIES.len()],
             rng,
@@ -365,16 +428,14 @@ impl Game {
             dyn_insts: Vec::with_capacity(n + 2048),
             trans_insts: Vec::with_capacity(n + 64),
             held_insts: Vec::new(),
-            heap_bounds: Vec::new(),
+            loose,
             nav: Nav::new(&lib.obstacles),
             sense_route: None,
             fov: 70.0,
             dirty_save: false,
             persist: true,
             lib,
-        };
-        g.recompute_heap_bounds();
-        g
+        }
     }
 
     pub fn level(&self, u: Upg) -> u32 {
@@ -385,7 +446,7 @@ impl Game {
         [6, 12, 24, 48, 96][self.level(Upg::Arms) as usize]
     }
 
-    fn heap_reach(&self) -> f32 {
+    fn gather_reach(&self) -> f32 {
         if self.level(Upg::Lodestone) > 0 { 11.0 } else { 3.6 }
     }
 
@@ -464,35 +525,6 @@ impl Game {
         wing == 0 || self.east_unlocked
     }
 
-    fn recompute_heap_bounds(&mut self) {
-        self.heap_bounds = self
-            .lib
-            .heaps
-            .iter()
-            .map(|h| {
-                let mut mn = Vec3::splat(f32::MAX);
-                let mut mx = Vec3::splat(f32::MIN);
-                for &b in &h.books {
-                    let r = self.lib.books[b as usize].size.max_element() * 0.5;
-                    mn = mn.min(self.pos[b as usize] - Vec3::splat(r));
-                    mx = mx.max(self.pos[b as usize] + Vec3::splat(r));
-                }
-                (mn, mx)
-            })
-            .collect();
-    }
-
-    fn update_heap_bound(&mut self, h: usize) {
-        let mut mn = Vec3::splat(f32::MAX);
-        let mut mx = Vec3::splat(f32::MIN);
-        for &b in &self.lib.heaps[h].books {
-            let r = self.lib.books[b as usize].size.max_element() * 0.5;
-            mn = mn.min(self.lib.books[b as usize].heap_pos - Vec3::splat(r));
-            mx = mx.max(self.lib.books[b as usize].heap_pos + Vec3::splat(r));
-        }
-        self.heap_bounds[h] = (mn, mx);
-    }
-
     // -------------------------------------------------------------- update
 
     pub fn update(&mut self, dt: f32, input: &Input, audio: &mut Audio, can_play: bool) {
@@ -521,6 +553,16 @@ impl Game {
             if input.primary_pressed || repeat {
                 self.interact(audio, input.primary_pressed);
             }
+            self.sift_cooldown -= dt;
+            if input.sift_pressed || (input.sift_down && self.sift_cooldown <= 0.0) {
+                self.sift(audio, input.sift_pressed);
+            }
+            self.update_toss(dt, input, audio);
+        } else {
+            self.toss_charge = 0.0;
+            self.toss_was_down = false;
+            self.toss_arc.clear();
+            self.toss_land = None;
         }
         if self.manual_pick.is_some_and(|b| !self.held.contains(&b)) {
             self.manual_pick = None;
@@ -540,6 +582,17 @@ impl Game {
             _ => None,
         };
         self.update_flights(dt, audio);
+        self.loose.east_open = self.east_unlocked;
+        let landings = self.loose.update(dt, &mut self.pos, &mut self.rot);
+        self.dirty_save |= !landings.is_empty();
+        let eye = self.player.eye();
+        for l in landings.iter().take(3) {
+            let near = (1.0 - l.at.distance(eye) / 25.0).max(0.0f32);
+            let v = (0.15 + l.speed * 0.04).min(0.45f32) * near;
+            if v > 0.01 {
+                audio.play(Sfx::Land, v);
+            }
+        }
         self.update_familiars(dt);
         self.update_particles(dt);
 
@@ -627,7 +680,7 @@ impl Game {
             .lib
             .obstacles
             .iter()
-            .any(|o| o.blocks_ray && Self::ray_aabb(a, dir, o.min, o.max).is_some_and(|t| t < len - 0.15))
+            .any(|o| o.blocks_ray && Self::ray_aabb(a, dir, o.min, o.sight_max()).is_some_and(|t| t < len - 0.15))
     }
 
     fn ray_aabb(o: Vec3, d: Vec3, mn: Vec3, mx: Vec3) -> Option<f32> {
@@ -639,20 +692,13 @@ impl Game {
         (tmax >= tmin.max(0.0)).then_some(tmin.max(0.0))
     }
 
-    fn ray_obb(o: Vec3, d: Vec3, pos: Vec3, rot: Quat, size: Vec3) -> Option<f32> {
-        let inv = rot.inverse();
-        let lo = inv * (o - pos);
-        let ld = inv * d;
-        Self::ray_aabb(lo, ld, -size * 0.5, size * 0.5)
-    }
-
     fn compute_aim(&self) -> Aim {
         let o = self.player.eye();
         let d = self.player.forward();
         let mut block = f32::MAX;
         for ob in &self.lib.obstacles {
             if ob.blocks_ray
-                && let Some(t) = Self::ray_aabb(o, d, ob.min, ob.max)
+                && let Some(t) = Self::ray_aabb(o, d, ob.min, ob.sight_max())
             {
                 block = block.min(t);
             }
@@ -701,39 +747,24 @@ impl Game {
             };
             best_t = t;
         }
-        // Heaps (test individual books inside heaps whose bounds the ray crosses).
-        let reach = self.heap_reach();
-        for (hi, h) in self.lib.heaps.iter().enumerate() {
-            if h.books.is_empty() || !self.wing_unlocked(h.wing) {
-                continue;
-            }
-            let (mn, mx) = self.heap_bounds[hi];
-            let Some(t0) = Self::ray_aabb(o, d, mn, mx) else {
-                continue;
+        // Loose books, short of the closed veil.
+        let mut max_t = self.gather_reach().min(block + 0.3).min(best_t);
+        if !self.east_unlocked && d.x > 1e-6 {
+            max_t = max_t.min((VEIL_X - o.x) / d.x);
+        }
+        if let Some((book, t)) = self.loose.pick(o, d, max_t) {
+            best = Aim::Loose {
+                book,
+                point: o + d * t,
+                dist: t,
             };
-            if t0 > reach || t0 > best_t || t0 > block + 0.3 {
-                continue;
-            }
-            for &b in &h.books {
-                let info = &self.lib.books[b as usize];
-                if let Some(t) = Self::ray_obb(o, d, info.heap_pos, info.heap_rot, info.size * 1.2)
-                    && t < best_t
-                    && t <= reach
-                {
-                    best_t = t;
-                    best = Aim::Heap {
-                        heap: hi as u32,
-                        dist: t,
-                    };
-                }
-            }
         }
         best
     }
 
     fn interact(&mut self, audio: &mut Audio, fresh_press: bool) {
         match self.aim {
-            Aim::Heap { heap, .. } => {
+            Aim::Loose { point, .. } => {
                 let room = self.capacity().saturating_sub(self.held.len());
                 if room == 0 {
                     if fresh_press {
@@ -743,24 +774,9 @@ impl Game {
                     self.grab_cooldown = 0.3;
                     return;
                 }
-                let h = heap as usize;
-                let take = room.min(self.lib.heaps[h].books.len());
-                for i in 0..take {
-                    let b = self.lib.heaps[h].books.pop().unwrap();
-                    self.state[b as usize] = BookState::Held;
-                    self.held.push(b);
-                    self.start_flight(b, Dest::Hand, 0.32 + i as f32 * 0.004, i as f32 * 0.025);
-                }
-                self.update_heap_bound(h);
-                self.manual_pick = None;
-                if self.level(Upg::Tidy) > 0 {
-                    let prev = self.active_book();
-                    self.held.sort();
-                    self.follow_active(prev);
-                } else {
-                    self.active = self.held.len() - 1;
-                }
-                audio.play(Sfx::Rustle, 0.6);
+                let radius = 0.35 + 0.05 * (room as f32).sqrt();
+                let books = self.loose.gather(Vec2::new(point.x, point.z), radius, room, |_| true);
+                self.take_into_arms(&books, audio);
                 self.grab_cooldown = 0.35;
             }
             Aim::Shelf { run: Some(run), .. } => {
@@ -802,6 +818,140 @@ impl Game {
             }
             _ => {}
         }
+    }
+
+    /// Books just lifted from a pile fly to the arms.
+    fn take_into_arms(&mut self, books: &[u32], audio: &mut Audio) {
+        if books.is_empty() {
+            return;
+        }
+        for (i, &b) in books.iter().enumerate() {
+            self.state[b as usize] = BookState::Held;
+            self.held.push(b);
+            self.start_flight(b, Dest::Hand, 0.32 + i as f32 * 0.004, i as f32 * 0.025);
+        }
+        self.manual_pick = None;
+        if self.level(Upg::Tidy) > 0 {
+            let prev = self.active_book();
+            self.held.sort();
+            self.follow_active(prev);
+        } else {
+            self.active = self.held.len() - 1;
+        }
+        audio.play(Sfx::Rustle, 0.6);
+        self.dirty_save = true;
+    }
+
+    fn category_of(&self, b: u32) -> usize {
+        self.lib.series[self.lib.books[b as usize].series as usize].category
+    }
+
+    /// Sifting Touch: draw books of the aimed book's category out of the pile around it.
+    fn sift(&mut self, audio: &mut Audio, fresh_press: bool) {
+        let lvl = self.level(Upg::Sift) as usize;
+        let Aim::Loose { book, point, .. } = self.aim else {
+            return;
+        };
+        if lvl == 0 {
+            if fresh_press {
+                self.hint = Some(("Sifting is learned in the Grimoire (Tab).".into(), 2.0));
+            }
+            return;
+        }
+        let room = self.capacity().saturating_sub(self.held.len());
+        if room == 0 {
+            if fresh_press {
+                audio.play(Sfx::Nope, 0.4);
+                self.hint = Some(("Your arms are full — file some books first.".into(), 2.0));
+            }
+            self.sift_cooldown = 0.3;
+            return;
+        }
+        let cat = self.category_of(book);
+        let lib = &self.lib;
+        let same = |b: u32| lib.series[lib.books[b as usize].series as usize].category == cat;
+        let books = self
+            .loose
+            .gather(Vec2::new(point.x, point.z), SIFT_RADIUS[lvl], room, same);
+        self.take_into_arms(&books, audio);
+        self.sift_cooldown = 0.4;
+    }
+
+    /// Where a toss at the current charge leaves the hand, and how fast.
+    fn toss_launch(&self) -> (Vec3, Vec3) {
+        let (mut hand, _) = self.hand_xform(0);
+        if !self.east_unlocked {
+            // At the veil the hand reaches past it; books leave from this side.
+            hand.x = hand.x.min(VEIL_X - 0.1);
+        }
+        // Flush against furniture the hand is inside it; leave from just short of it.
+        let eye = self.player.eye();
+        let reach = hand - eye;
+        let dir = reach.normalize();
+        let hit = (self.lib.obstacles.iter())
+            .filter_map(|o| Self::ray_aabb(eye, dir, o.min, o.max))
+            .fold(f32::MAX, f32::min);
+        if hit < reach.length() {
+            hand = eye + dir * (hit - 0.08).max(0.0);
+        }
+        // A little above the crosshair, so a level throw carries.
+        let dir = (self.player.forward() + Vec3::Y * 0.18).normalize();
+        let speed = TOSS_SPEED.0 + (TOSS_SPEED.1 - TOSS_SPEED.0) * self.toss_charge;
+        (hand, dir * speed)
+    }
+
+    /// Charge while the toss button is held (showing the arc); throw on release.
+    fn update_toss(&mut self, dt: f32, input: &Input, audio: &mut Audio) {
+        let down = input.toss_down || input.toss_pressed;
+        let released = self.toss_was_down && !down;
+        self.toss_was_down = down;
+        self.toss_arc.clear();
+        self.toss_land = None;
+        if down && !self.held.is_empty() {
+            self.toss_charge = (self.toss_charge + dt / TOSS_CHARGE).min(1.0);
+            let (from, vel) = self.toss_launch();
+            let mut arc = std::mem::take(&mut self.toss_arc);
+            self.toss_land = self.loose.predict(from, vel, &mut arc);
+            self.toss_arc = arc;
+        } else if down && self.hint.is_none() {
+            self.hint = Some(("Nothing to toss — gather some books first.".into(), 1.5));
+        }
+        if released && !self.held.is_empty() {
+            self.toss(audio);
+        }
+        if !down {
+            self.toss_charge = 0.0;
+        }
+    }
+
+    /// Throw every held book of the active book's category, as a loose stream.
+    fn toss(&mut self, audio: &mut Audio) {
+        let Some(active) = self.active_book() else { return };
+        let cat = self.category_of(active);
+        let group: Vec<u32> = self
+            .held
+            .iter()
+            .copied()
+            .filter(|&b| self.category_of(b) == cat)
+            .collect();
+        let prev = self.active_book();
+        self.held.retain(|b| !group.contains(b));
+        self.follow_active(prev);
+        let (from, vel) = self.toss_launch();
+        let speed = vel.length();
+        let gap = (0.5 / group.len() as f32).min(0.04);
+        for (i, &b) in group.iter().enumerate() {
+            self.flights.retain(|f| f.book != b);
+            self.state[b as usize] = BookState::Loose;
+            let mut j = || self.rng.gen_range(-1.0..1.0f32);
+            let scatter = Vec3::new(j(), j(), j()) * (0.06 * speed + 0.3);
+            let spin = Vec3::new(j(), j(), j()) * 9.0;
+            let rot = self.hand_xform(0).1;
+            self.loose.throw(b, from, vel + scatter, rot, spin, i as f32 * gap);
+        }
+        audio.play_pitched(Sfx::Whoosh, 0.45, 2);
+        self.toss_charge = 0.0;
+        self.dirty_save = true;
     }
 
     fn start_flight(&mut self, book: u32, dest: Dest, dur: f32, delay: f32) {
@@ -1036,18 +1186,14 @@ impl Game {
                 if !fam.carry.is_empty() {
                     fam.task = FamTask::ToSlot;
                 } else {
-                    let mut best: Option<(f32, u32)> = None;
-                    for (hi, h) in self.lib.heaps.iter().enumerate() {
-                        if h.books.is_empty() || !self.wing_unlocked(h.wing) {
-                            continue;
-                        }
-                        let d = h.base.distance(fam.pos) + self.rng.gen_range(0.0..4.0);
-                        if best.is_none_or(|(bd, _)| d < bd) {
-                            best = Some((d, hi as u32));
-                        }
-                    }
-                    match best {
-                        Some((_, h)) => fam.task = FamTask::ToHeap(h),
+                    let east = self.east_unlocked;
+                    let rng = &mut self.rng;
+                    let at = Vec2::new(fam.pos.x, fam.pos.z);
+                    let pile = self
+                        .loose
+                        .best_pile(|c, _| (east || c.x < VEIL_X).then(|| c.distance(at) + rng.gen_range(0.0..4.0)));
+                    match pile {
+                        Some(top) => fam.task = FamTask::ToPile(top),
                         None => {
                             fam.rest = 1.0;
                             continue;
@@ -1056,15 +1202,7 @@ impl Game {
                 }
             }
             let target = match fam.task {
-                FamTask::ToHeap(h) => {
-                    let heap = &self.lib.heaps[h as usize];
-                    let top = heap
-                        .books
-                        .last()
-                        .map(|&b| self.lib.books[b as usize].heap_pos)
-                        .unwrap_or(heap.base);
-                    top + Vec3::Y * 0.45
-                }
+                FamTask::ToPile(top) => top + Vec3::Y * 0.45,
                 FamTask::ToSlot => {
                     let b = fam.carry[0] as usize;
                     let f = &self.lib.faces[self.lib.books[b].face as usize];
@@ -1091,15 +1229,12 @@ impl Game {
             fam.pos += fam.vel * dt;
             if fam.pos.distance(target) < 0.25 {
                 match fam.task {
-                    FamTask::ToHeap(h) => {
-                        let heap = &mut self.lib.heaps[h as usize];
-                        let n = cap.min(heap.books.len());
-                        for _ in 0..n {
-                            let b = heap.books.pop().unwrap();
+                    FamTask::ToPile(top) => {
+                        // Someone may have cleared it meanwhile; then this comes back empty.
+                        for b in self.loose.gather(Vec2::new(top.x, top.z), 0.45, cap, |_| true) {
                             self.state[b as usize] = BookState::Carried(fi as u8);
                             fam.carry.push(b);
                         }
-                        self.update_heap_bound(h as usize);
                         // Visit slots in shelf order.
                         fam.carry.sort();
                         fam.task = FamTask::Idle;
@@ -1144,42 +1279,50 @@ impl Game {
         self.player.pitch = d.y.asin();
     }
 
-    /// Stand beside the nearest non-empty, reachable heap and look at its top.
-    pub fn script_face_heap(&mut self) {
+    /// Stand beside the nearest reachable pile and look at its top.
+    pub fn script_face_pile(&mut self) {
         let p = self.player.pos;
-        let best = (0..self.lib.heaps.len())
-            .filter(|&h| !self.lib.heaps[h].books.is_empty() && self.wing_unlocked(self.lib.heaps[h].wing))
-            .min_by(|&a, &b| {
-                self.lib.heaps[a]
-                    .base
-                    .distance(p)
-                    .total_cmp(&self.lib.heaps[b].base.distance(p))
-            });
-        if let Some(h) = best {
-            let heap = &self.lib.heaps[h];
-            let top = self.lib.books[*heap.books.last().unwrap() as usize].heap_pos;
-            let mut dir = Vec3::new(p.x - heap.base.x, 0.0, p.z - heap.base.z).normalize_or_zero();
-            if dir == Vec3::ZERO {
-                dir = Vec3::Z;
-            }
-            let from = Vec3::new(heap.base.x, 0.0, heap.base.z) + dir * (heap.radius + 1.0);
-            self.look_at(from, top);
+        let east = self.east_unlocked;
+        // Nearby and substantial: the cell with the most books for the walk.
+        let at = Vec2::new(p.x, p.z);
+        let Some(top) = self
+            .loose
+            .best_pile(|c, n| (east || c.x < VEIL_X).then(|| (c.distance(at) + 3.0) / n as f32))
+        else {
+            return;
+        };
+        let mut dir = Vec3::new(p.x - top.x, 0.0, p.z - top.z).normalize_or_zero();
+        if dir == Vec3::ZERO {
+            dir = Vec3::Z;
         }
+        let from = Vec3::new(top.x, 0.0, top.z) + dir * 1.6;
+        self.look_at(from, top);
+    }
+
+    /// Stand `dist` m from `target` (on the side you are on) and look at it.
+    pub fn script_look_at(&mut self, target: Vec3, dist: f32) {
+        let p = self.player.pos;
+        let mut dir = Vec3::new(p.x - target.x, 0.0, p.z - target.z).normalize_or_zero();
+        if dir == Vec3::ZERO {
+            dir = Vec3::Z;
+        }
+        self.look_at(Vec3::new(target.x, 0.0, target.z) + dir * dist, target);
     }
 
     /// Instantly shelve a fraction of a category (debug/screenshot aid; no rewards).
-    /// Unlike play, this removes books from the middle of heaps, so books above
-    /// them are left hovering; use it for shelf shots, not heap shots.
     pub fn script_fill_category(&mut self, cat: usize, frac: f32) {
         let ids: Vec<u32> = (0..self.lib.books.len() as u32)
-            .filter(|&b| self.lib.series[self.lib.books[b as usize].series as usize].category == cat)
+            .filter(|&b| self.category_of(b) == cat)
             .collect();
         let n = (ids.len() as f32 * frac) as usize;
-        for &b in ids.iter().take(n) {
+        let ids: Vec<u32> = ids
+            .into_iter()
+            .take(n)
+            .filter(|&b| self.state[b as usize] == BookState::Loose && self.loose.is_resting(b))
+            .collect();
+        self.loose.take(&ids);
+        for &b in &ids {
             let bi = b as usize;
-            if self.state[bi] != BookState::Heap {
-                continue;
-            }
             self.state[bi] = BookState::Shelved;
             self.pos[bi] = self.lib.books[bi].slot_pos;
             self.rot[bi] = self.lib.books[bi].slot_rot;
@@ -1188,31 +1331,21 @@ impl Game {
             self.category_shelved[cat] += 1;
             self.wing_shelved[wing_of_category(cat)] += 1;
         }
-        for h in &mut self.lib.heaps {
-            h.books.retain(|&b| self.state[b as usize] == BookState::Heap);
-        }
-        self.recompute_heap_bounds();
     }
 
-    /// Put `n` books of a category, spread across its shelves, into the arms (debug/screenshot
-    /// aid). Like `script_fill_category`, it pulls books from the middle of heaps.
+    /// Put `n` books of a category, spread across its shelves, into the arms (debug/screenshot aid).
     pub fn script_take(&mut self, cat: usize, n: usize) {
         let ids: Vec<u32> = (0..self.lib.books.len() as u32)
-            .filter(|&b| {
-                self.state[b as usize] == BookState::Heap
-                    && self.lib.series[self.lib.books[b as usize].series as usize].category == cat
-            })
+            .filter(|&b| self.loose.is_resting(b) && self.category_of(b) == cat)
             .collect();
         let step = (ids.len() / n.max(1)).max(1);
         let room = self.capacity().saturating_sub(self.held.len());
-        for &b in ids.iter().step_by(step).take(n.min(room)) {
+        let ids: Vec<u32> = ids.iter().copied().step_by(step).take(n.min(room)).collect();
+        self.loose.take(&ids);
+        for &b in &ids {
             self.state[b as usize] = BookState::Held;
             self.held.push(b);
         }
-        for h in &mut self.lib.heaps {
-            h.books.retain(|&b| self.state[b as usize] == BookState::Heap);
-        }
-        self.recompute_heap_bounds();
     }
 
     /// Look at familiar `i` from a little way off.
@@ -1349,7 +1482,7 @@ impl Game {
             let st = self.state[b];
             let info = &self.lib.books[b];
             match st {
-                BookState::Heap | BookState::Filing | BookState::Shelved | BookState::Carried(_) => {
+                BookState::Loose | BookState::Filing | BookState::Shelved | BookState::Carried(_) => {
                     dyn_insts.push(self.book_inst(b, self.pos[b], self.rot[b], 0));
                 }
                 BookState::Held => {
@@ -1507,6 +1640,37 @@ impl Game {
                 0,
             ));
         }
+        // A charging toss: a dotted arc and a ring where it lands.
+        if !self.toss_arc.is_empty() {
+            let warm = [1.0, 0.8, 0.5];
+            for (i, &p) in self.toss_arc.iter().enumerate().skip(1) {
+                let fade = 1.0 - i as f32 / (self.toss_arc.len() as f32 + 4.0);
+                dyn_insts.push(Inst::new(
+                    p,
+                    Quat::IDENTITY,
+                    Vec3::splat(0.018),
+                    kind::EMISSIVE,
+                    [warm[0], warm[1], warm[2], 1.6 * fade],
+                    0,
+                ));
+            }
+            if let Some(land) = self.toss_land {
+                let r = 0.25 + 0.35 * self.toss_charge;
+                for k in 0..16 {
+                    let a = k as f32 / 16.0 * std::f32::consts::TAU + self.time * 0.6;
+                    let p = land + Vec3::new(a.cos() * r, 0.03, a.sin() * r);
+                    dyn_insts.push(Inst::new(
+                        p,
+                        Quat::from_rotation_y(-a),
+                        Vec3::new(0.012, 0.012, 0.07),
+                        kind::EMISSIVE,
+                        [warm[0], warm[1], warm[2], 2.2],
+                        0,
+                    ));
+                }
+            }
+        }
+
         let eye = self.player.eye();
         for (i, &(base, ph)) in self.motes.iter().enumerate() {
             let t = self.time * 0.05 + ph;
@@ -1573,7 +1737,7 @@ impl Game {
             match st {
                 BookState::Shelved => shelved.push(b as u32),
                 BookState::Filing | BookState::Carried(_) => pending.push(b as u32),
-                BookState::Heap | BookState::Held => {}
+                BookState::Loose | BookState::Held => {}
             }
         }
         let p = &self.player;
@@ -1581,13 +1745,25 @@ impl Game {
             seed: SEED,
             lumens: self.lumens,
             earned: self.earned,
-            upgrades: self.upg.to_vec(),
+            levels: UPGRADES
+                .iter()
+                .map(|&u| (format!("{u:?}"), self.level(u)))
+                .filter(|&(_, l)| l > 0)
+                .collect(),
+            upgrades: Vec::new(),
             shelved,
             pending,
             held: self.held.clone(),
             player: [p.pos.x, p.pos.y, p.pos.z, p.yaw, p.pitch],
             east_unlocked: self.east_unlocked,
             play_time: self.play_time,
+            loose: Some(
+                self.loose
+                    .moved()
+                    .map(|(b, r)| (b, [r.c.x, r.c.y, r.c.z, r.u.x, r.u.y, r.su, r.sv]))
+                    .collect(),
+            ),
+            airborne: self.loose.airborne().map(|(b, p)| (b, p.to_array())).collect(),
         };
         let path = Self::save_path();
         if let Some(dir) = path.parent() {
@@ -1620,8 +1796,12 @@ impl Game {
             return false;
         }
         let n = self.lib.books.len() as u32;
+        self.loose.east_open = data.east_unlocked;
+        // Books no longer loose leave their piles; nothing is re-settled until all are placed.
+        let mut lifted = Vec::new();
         for &b in &data.shelved {
-            if b < n && self.state[b as usize] == BookState::Heap {
+            if b < n && self.state[b as usize] == BookState::Loose {
+                lifted.push(b);
                 self.state[b as usize] = BookState::Shelved;
                 self.pos[b as usize] = self.lib.books[b as usize].slot_pos;
                 self.rot[b as usize] = self.lib.books[b as usize].slot_rot;
@@ -1633,13 +1813,15 @@ impl Game {
             }
         }
         for &b in &data.held {
-            if b < n && self.state[b as usize] == BookState::Heap {
+            if b < n && self.state[b as usize] == BookState::Loose {
+                lifted.push(b);
                 self.state[b as usize] = BookState::Held;
                 self.held.push(b);
             }
         }
         for &b in &data.pending {
-            if b < n && self.state[b as usize] == BookState::Heap {
+            if b < n && self.state[b as usize] == BookState::Loose {
+                lifted.push(b);
                 let bi = b as usize;
                 let info = &self.lib.books[bi];
                 let normal = self.lib.faces[info.face as usize].normal;
@@ -1649,12 +1831,58 @@ impl Game {
                 self.start_flight(b, Dest::Shelf, 0.8, 0.5);
             }
         }
-        for h in &mut self.lib.heaps {
-            h.books.retain(|&b| self.state[b as usize] == BookState::Heap);
+        let loose_ok = |b: u32| b < n && self.state[b as usize] == BookState::Loose;
+        // Airborne books leave their generated spot too (they fall in from where they were).
+        let airborne: Vec<(u32, Vec3)> = data
+            .airborne
+            .iter()
+            .filter(|&&(b, _)| loose_ok(b))
+            .map(|&(b, p)| (b, Vec3::from_array(p)))
+            .collect();
+        for &b in lifted.iter().chain(airborne.iter().map(|(b, _)| b)) {
+            self.loose.forget(b);
         }
-        self.recompute_heap_bounds();
-        for (i, l) in data.upgrades.iter().enumerate().take(UPGRADES.len()) {
-            self.upg[i] = (*l).min(upg_def(UPGRADES[i]).costs.len() as u32);
+        match &data.loose {
+            Some(rests) => {
+                for &(b, [x, y, z, ux, uz, su, sv]) in rests {
+                    if loose_ok(b) {
+                        let r = Rest {
+                            c: Vec3::new(x, y, z),
+                            u: Vec2::new(ux, uz),
+                            su,
+                            sv,
+                        };
+                        self.loose.restore(b, r);
+                    }
+                }
+                self.loose.rebuild_all();
+            }
+            None => {
+                // A 0.1.x save: piles keep their generated shape and fall into the gaps.
+                self.loose.rebuild_all();
+                self.loose.resettle(&lifted);
+            }
+        }
+        for (b, p) in airborne {
+            self.loose
+                .throw(b, p, Vec3::ZERO, self.rot[b as usize], Vec3::ZERO, 0.0);
+        }
+        for b in 0..n {
+            if self.loose.is_resting(b) {
+                (self.pos[b as usize], self.rot[b as usize]) = self.loose.pose(b);
+            }
+        }
+        if data.levels.is_empty() {
+            for (u, &l) in LEGACY_ORDER.iter().zip(&data.upgrades) {
+                self.upg[upg_index(*u)] = l;
+            }
+        } else {
+            for (i, u) in UPGRADES.iter().enumerate() {
+                self.upg[i] = data.levels.get(&format!("{u:?}")).copied().unwrap_or(0);
+            }
+        }
+        for (i, u) in UPGRADES.iter().enumerate() {
+            self.upg[i] = self.upg[i].min(upg_def(*u).costs.len() as u32);
         }
         self.lumens = data.lumens;
         self.earned = data.earned;
@@ -1687,16 +1915,12 @@ mod tests {
     fn generation_invariants() {
         let g = Game::new();
         let lib = &g.lib;
-        // Every book is in exactly one heap, and heaps never mix wings.
-        let mut seen = vec![0u32; lib.books.len()];
-        for h in &lib.heaps {
-            for &b in &h.books {
-                seen[b as usize] += 1;
-                let cat = lib.series[lib.books[b as usize].series as usize].category;
-                assert_eq!(wing_of_category(cat), h.wing);
-            }
+        // Every book starts loose, on its own wing's side of the veil.
+        for b in 0..lib.books.len() as u32 {
+            assert!(g.loose.is_resting(b));
+            let east = g.loose.rest(b).c.x > VEIL_X;
+            assert_eq!(east, wing_of_category(g.category_of(b)) == 1, "book {b}");
         }
-        assert!(seen.iter().all(|&c| c == 1), "each book must sit in exactly one heap");
         // Volumes run left to right along each shelf run.
         for runs in &lib.runs {
             for row in runs.iter() {
@@ -1712,22 +1936,23 @@ mod tests {
             }
         }
         // No pile is unreasonably tall.
-        for b in &lib.books {
-            assert!(b.heap_pos.y < 3.2, "heap book at {:?}", b.heap_pos);
+        for b in 0..lib.books.len() as u32 {
+            assert!(g.loose.rest(b).c.y < 2.0, "book {b} at {:?}", g.loose.rest(b));
         }
         // Generation is deterministic (saves depend on it).
         let g2 = Game::new();
         assert_eq!(g2.lib.books.len(), lib.books.len());
+        assert!((0..lib.books.len() as u32).all(|b| g2.loose.rest(b) == g.loose.rest(b)));
         assert!(
             g2.lib
                 .books
                 .iter()
                 .zip(&lib.books)
-                .all(|(a, b)| a.heap_pos == b.heap_pos && a.slot_pos == b.slot_pos)
+                .all(|(a, b)| a.slot_pos == b.slot_pos)
         );
     }
 
-    /// Pacing estimate: a bot that walks (at real speeds) to the nearest heap, gathers an
+    /// Pacing estimate: a bot that walks (at real speeds) to the nearest pile, gathers an
     /// armful, files it in nearest-slot order, and greedily buys the cheapest upgrade.
     /// Familiars shelve at the rates `familiar_throughput` measures; the aura is
     /// approximated. Run with `--ignored --nocapture`.
@@ -1744,26 +1969,39 @@ mod tests {
             // Familiars: each files ~one book per (flight time + handling), approximated.
             let fams = g.level(Upg::Familiar) as f32;
             let trip_start = t;
-            // Gather.
-            let Some(h) = (0..g.lib.heaps.len())
-                .filter(|&h| !g.lib.heaps[h].books.is_empty() && g.wing_unlocked(g.lib.heaps[h].wing))
-                .min_by(|&a, &b| {
-                    g.lib.heaps[a]
-                        .base
-                        .distance(pos)
-                        .total_cmp(&g.lib.heaps[b].base.distance(pos))
-                })
+            // Gather, as a click does: the top of the nearest pile.
+            let east = g.east_unlocked;
+            g.loose.east_open = east;
+            // Where a player would go: the fewest seconds of walking per book gathered.
+            let (at, cap) = (Vec2::new(pos.x, pos.z), g.capacity());
+            let walk = speed(&g);
+            let Some(top) = g
+                .loose
+                .best_pile(|c, n| (east || c.x < VEIL_X).then(|| (c.distance(at) / walk + 1.0) / n.min(cap) as f32))
             else {
                 break;
             };
-            let reach = g.heap_reach();
-            t += (g.lib.heaps[h].base.distance(pos) - reach).max(0.0) / speed(&g) + 1.0;
-            pos = g.lib.heaps[h].base;
-            let take = g.capacity().min(g.lib.heaps[h].books.len());
-            for _ in 0..take {
-                let b = g.lib.heaps[h].books.pop().unwrap();
-                g.state[b as usize] = BookState::Held;
-                g.held.push(b);
+            let top = Vec3::new(top.x, 0.0, top.z);
+            let reach = g.gather_reach();
+            t += (top.distance(pos) - reach).max(0.0) / speed(&g) + 1.0;
+            pos = top;
+            // Click, and click again at whatever is within reach until the arms are full.
+            let mut target = Some(top);
+            while let Some(p) = target {
+                let room = g.capacity() - g.held.len();
+                let radius = 0.35 + 0.05 * (room as f32).sqrt();
+                for b in g.loose.gather(Vec2::new(p.x, p.z), radius, room, |_| true) {
+                    g.state[b as usize] = BookState::Held;
+                    g.held.push(b);
+                }
+                if g.held.len() == g.capacity() {
+                    break;
+                }
+                let at = Vec2::new(pos.x, pos.z);
+                target = g
+                    .loose
+                    .best_pile(|c, n| (c.distance(at) < reach && (east || c.x < VEIL_X)).then(|| -(n as f32)));
+                t += 0.4;
             }
             // File, nearest slot first; a click files one book, or a whole series with Bundle.
             let (aura_r, aura_rate) = AURA_LEVELS[g.level(Upg::Aura) as usize];
@@ -1807,20 +2045,26 @@ mod tests {
             // Familiars over the elapsed trip, at measured rates per Wings level.
             let rate = [0.095, 0.17, 0.25][g.level(Upg::Wings) as usize] * fams;
             let fam_books = (rate * (t - trip_start)) as usize;
-            for _ in 0..fam_books {
-                if let Some(h) = (0..g.lib.heaps.len())
-                    .find(|&h| !g.lib.heaps[h].books.is_empty() && g.wing_unlocked(g.lib.heaps[h].wing))
-                {
-                    let b = g.lib.heaps[h].books.pop().unwrap();
+            let east = g.east_unlocked;
+            let mut left = fam_books;
+            while left > 0 {
+                let Some(top) = g.loose.best_pile(|c, _| (east || c.x < VEIL_X).then(|| c.length())) else {
+                    break;
+                };
+                let books = g.loose.gather(Vec2::new(top.x, top.z), 0.45, left, |_| true);
+                left -= books.len();
+                for b in books {
                     let mut thunks = 0;
                     g.on_shelved(b, &mut audio, &mut thunks);
                 }
             }
             // Spend.
             loop {
+                // The bot never sifts or tosses, so it doesn't buy them.
                 let cheapest = UPGRADES
                     .iter()
                     .copied()
+                    .filter(|&u| u != Upg::Sift)
                     .filter_map(|u| g.next_cost(u).map(|c| (c, u)))
                     .min_by_key(|x| x.0);
                 match cheapest {
@@ -1881,10 +2125,9 @@ mod tests {
     fn slots_aimable_at_angles() {
         let mut g = Game::new();
         g.east_unlocked = true;
-        for h in &mut g.lib.heaps {
-            h.books.clear();
+        for b in 0..g.lib.books.len() as u32 {
+            g.loose.forget(b);
         }
-        g.recompute_heap_bounds();
         let mut failures = 0;
         let mut tried = 0;
         for b in (0..g.lib.books.len()).step_by(37) {
@@ -1988,44 +2231,81 @@ mod tests {
         unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
         let mut g = Game::new();
         let mut audio = crate::audio::Audio::silent();
-        // Shelve the tops of a few heaps (as play does), leave one book mid-flight.
+        let pile = |g: &Game| {
+            let from = Vec2::new(-16.0, 0.0);
+            g.loose
+                .best_pile(|c, _| (c.x < VEIL_X).then(|| c.distance(from)))
+                .unwrap()
+        };
+        // Shelve the tops of a few piles (as play does), leave one book mid-flight.
         let mut thunks = 0;
-        for h in 4..9 {
-            for _ in 0..20 {
-                let b = g.lib.heaps[h].books.pop().unwrap();
+        for _ in 0..5 {
+            let top = pile(&g);
+            for b in g.loose.gather(Vec2::new(top.x, top.z), 0.6, 20, |_| true) {
                 g.on_shelved(b, &mut audio, &mut thunks);
             }
         }
-        let flying = g.lib.heaps[10].books.pop().unwrap();
-        g.state[flying as usize] = BookState::Filing;
-        // Take a few books from the top of a heap into the arms.
-        let h = g.lib.heaps.iter().position(|h| h.books.len() > 3).unwrap();
-        for _ in 0..3 {
-            let b = g.lib.heaps[h].books.pop().unwrap();
-            g.state[b as usize] = BookState::Held;
-            g.held.push(b);
+        let top = pile(&g);
+        let filing = g.loose.gather(Vec2::new(top.x, top.z), 0.5, 1, |_| true)[0];
+        g.state[filing as usize] = BookState::Filing;
+        // Three books in the arms, two tossed: one has landed, one is in the air at save time.
+        let top = pile(&g);
+        let books = g.loose.gather(Vec2::new(top.x, top.z), 0.6, 5, |_| true);
+        g.take_into_arms(&books, &mut audio);
+        let (landed, flying) = (books[3], books[4]);
+        g.held.retain(|&b| b != landed && b != flying);
+        g.active = 0;
+        let throw = |g: &mut Game, b: u32| {
+            g.state[b as usize] = BookState::Loose;
+            g.flights.retain(|f| f.book != b);
+            g.loose.throw(
+                b,
+                Vec3::new(-6.0, 1.5, 0.0),
+                Vec3::new(-3.0, 2.0, 1.0),
+                Quat::IDENTITY,
+                Vec3::X * 5.0,
+                0.0,
+            );
+        };
+        throw(&mut g, landed);
+        for _ in 0..180 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
         }
+        assert!(g.loose.is_resting(landed));
+        throw(&mut g, flying);
+        g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
+        assert!(g.loose.is_flying(flying));
         g.lumens = 42;
         g.upg[upg_index(Upg::Arms)] = 2;
+        g.upg[upg_index(Upg::Sift)] = 1;
         g.save();
 
         let mut l = Game::new();
         assert!(l.load());
         assert_eq!(l.total_shelved(), g.total_shelved());
         assert_eq!(l.lumens, 42);
-        // The in-flight book resumes its flight and is paid for when it lands.
-        assert_eq!(l.state[flying as usize], BookState::Filing);
+        assert_eq!(l.capacity(), 24);
+        assert_eq!(l.level(Upg::Sift), 1);
+        assert_eq!(l.held, g.held);
+        // Every book lying still lies exactly where it did, and the ground under the
+        // airborne book's old spot is gone with it.
+        assert_eq!(l.loose.heightfield_errors(), 0);
+        for b in 0..g.lib.books.len() as u32 {
+            if g.loose.is_resting(b) {
+                assert_eq!(l.loose.rest(b), g.loose.rest(b), "book {b}");
+            }
+        }
+        // The in-flight book resumes its flight and is paid for when it lands; the
+        // airborne one falls to the floor.
+        assert_eq!(l.state[filing as usize], BookState::Filing);
+        assert!(l.loose.is_flying(flying));
         for _ in 0..120 {
             l.update(1.0 / 60.0, &Input::default(), &mut audio, false);
         }
-        assert_eq!(l.state[flying as usize], BookState::Shelved);
+        assert_eq!(l.state[filing as usize], BookState::Shelved);
         assert_eq!(l.total_shelved(), g.total_shelved() + 1);
         assert_eq!(l.lumens, 43);
-        assert_eq!(l.held, g.held);
-        assert_eq!(l.capacity(), 24);
-        for (a, b) in l.lib.heaps.iter().zip(&g.lib.heaps) {
-            assert_eq!(a.books, b.books);
-        }
+        assert!(l.loose.is_resting(flying));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

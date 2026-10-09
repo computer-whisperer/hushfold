@@ -1,4 +1,5 @@
-//! The library's layout: bookcase faces, slot assignment, heaps, static geometry and lights.
+//! The library's layout: bookcase faces, slot assignment, where the loose books start,
+//! static geometry and lights.
 
 use crate::catalog::{self, CATEGORIES, Series, WEST_CATEGORIES};
 use crate::gfx::{Inst, kind};
@@ -66,24 +67,23 @@ pub struct BookInfo {
     pub row: u8,
     pub slot_pos: Vec3,
     pub slot_rot: Quat,
-    pub heap: u32,
-    pub heap_pos: Vec3,
-    pub heap_rot: Quat,
 }
 
-pub struct Heap {
-    pub base: Vec3,
-    pub radius: f32,
-    /// Bottom to top.
-    pub books: Vec<u32>,
-    pub wing: usize,
-}
-
+/// A solid piece of furniture, a column from the floor to `max.y`.
 #[derive(Clone, Copy)]
 pub struct Obstacle {
     pub min: Vec3,
     pub max: Vec3,
     pub blocks_ray: bool,
+    /// How high it blocks sight lines (bookcases block aiming over their tops too).
+    pub sight_top: f32,
+}
+
+impl Obstacle {
+    /// The far corner of the box that blocks sight.
+    pub fn sight_max(&self) -> Vec3 {
+        Vec3::new(self.max.x, self.sight_top, self.max.z)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -115,7 +115,8 @@ pub struct Library {
     pub books: Vec<BookInfo>,
     pub faces: Vec<Face>,
     pub runs: Vec<[Vec<Run>; ROWS]>,
-    pub heaps: Vec<Heap>,
+    /// Where each book is first dropped, in order: (book, point, direction of its length).
+    pub drops: Vec<(u32, Vec2, Vec2)>,
     pub obstacles: Vec<Obstacle>,
     pub static_insts: Vec<Inst>,
     pub lights: Vec<LightDef>,
@@ -124,10 +125,6 @@ pub struct Library {
     pub category_center: Vec<Vec3>,
     /// (category, position) of each category lantern; drawn per frame since they change.
     pub lanterns: Vec<(usize, Vec3)>,
-}
-
-fn quat_from_cols(x: Vec3, y: Vec3, z: Vec3) -> Quat {
-    Quat::from_mat3(&Mat3::from_cols(x, y, z)).normalize()
 }
 
 pub fn wing_of_category(c: usize) -> usize {
@@ -143,7 +140,7 @@ impl Library {
             books: Vec::new(),
             faces: Vec::new(),
             runs: Vec::new(),
-            heaps: Vec::new(),
+            drops: Vec::new(),
             obstacles: Vec::new(),
             static_insts: Vec::new(),
             lights: Vec::new(),
@@ -155,7 +152,7 @@ impl Library {
         lib.build_hall();
         lib.build_stacks(&mut rng);
         lib.build_center();
-        lib.build_heaps(&mut rng);
+        lib.build_piles(&mut rng);
         lib
     }
 
@@ -164,7 +161,12 @@ impl Library {
     }
 
     fn obstacle(&mut self, min: Vec3, max: Vec3, blocks_ray: bool) {
-        self.obstacles.push(Obstacle { min, max, blocks_ray });
+        self.obstacles.push(Obstacle {
+            min,
+            max,
+            blocks_ray,
+            sight_top: max.y,
+        });
     }
 
     fn light(&mut self, pos: Vec3, radius: f32, color: [f32; 3], intensity: f32, kind: LightKind) {
@@ -508,11 +510,13 @@ impl Library {
                 ));
             }
         }
+        // Solid to the cornice; blocks sight a good way above it.
         self.obstacle(
             c - Vec3::new(hw + 0.04, 0.0, hd + 0.04),
-            c + Vec3::new(hw + 0.04, UNIT_H + 1.2, hd + 0.04),
+            c + Vec3::new(hw + 0.04, UNIT_H + 0.13, hd + 0.04),
             true,
         );
+        self.obstacles.last_mut().unwrap().sight_top = UNIT_H + 1.2;
     }
 
     /// Generate this category's series and lay them out across its three faces.
@@ -590,9 +594,6 @@ impl Library {
                         row: row as u8,
                         slot_pos: pos,
                         slot_rot: fr,
-                        heap: u32::MAX,
-                        heap_pos: Vec3::ZERO,
-                        heap_rot: Quat::IDENTITY,
                     });
                     self.series_books[sid as usize].push(id);
                     self.category_books[cat] += 1;
@@ -824,6 +825,8 @@ impl Library {
             self.push(flame);
         }
         self.obstacle(fc + Vec3::new(-2.5, 0.0, -1.7), fc + Vec3::new(2.5, 3.0, 0.0), true);
+        // The chimney breast, up to the ceiling.
+        self.obstacle(fc + Vec3::new(-1.6, 0.0, -0.6), fc + Vec3::new(1.6, HALL_H, 0.0), true);
         self.light(
             fc + Vec3::new(0.0, 0.8, -1.6),
             11.0,
@@ -833,19 +836,19 @@ impl Library {
         );
     }
 
-    fn build_heaps(&mut self, rng: &mut StdRng) {
+    /// Scatter the books in piles: a few on the reading tables, the rest on the floor
+    /// of their own wing. Only drop points are chosen here; `Loose` settles them.
+    fn build_piles(&mut self, rng: &mut StdRng) {
         for wing in 0..2 {
             let mut pool: Vec<u32> = (0..self.books.len() as u32)
                 .filter(|&b| wing_of_category(self.series[self.books[b as usize].series as usize].category) == wing)
                 .collect();
             pool.shuffle(rng);
-            // A few small piles on the reading tables (west only).
             if wing == 0 {
                 for (tx, tz) in [(-4.5f32, -2.6f32), (4.5, -2.6), (-4.5, 2.6), (4.5, 2.6)] {
                     let n = rng.gen_range(14..28).min(pool.len());
                     let books: Vec<u32> = pool.drain(..n).collect();
-                    let base = Vec3::new(tx - 0.35, TABLE_H, tz);
-                    self.add_heap(rng, base, 0.32, books, wing);
+                    self.add_pile(rng, Vec2::new(tx - 0.35, tz), 0.32, books);
                 }
             }
             let (x0, x1) = if wing == 0 {
@@ -853,17 +856,15 @@ impl Library {
             } else {
                 (VEIL_X + 0.8, HALL_X - 0.8)
             };
-            // Choose spots first, then share the wing's books evenly between them,
-            // so every pile goes through the settling code and none towers.
+            // Choose spots first, then share the wing's books evenly between them.
             let spot_r = 1.0;
-            let mut spots: Vec<Vec3> = Vec::new();
+            let mut spots: Vec<Vec2> = Vec::new();
             for _ in 0..20000 {
-                let p = Vec3::new(
+                let p = Vec2::new(
                     rng.gen_range(x0 + spot_r..x1 - spot_r),
-                    0.0,
                     rng.gen_range(-HALL_Z + 0.8 + spot_r..HALL_Z - 0.8 - spot_r),
                 );
-                if self.heap_spot_ok(p, spot_r, &spots) {
+                if self.pile_spot_ok(p, spot_r, &spots) {
                     spots.push(p);
                 }
             }
@@ -881,109 +882,43 @@ impl Library {
                 }
                 let radius = 0.4 + 0.06 * (n as f32).sqrt();
                 let books: Vec<u32> = pool.drain(..n).collect();
-                self.add_heap(rng, p, radius, books, wing);
+                self.add_pile(rng, p, radius, books);
             }
         }
     }
 
-    fn heap_spot_ok(&self, p: Vec3, r: f32, spots: &[Vec3]) -> bool {
+    fn pile_spot_ok(&self, p: Vec2, r: f32, spots: &[Vec2]) -> bool {
         for o in &self.obstacles {
-            let q = Vec2::new(p.x.clamp(o.min.x, o.max.x), p.z.clamp(o.min.z, o.max.z));
-            if q.distance(Vec2::new(p.x, p.z)) < r + 1.1 {
+            let q = Vec2::new(p.x.clamp(o.min.x, o.max.x), p.y.clamp(o.min.z, o.max.z));
+            if q.distance(p) < r + 1.1 {
                 return false;
             }
         }
-        if p.x.abs() < 6.0 && p.z.abs() < 8.5 {
+        if p.x.abs() < 6.0 && p.y.abs() < 8.5 {
             return false; // keep the reading room's middle (and the spawn point) walkable
         }
-        if p.z > HALL_Z - 3.0 && p.x.abs() < 3.5 {
+        if p.y > HALL_Z - 3.0 && p.x.abs() < 3.5 {
             return false; // hearth
         }
         if (p.x - VEIL_X).abs() < r + 1.0 {
             return false;
         }
-        if spots
-            .iter()
-            .any(|q| Vec2::new(q.x - p.x, q.z - p.z).length() < r * 2.0 + 1.1)
-        {
-            return false;
-        }
-        true
+        !spots.iter().any(|q| q.distance(p) < r * 2.0 + 1.1)
     }
 
-    fn add_heap(&mut self, rng: &mut StdRng, base: Vec3, radius: f32, books: Vec<u32>, wing: usize) {
-        let h = self.heaps.len() as u32;
-        let cell = 0.035;
-        let n = ((radius * 2.0 + 0.8) / cell).ceil() as i32;
-        let mut hm = vec![0.0f32; (n * n) as usize];
-        let idx = |p: Vec2| -> Option<usize> {
-            let g = (p - Vec2::new(base.x, base.z)) / cell + Vec2::splat(n as f32 * 0.5);
-            let (x, y) = (g.x.floor() as i32, g.y.floor() as i32);
-            (x >= 0 && y >= 0 && x < n && y < n).then(|| (y * n + x) as usize)
-        };
+    /// Drop points for a pile: denser toward the middle as it grows, so it heaps up.
+    fn add_pile(&mut self, rng: &mut StdRng, center: Vec2, radius: f32, books: Vec<u32>) {
         let count = books.len().max(1) as f32;
-        for (i, &b) in books.iter().enumerate() {
+        for (i, b) in books.into_iter().enumerate() {
             let frac = i as f32 / count;
             let r = radius * (1.0 - 0.5 * frac) * rng.gen_range(0.0..1.0f32).sqrt();
             let a = rng.gen_range(0.0..1.0f32) * TAU;
-            let c = Vec2::new(base.x, base.z) + Vec2::new(a.cos(), a.sin()) * r;
             let yaw = rng.gen_range(0.0..1.0f32) * TAU;
-            let size = self.books[b as usize].size;
-            let u = Vec2::new(yaw.cos(), yaw.sin());
-            let v = Vec2::new(-u.y, u.x);
-            let na = (size.y / cell).ceil() as i32 + 1;
-            let nb = (size.z / cell).ceil() as i32 + 1;
-            // Rest the book on what is below: find the support under each half
-            // along both axes and tilt to fit, so piles settle rather than float.
-            let mut pts = Vec::with_capacity(((na + 1) * (nb + 1)) as usize);
-            let (mut ha, mut hb, mut hc, mut hd) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-            for ia in 0..=na {
-                for ib in 0..=nb {
-                    let fa = ia as f32 / na as f32 - 0.5;
-                    let fb = ib as f32 / nb as f32 - 0.5;
-                    let p = c + u * (fa * size.y) + v * (fb * size.z);
-                    if let Some(k) = idx(p) {
-                        let hh = hm[k];
-                        if fa < 0.0 {
-                            ha = ha.max(hh)
-                        } else {
-                            hb = hb.max(hh)
-                        }
-                        if fb < 0.0 {
-                            hc = hc.max(hh)
-                        } else {
-                            hd = hd.max(hh)
-                        }
-                        pts.push((k, fa * size.y, fb * size.z));
-                    }
-                }
-            }
-            let slope_u = ((hb - ha) / (size.y * 0.5)).clamp(-0.45, 0.45);
-            let slope_v = ((hd - hc) / (size.z * 0.5)).clamp(-0.45, 0.45);
-            let mut y = ((ha + hb) * 0.5).max((hc + hd) * 0.5);
-            // Never sink below any support point under the tilted plane.
-            for &(k, su, sv) in &pts {
-                y = y.max(hm[k] - su * slope_u - sv * slope_v);
-            }
-            for &(k, su, sv) in &pts {
-                hm[k] = hm[k].max(y + su * slope_u + sv * slope_v + size.x);
-            }
-            let y = y + size.x * 0.5;
-            let wy = Vec3::new(u.x, 0.0, u.y);
-            let wz = Vec3::Y.cross(wy);
-            let mut rot = quat_from_cols(Vec3::Y, wy, wz);
-            rot = Quat::from_axis_angle(wy, slope_v.atan()) * Quat::from_axis_angle(wz, -slope_u.atan()) * rot;
-            rot = Quat::from_axis_angle(wy, rng.gen_range(-0.03..0.03)) * rot;
-            let info = &mut self.books[b as usize];
-            info.heap = h;
-            info.heap_pos = Vec3::new(c.x, base.y + y, c.y);
-            info.heap_rot = rot;
+            self.drops.push((
+                b,
+                center + Vec2::new(a.cos(), a.sin()) * r,
+                Vec2::new(yaw.cos(), yaw.sin()),
+            ));
         }
-        self.heaps.push(Heap {
-            base,
-            radius,
-            books,
-            wing,
-        });
     }
 }
