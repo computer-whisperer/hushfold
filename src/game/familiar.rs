@@ -1,0 +1,735 @@
+//! Familiars: paper cranes that work round a post you choose. A shelver files loose
+//! books lying near its post whose shelves are a short walk from it; a courier
+//! carries books lying near its post to where they are wanted: a shelver that can
+//! file them, or else their room. Unposted, a familiar rides on your shoulder.
+//!
+//! Every trip follows the walking routes of the nav grid from the post (its
+//! `Field`), at flying height, straightened where the line is clear to sight, so a
+//! familiar goes through doorways and up the stairs, or over a railing and across
+//! the well, but never through a wall or a floor.
+
+use super::*;
+use std::collections::HashMap;
+
+/// Familiar Wings by level: (flight speed in m/s, books carried, how far round its
+/// post a familiar takes books from, how far on foot from its post a shelver files).
+const WINGS: [(f32, usize, f32, f32); 3] = [(2.6, 2, 3.0, 8.0), (3.8, 3, 4.0, 10.0), (5.0, 5, 5.0, 12.0)];
+/// Flying height above the floor along a route.
+const FLY_H: f32 = 1.7;
+/// Height of a perch's top above the floor.
+const PERCH_H: f32 = 1.25;
+/// How far a familiar is from where it is going when it has arrived.
+const ARRIVE: f32 = 0.25;
+/// How far round the spot it flew to a familiar takes books from.
+const GRASP: f32 = 0.8;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Role {
+    Shelver,
+    Courier,
+}
+
+impl Role {
+    pub fn name(self) -> &'static str {
+        match self {
+            Role::Shelver => "shelver",
+            Role::Courier => "courier",
+        }
+    }
+
+    /// The colour of its paper's glow and its light.
+    pub(super) fn light(self) -> [f32; 3] {
+        match self {
+            Role::Shelver => [1.0, 0.82, 0.55],
+            Role::Courier => [0.55, 0.68, 1.0],
+        }
+    }
+}
+
+/// Where a posted familiar works from: a spot on the floor, and walking distances
+/// from it.
+pub(super) struct Post {
+    pub(super) at: Vec3,
+    level: usize,
+    field: Field,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Task {
+    /// At its post (or riding), looking for work now and then.
+    Idle,
+    /// To the books round a point, to take those bound for `goal` (a courier) or
+    /// those it can file (a shelver, `goal` unused).
+    Fetch { at: Vec3, goal: Vec3 },
+    /// Carrying books to set them down at a point.
+    Deliver(Vec3),
+    /// Filing what it carries, one slot after another.
+    File,
+    /// Back to its post.
+    Home,
+}
+
+pub(super) struct Familiar {
+    pub(super) role: Role,
+    pub(super) post: Option<Post>,
+    pub(super) pos: Vec3,
+    vel: Vec3,
+    task: Task,
+    carry: Vec<u32>,
+    /// Points still to fly through, the next last.
+    path: Vec<Vec3>,
+    phase: f32,
+    rest: f32,
+    /// Game time it last took to the shoulder; the longest riding is posted first.
+    riding_since: f32,
+}
+
+impl Familiar {
+    /// Settle on its perch at once (on loading), with nothing to do yet.
+    pub(super) fn perch(&mut self) {
+        if let Some(post) = &self.post {
+            self.pos = post.at + Vec3::Y * PERCH_H;
+            self.path.clear();
+            self.task = Task::Idle;
+            self.rest = 0.5;
+        }
+    }
+}
+
+impl Game {
+    /// Each familiar's role, and whether it is posted.
+    pub fn familiars(&self) -> impl Iterator<Item = (Role, bool)> + '_ {
+        self.familiars.iter().map(|f| (f.role, f.post.is_some()))
+    }
+
+    /// A new familiar of `role`, riding on the shoulder.
+    pub(super) fn spawn_familiar(&mut self, role: Role) {
+        let p = self.player.eye() + self.player.right() * 0.5;
+        self.familiars.push(Familiar {
+            role,
+            post: None,
+            pos: p,
+            vel: Vec3::ZERO,
+            task: Task::Idle,
+            carry: Vec::new(),
+            path: Vec::new(),
+            phase: self.rng.gen_range(0.0..10.0f32),
+            rest: 0.5,
+            riding_since: self.time,
+        });
+    }
+
+    /// G: take back the familiar aimed at, or else post the one riding longest at the
+    /// floor aimed at.
+    pub(super) fn post_or_recall(&mut self, audio: &mut Audio) {
+        if let Aim::Familiar(i) = self.aim {
+            self.recall(i);
+            audio.play(Sfx::Rustle, 0.4);
+            return;
+        }
+        let riding = (0..self.familiars.len())
+            .filter(|&i| self.familiars[i].post.is_none())
+            .min_by(|&a, &b| {
+                self.familiars[a]
+                    .riding_since
+                    .total_cmp(&self.familiars[b].riding_since)
+            });
+        let Some(i) = riding else {
+            let msg = if self.familiars.is_empty() {
+                "Familiars are learned in the Grimoire (Tab)."
+            } else {
+                "No familiar is riding with you — G at a perch takes one back."
+            };
+            self.hint = Some((msg.into(), 2.5));
+            return;
+        };
+        let Some(at) = self.aimed_floor() else {
+            self.hint = Some(("Aim at open floor nearby to post a familiar.".into(), 2.0));
+            audio.play(Sfx::Nope, 0.3);
+            return;
+        };
+        self.post_familiar(i, at);
+        audio.play(Sfx::Chime, 0.3);
+    }
+
+    /// Post familiar `i` at `at` (a free spot on a floor).
+    pub(super) fn post_familiar(&mut self, i: usize, at: Vec3) {
+        let mut field = self.nav.field();
+        self.nav.fill(&mut field, at);
+        let level = self.lib.world.level_at(at);
+        let f = &mut self.familiars[i];
+        f.post = Some(Post { at, level, field });
+        f.rest = 0.0;
+        self.set_course(i, Task::Home);
+    }
+
+    /// Familiar `i` leaves its post for the shoulder, setting down what it carries.
+    fn recall(&mut self, i: usize) {
+        let carry = std::mem::take(&mut self.familiars[i].carry);
+        let from = self.familiars[i].pos;
+        self.set_down(&carry, from);
+        let f = &mut self.familiars[i];
+        f.post = None;
+        f.task = Task::Idle;
+        f.path.clear();
+        f.riding_since = self.time;
+    }
+
+    /// The floor where the crosshair points, within reach, as a free spot a familiar
+    /// can be posted at (one a walk away, past no closed gate).
+    fn aimed_floor(&self) -> Option<Vec3> {
+        let o = self.player.eye();
+        let d = self.player.forward();
+        let t = match self.aim {
+            Aim::Loose { dist, .. } => dist,
+            _ => self.lib.world.ray(o, d, 12.0, Stops::SIGHT),
+        };
+        if !t.is_finite() || t > 12.0 {
+            return None;
+        }
+        let p = o + d * t;
+        let floor = self.lib.world.ground(Vec2::new(p.x, p.z), p.y + 0.05)?;
+        let at = self.nav.standable_near(Vec3::new(p.x, floor, p.z));
+        (self.nav.open_at(at) && at.distance(Vec3::new(p.x, floor, p.z)) < 2.0).then_some(at)
+    }
+
+    /// The familiar the crosshair points at (its crane or its perch), within reach.
+    pub(super) fn aimed_familiar(&self, o: Vec3, d: Vec3, max_t: f32) -> Option<(usize, f32)> {
+        let mut best: Option<(usize, f32)> = None;
+        for (i, f) in self.familiars.iter().enumerate() {
+            let Some(post) = &f.post else { continue };
+            // The crane, and three points up the perch.
+            let perch = [0.3, 0.75, 1.2].map(|h| (post.at + Vec3::Y * h, 0.25));
+            for (p, r) in std::iter::once((f.pos, 0.35)).chain(perch) {
+                let t = (p - o).dot(d);
+                if t > 0.0 && t < max_t && (o + d * t).distance(p) < r && best.is_none_or(|(_, bt)| t < bt) {
+                    best = Some((i, t));
+                }
+            }
+        }
+        best
+    }
+
+    /// Books leave a familiar's grasp at `from` and drop as a little loose pile.
+    fn set_down(&mut self, books: &[u32], from: Vec3) {
+        for (k, &b) in books.iter().enumerate() {
+            self.state[b as usize] = BookState::Loose;
+            let mut j = || self.rng.gen_range(-1.0..1.0f32);
+            let vel = Vec3::new(j(), 0.0, j()) * 0.6;
+            let spin = Vec3::new(j(), j(), j()) * 3.0;
+            self.loose
+                .throw(b, from, vel, self.rot[b as usize], spin, k as f32 * 0.05);
+        }
+    }
+
+    /// The way for a familiar posted with `post` from `from` to `to`: back along its
+    /// field toward the post until the way to `to` branches off, then out to `to`,
+    /// at flying height and straightened where the line is clear. Points in reverse
+    /// (the next last), ending at `to` itself; `None` if the field doesn't reach one
+    /// of the ends.
+    fn plan(&self, post: &Post, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
+        let key = |p: Vec3| {
+            (
+                (p.x * 4.0).round() as i32,
+                (p.y * 2.0).round() as i32,
+                (p.z * 4.0).round() as i32,
+            )
+        };
+        let floor_of = |p: Vec3| self.lib.world.ground(Vec2::new(p.x, p.z), p.y + 0.3).unwrap_or(p.y);
+        let back = (self.nav).way_back(&post.field, Vec3::new(from.x, floor_of(from), from.z))?;
+        let out = (self.nav).way_back(&post.field, Vec3::new(to.x, floor_of(to), to.z))?;
+        // Both ways end at the post's cell, so they meet.
+        let on_out: HashMap<_, usize> = out.iter().enumerate().map(|(k, &p)| (key(p), k)).collect();
+        let mut way = vec![from];
+        for p in back {
+            if let Some(&k) = on_out.get(&key(p)) {
+                way.extend(out[..=k].iter().rev().map(|&q| q + Vec3::Y * FLY_H));
+                break;
+            }
+            way.push(p + Vec3::Y * FLY_H);
+        }
+        way.push(to);
+        // Straighten: from each point kept, skip ahead while the line stays clear.
+        let mut kept = Vec::new();
+        let mut k = 0;
+        while k + 1 < way.len() {
+            let mut j = k + 1;
+            while j + 1 < way.len() && self.lib.world.line_of_sight(way[k], way[j + 1]) {
+                j += 1;
+            }
+            kept.push(way[j]);
+            k = j;
+        }
+        kept.reverse();
+        Some(kept)
+    }
+
+    /// Where a courier at `post` would take book `b`: the post of a shelver that can
+    /// file it, else just inside its room's doorway; `None` if its department is
+    /// still veiled or the way there is closed.
+    fn courier_goal(&self, post: &Post, b: u32, reach: f32) -> Option<Vec3> {
+        let dept = self.lib.dept_of(self.lib.category_of_book(b));
+        if !self.dept_open(dept) {
+            return None;
+        }
+        let file_reach = WINGS[self.level(Upg::Wings) as usize].3;
+        let approach = self.approach(b);
+        let shelver = (self.familiars.iter())
+            .filter(|f| f.role == Role::Shelver)
+            .filter_map(|f| f.post.as_ref())
+            .map(|p| (self.nav.distance(&p.field, p.at, approach), p.at))
+            .filter(|&(d, _)| d <= file_reach)
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        let goal = shelver.map_or(self.lib.rooms[dept].drop, |(_, at)| at);
+        let here = Vec2::new(goal.x - post.at.x, goal.z - post.at.z).length() <= reach
+            && self.lib.world.level_at(goal) == post.level;
+        let open = self.nav.distance(&post.field, post.at, goal).is_finite();
+        (!here && open).then_some(goal)
+    }
+
+    /// Whether a shelver at `post` can file book `b`: its department is open and its
+    /// slot a short walk from the post.
+    fn shelver_files(&self, post: &Post, b: u32) -> bool {
+        let file_reach = WINGS[self.level(Upg::Wings) as usize].3;
+        self.dept_open(self.lib.dept_of(self.lib.category_of_book(b)))
+            && self.nav.distance(&post.field, post.at, self.approach(b)) <= file_reach
+    }
+
+    /// Work for familiar `i` at its post: the books nearest the post it can take.
+    fn find_work(&mut self, i: usize) -> Option<Task> {
+        let reach = WINGS[self.level(Upg::Wings) as usize].2;
+        let post = self.familiars[i].post.as_ref()?;
+        let (lv, at) = (post.level, Vec2::new(post.at.x, post.at.z));
+        let mut near = self.loose.near(lv, at, reach, |_| true);
+        near.sort_by(|&a, &b| {
+            let d = |x: u32| self.loose.pose(x).0.distance_squared(post.at);
+            d(a).total_cmp(&d(b))
+        });
+        let post = self.familiars[i].post.as_ref()?;
+        for b in near {
+            let p = self.loose.pose(b).0;
+            match self.familiars[i].role {
+                Role::Shelver if self.shelver_files(post, b) => return Some(Task::Fetch { at: p, goal: p }),
+                Role::Courier => {
+                    if let Some(goal) = self.courier_goal(post, b, reach) {
+                        return Some(Task::Fetch { at: p, goal });
+                    }
+                }
+                Role::Shelver => {}
+            }
+        }
+        None
+    }
+
+    /// On arriving at `at`: take what it came for from the books there.
+    fn take_up(&mut self, i: usize, at: Vec3, goal: Vec3) {
+        let (_, cap, reach, _) = WINGS[self.level(Upg::Wings) as usize];
+        let Some(post) = self.familiars[i].post.as_ref() else {
+            return;
+        };
+        let (lv, spot) = (post.level, Vec2::new(at.x, at.z));
+        let wanted: Vec<u32> = (self.loose.near(lv, spot, GRASP, |_| true).into_iter())
+            .filter(|&b| match self.familiars[i].role {
+                Role::Shelver => self.shelver_files(post, b),
+                Role::Courier => self.courier_goal(post, b, reach) == Some(goal),
+            })
+            .collect();
+        let books = self.loose.gather(lv, spot, GRASP, cap, |b| wanted.contains(&b));
+        for &b in &books {
+            self.state[b as usize] = BookState::Carried(i as u8);
+        }
+        let f = &mut self.familiars[i];
+        f.carry = books;
+        // Visit slots in shelf order.
+        f.carry.sort();
+    }
+
+    pub(super) fn update_familiars(&mut self, dt: f32) {
+        let (speed, ..) = WINGS[self.level(Upg::Wings) as usize];
+        // A gate may have opened since a post's field was filled.
+        for f in &mut self.familiars {
+            if let Some(post) = &mut f.post {
+                self.nav.fill(&mut post.field, post.at);
+            }
+        }
+        let eye = self.player.eye();
+        let (right, fwd) = (self.player.right(), self.player.forward());
+        let mut riders = 0;
+        for i in 0..self.familiars.len() {
+            self.familiars[i].phase += dt * 9.0;
+            if self.familiars[i].post.is_none() {
+                // Riding: bob along beside the shoulder, out of the way of the view.
+                let f = &mut self.familiars[i];
+                let side = if riders % 2 == 0 { 1.0 } else { -1.0 };
+                let slot = eye + right * side * (0.55 + 0.2 * (riders / 2) as f32) - fwd * 0.25 + Vec3::Y * 0.12;
+                let bob = Vec3::Y * (f.phase * 0.25).sin() * 0.04;
+                f.pos = f.pos.lerp(slot + bob, 1.0 - (-dt * 8.0).exp());
+                f.vel = Vec3::ZERO;
+                riders += 1;
+                continue;
+            }
+            if self.familiars[i].rest > 0.0 {
+                self.familiars[i].rest -= dt;
+                if self.familiars[i].task == Task::Idle && self.familiars[i].rest <= 0.0 {
+                    match self.find_work(i) {
+                        Some(task) => self.set_course(i, task),
+                        None => self.familiars[i].rest = 1.0,
+                    }
+                }
+                self.carry_dangle(i);
+                continue;
+            }
+            // Fly along the path. A point is passed once reached, or a little before
+            // when the way on to the next is clear (so corners are cut only in the open).
+            let world = &self.lib.world;
+            let f = &mut self.familiars[i];
+            if let Some(&next) = f.path.last() {
+                let to = next - f.pos;
+                let last = f.path.len() == 1;
+                let slow = if last { (to.length() / 0.8).min(1.0) } else { 1.0 };
+                let desired = to.normalize_or_zero() * speed * slow.max(0.15);
+                f.vel = f.vel.lerp(desired, 1.0 - (-dt * 10.0).exp());
+                f.pos += f.vel * dt;
+                let d = f.pos.distance(next);
+                let after = f.path.len().checked_sub(2).map(|k| f.path[k]);
+                if d < ARRIVE || (d < 0.6 && after.is_some_and(|a| world.line_of_sight(f.pos, a))) {
+                    f.path.pop();
+                }
+                self.carry_dangle(i);
+                continue;
+            }
+            self.arrive(i);
+            self.carry_dangle(i);
+        }
+    }
+
+    /// Set familiar `i` off on `task`, planning its path.
+    fn set_course(&mut self, i: usize, task: Task) {
+        let Some(post) = self.familiars[i].post.as_ref() else {
+            return;
+        };
+        let from = self.familiars[i].pos;
+        let to = match task {
+            Task::Fetch { at, .. } => at + Vec3::Y * 0.45,
+            Task::Deliver(at) => at + Vec3::Y * 1.0,
+            Task::File => {
+                let b = self.familiars[i].carry[0] as usize;
+                let f = &self.lib.faces[self.lib.books[b].face as usize];
+                self.lib.books[b].slot_pos + f.normal * 0.55 + Vec3::Y * 0.1
+            }
+            Task::Home => post.at + Vec3::Y * PERCH_H,
+            Task::Idle => from,
+        };
+        match self.plan(post, from, to) {
+            Some(path) => {
+                let f = &mut self.familiars[i];
+                f.task = task;
+                f.path = path;
+            }
+            // Somewhere its post's walks don't reach: give up and go home, or if even
+            // home is out of reach, fold up and reappear on the perch.
+            None if task == Task::Home => self.familiars[i].perch(),
+            None => {
+                let carry = std::mem::take(&mut self.familiars[i].carry);
+                self.set_down(&carry, from);
+                self.set_course(i, Task::Home);
+            }
+        }
+    }
+
+    /// Familiar `i` has reached the end of its path: do what it came to do.
+    fn arrive(&mut self, i: usize) {
+        match self.familiars[i].task {
+            Task::Fetch { at, goal } => {
+                self.take_up(i, at, goal);
+                let f = &self.familiars[i];
+                let next = match (f.carry.is_empty(), f.role) {
+                    (true, _) => Task::Home,
+                    (false, Role::Shelver) => Task::File,
+                    (false, Role::Courier) => Task::Deliver(goal),
+                };
+                self.familiars[i].rest = 0.2;
+                self.set_course(i, next);
+            }
+            Task::Deliver(at) => {
+                let carry = std::mem::take(&mut self.familiars[i].carry);
+                // Beside the goal, so a pile there grows rather than buries the perch.
+                let jitter = Vec3::new(self.rng.gen_range(-0.4..0.4), 0.0, self.rng.gen_range(-0.4..0.4));
+                self.set_down(&carry, at + Vec3::Y * 0.9 + jitter);
+                self.familiars[i].rest = 0.3;
+                self.set_course(i, Task::Home);
+            }
+            Task::File => {
+                let b = self.familiars[i].carry.remove(0);
+                self.state[b as usize] = BookState::Filing;
+                self.start_flight(b, Dest::Shelf, 0.35, 0.0);
+                self.familiars[i].rest = 0.15;
+                let next = if self.familiars[i].carry.is_empty() {
+                    Task::Home
+                } else {
+                    Task::File
+                };
+                self.set_course(i, next);
+            }
+            Task::Home => {
+                let f = &mut self.familiars[i];
+                f.task = Task::Idle;
+                f.vel = Vec3::ZERO;
+                f.rest = 0.4;
+            }
+            Task::Idle => self.familiars[i].rest = 0.5,
+        }
+    }
+
+    /// Carried books dangle beneath familiar `i`.
+    fn carry_dangle(&mut self, i: usize) {
+        let f = &self.familiars[i];
+        for (k, &b) in f.carry.iter().enumerate() {
+            let sway = (f.phase * 0.5 + k as f32).sin() * 0.1;
+            self.pos[b as usize] = f.pos - Vec3::Y * (0.18 + k as f32 * 0.05);
+            self.rot[b as usize] =
+                Quat::from_rotation_y(f.phase * 0.05 + k as f32) * Quat::from_rotation_z(PI * 0.5 + sway);
+        }
+    }
+
+    /// The familiars (folded-paper cranes with a soft inner glow, in their role's
+    /// colour) and the perches they are posted at.
+    pub(super) fn draw_familiars(&self, out: &mut Vec<Inst>) {
+        for f in &self.familiars {
+            let c = f.role.light();
+            let glow = [c[0], c[1], c[2], 0.3];
+            if let Some(post) = &f.post {
+                let brass = [0.55, 0.36, 0.12];
+                out.push(Inst::aabox(
+                    post.at + Vec3::Y * (PERCH_H * 0.5 - 0.05),
+                    Vec3::new(0.035, PERCH_H - 0.1, 0.035),
+                    kind::WOOD,
+                    brass,
+                ));
+                out.push(Inst::aabox(
+                    post.at + Vec3::Y * 0.02,
+                    Vec3::new(0.3, 0.04, 0.3),
+                    kind::WOOD,
+                    brass,
+                ));
+                out.push(Inst::aabox(
+                    post.at + Vec3::Y * (PERCH_H - 0.08),
+                    Vec3::new(0.26, 0.025, 0.04),
+                    kind::WOOD,
+                    brass,
+                ));
+                out.push(Inst::new(
+                    post.at + Vec3::Y * (PERCH_H + 0.32),
+                    Quat::IDENTITY,
+                    Vec3::splat(0.05),
+                    kind::EMISSIVE,
+                    [c[0], c[1], c[2], 1.2],
+                    0,
+                ));
+            }
+            let heading = if f.vel.length_squared() > 0.01 {
+                f.vel.x.atan2(-f.vel.z)
+            } else {
+                f.phase * 0.02
+            };
+            let body_rot = Quat::from_rotation_y(-heading);
+            let k = if f.post.is_some() { 1.6 } else { 0.9 };
+            out.push(Inst::new(
+                f.pos,
+                body_rot,
+                Vec3::new(0.05, 0.05, 0.3) * k,
+                kind::PAPER,
+                glow,
+                0,
+            ));
+            let flap = f.phase.sin() * 0.6;
+            for s in [-1.0f32, 1.0] {
+                let wing_rot = body_rot * Quat::from_rotation_z(s * (0.2 + flap));
+                let off = wing_rot * Vec3::new(s * 0.14 * k, 0.0, 0.0);
+                out.push(Inst::new(
+                    f.pos + off,
+                    wing_rot,
+                    Vec3::new(0.26, 0.008, 0.14) * k,
+                    kind::PAPER,
+                    glow,
+                    0,
+                ));
+            }
+            // Neck and tail.
+            out.push(Inst::new(
+                f.pos + body_rot * Vec3::new(0.0, 0.06, -0.16) * k,
+                body_rot * Quat::from_rotation_x(0.6),
+                Vec3::new(0.025, 0.12, 0.025) * k,
+                kind::PAPER,
+                glow,
+                0,
+            ));
+            out.push(Inst::new(
+                f.pos + body_rot * Vec3::new(0.0, 0.05, 0.15) * k,
+                body_rot * Quat::from_rotation_x(-0.7),
+                Vec3::new(0.02, 0.1, 0.02) * k,
+                kind::PAPER,
+                glow,
+                0,
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::SLAB;
+
+    /// Run the game headless for `secs`, checking every frame that no familiar is
+    /// inside a wall, a case or a floor.
+    fn run(g: &mut Game, secs: f32) {
+        let mut audio = Audio::silent();
+        let walls: Vec<(Vec3, Vec3)> = (g.lib.world.solids().iter())
+            .filter(|s| s.stops.has(Stops::SIGHT) && s.stops.has(Stops::BODIES))
+            .map(|s| (s.min, s.max))
+            .collect();
+        let floors: Vec<(Vec3, Vec3)> = (g.lib.world.slabs.iter())
+            .map(|s| {
+                let y = g.lib.world.levels[s.level].y;
+                (Vec3::new(s.min.x, y - SLAB, s.min.y), Vec3::new(s.max.x, y, s.max.y))
+            })
+            .collect();
+        for frame in 0..(secs * 60.0) as usize {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
+            for (i, f) in g.familiars.iter().enumerate() {
+                let inside = |&(mn, mx): &(Vec3, Vec3)| f.pos.cmpgt(mn).all() && f.pos.cmplt(mx).all();
+                assert!(
+                    !walls.iter().any(inside) && !floors.iter().any(inside),
+                    "frame {frame}: familiar {i} inside something at {}, flying {:?}",
+                    f.pos,
+                    f.path
+                );
+            }
+        }
+    }
+
+    /// Toss `books` (taken from wherever they lie) to land round `at`.
+    fn drop_round(g: &mut Game, books: &[u32], at: Vec3) {
+        g.loose.take(books);
+        for (k, &b) in books.iter().enumerate() {
+            let a = k as f32 * 2.4;
+            let p = at + Vec3::new(a.cos(), 0.0, a.sin()) * 0.5 + Vec3::Y * 0.8;
+            g.loose.throw(b, p, Vec3::ZERO, Quat::IDENTITY, Vec3::ZERO, 0.0);
+        }
+    }
+
+    /// A shelver posted at a category's cases files the books of it lying near its
+    /// post, and leaves alone those whose shelves are far away.
+    #[test]
+    fn a_shelver_files_what_lies_near_it() {
+        let mut g = Game::new(Layout::Hall);
+        let cat = 0;
+        let face = (0..g.lib.faces.len()).find(|&f| g.lib.faces[f].category == cat && g.lib.faces[f].case_idx == 1);
+        let face = &g.lib.faces[face.unwrap()];
+        let post = g.nav.standable_near(face.center + face.normal * 1.2);
+        let ours: Vec<u32> = (0..g.lib.books.len() as u32)
+            .filter(|&b| g.lib.category_of_book(b) == cat && g.loose.is_resting(b))
+            .take(8)
+            .collect();
+        // The East Wing's books are far from these cases (and veiled).
+        let far: Vec<u32> = (0..g.lib.books.len() as u32)
+            .filter(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == 1 && g.loose.is_resting(b))
+            .take(4)
+            .collect();
+        drop_round(&mut g, &[ours.clone(), far.clone()].concat(), post);
+        g.spawn_familiar(Role::Shelver);
+        g.post_familiar(0, post);
+        run(&mut g, 40.0);
+        let filed = ours
+            .iter()
+            .filter(|&&b| g.state[b as usize] == BookState::Shelved)
+            .count();
+        assert_eq!(filed, ours.len(), "{filed} of {} filed", ours.len());
+        assert!(far.iter().all(|&b| g.state[b as usize] == BookState::Loose));
+    }
+
+    /// A courier posted at the great heap carries the Observatory's books through its
+    /// doorway into its room, and those of a category with a shelver to the shelver,
+    /// who files them; veiled departments' books stay where they are.
+    #[test]
+    fn a_courier_carries_books_to_their_room() {
+        let mut g = Game::new(Layout::Great);
+        let heap = g.nav.standable_near(Vec3::new(0.0, 0.0, 3.2));
+        let room = &g.lib.rooms[0];
+        let drop = room.drop;
+        let n = g.lib.books.len() as u32;
+        let dept = |g: &Game, b: u32| g.lib.dept_of(g.lib.category_of_book(b));
+        // A shelver at the cases of the room's first category.
+        let cat = g.lib.catalog.departments[0].categories.start;
+        let face = (0..g.lib.faces.len()).find(|&f| g.lib.faces[f].category == cat && g.lib.faces[f].case_idx == 2);
+        let face = &g.lib.faces[face.unwrap()];
+        let perch = g.nav.standable_near(face.center + face.normal * 1.2);
+        g.spawn_familiar(Role::Shelver);
+        g.post_familiar(0, perch);
+        let to_shelver: Vec<u32> = (0..n).filter(|&b| g.lib.category_of_book(b) == cat).take(4).collect();
+        let to_room: Vec<u32> = (0..n)
+            .filter(|&b| dept(&g, b) == 0 && g.lib.category_of_book(b) != cat)
+            .take(4)
+            .collect();
+        let veiled: Vec<u32> = (0..n).filter(|&b| dept(&g, b) == 5).take(4).collect();
+        let near_heap = |g: &Game, b: u32| g.loose.pose(b).0.distance(heap) < 4.0;
+        drop_round(
+            &mut g,
+            &[to_shelver.clone(), to_room.clone(), veiled.clone()].concat(),
+            heap,
+        );
+        // Clear everything else from round the post, so the courier has just these.
+        let others: Vec<u32> = (0..n)
+            .filter(|&b| g.loose.is_resting(b) && g.loose.pose(b).0.distance(heap) < 6.0)
+            .filter(|b| !to_shelver.contains(b) && !to_room.contains(b) && !veiled.contains(b))
+            .collect();
+        g.loose.take(&others);
+        for &b in &others {
+            g.state[b as usize] = BookState::Shelved;
+        }
+        g.spawn_familiar(Role::Courier);
+        g.post_familiar(1, heap);
+        run(&mut g, 180.0);
+        let shelved = to_shelver
+            .iter()
+            .filter(|&&b| g.state[b as usize] == BookState::Shelved)
+            .count();
+        assert_eq!(shelved, to_shelver.len(), "the shelver filed {shelved}");
+        for &b in &to_room {
+            let p = g.loose.pose(b).0;
+            assert!(
+                g.loose.is_resting(b) && p.distance(drop) < 2.5,
+                "book {b} at {p}, the room's drop at {drop}"
+            );
+        }
+        assert!(veiled.iter().all(|&b| near_heap(&g, b)));
+    }
+
+    /// G at the floor posts the familiar riding longest; G at it takes it back.
+    #[test]
+    fn g_posts_and_takes_back() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = Audio::silent();
+        g.spawn_familiar(Role::Shelver);
+        g.spawn_familiar(Role::Courier);
+        g.player.pos = Vec3::new(0.0, 0.0, 6.5);
+        g.player.yaw = 0.0;
+        g.player.pitch = -0.5;
+        let g_key = Input {
+            post: true,
+            ..Input::default()
+        };
+        g.update(1.0 / 60.0, &g_key, &mut audio, true);
+        let at = g.familiars[0].post.as_ref().expect("posted").at;
+        assert!(at.distance(Vec3::new(0.0, 0.0, 3.5)) < 1.0, "posted at {at}");
+        assert!(g.familiars[1].post.is_none());
+        // Let it settle on its perch, then look at it and take it back.
+        run(&mut g, 3.0);
+        g.player.pitch = ((g.familiars[0].pos.y - g.player.eye().y) / at.distance(g.player.pos)).atan();
+        g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
+        assert_eq!(g.aim, Aim::Familiar(0));
+        g.update(1.0 / 60.0, &g_key, &mut audio, true);
+        assert!(g.familiars[0].post.is_none());
+    }
+}

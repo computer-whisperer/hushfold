@@ -451,6 +451,7 @@ impl Library {
             min: mn,
             max: mx,
             door: side.at3(d, ATRIUM + 0.5, y),
+            drop: side.at3(d + 2.6, ATRIUM + 1.5, y),
         });
         let sign = side.at3(d, ATRIUM - h - 0.03, y + DOOR_H + 0.75);
         let rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Y.cross(-side.out3()), Vec3::Y, -side.out3()));

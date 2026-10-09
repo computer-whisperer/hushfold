@@ -91,9 +91,21 @@ Fingers (sort by department, by series), Long Toss I–II (harder, tighter
 throws), Lodestone Grasp (long reach, hold to pull). Filing: Deeper Arms I–IV,
 Swift Slippers I–II, Tidy Arms (stack sorted by slot, active = nearest target),
 Series Bundle (place whole series at once), Shelving Aura I–III (books float to
-nearby slots on their own). Familiars: Paper Familiars ×5 (autonomous helpers),
-Familiar Wings I–II. Each department has a room (the Hall's are its wings) with
+nearby slots on their own). Familiars: shelvers and couriers, bought one at a time,
+and Familiar Wings I–II (faster, carry more, reach further). Each department has a room (the Hall's are its wings) with
 a doorway, which Sort Sense I and Wayfinding use.
+
+Familiars (`game/familiar.rs`) are paper cranes that ride on the player's
+shoulder until posted: G at a spot on the floor posts the one riding longest, G
+at a posted one (its crane or perch) takes it back. A shelver files loose books
+lying within a few metres of its post whose slots are a short walk from it; a
+courier carries books lying near its post to the post of a shelver that can file
+them, or else to their room's drop spot, and leaves books of veiled departments.
+Each post keeps a walking-distance field from it (`nav::Field`); a trip follows
+the field's way back toward the post until it meets the way out to the target,
+at flying height, straightened wherever the line is clear to sight, so cranes
+use doorways and stairs, or cross the well over a railing, and never pass
+through a wall or floor (checked frame by frame in the familiar tests).
 
 "Nearest" means nearest on foot: `nav.rs` keeps a Dijkstra distance field from
 the player over a 0.5 m grid per level (furniture inflated by the player's

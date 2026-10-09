@@ -1,7 +1,7 @@
 //! Walking distances around the furniture and between floors: a coarse grid per
-//! level, linked where stairs meet a floor, and a distance field from the player, so
-//! "nearest" means nearest on foot rather than through the back of a bookcase or
-//! the floor above.
+//! level, linked where stairs meet a floor, and distance fields over it (from the
+//! player, and from each familiar's post), so "nearest" means nearest on foot
+//! rather than through the back of a bookcase or the floor above.
 
 use crate::world::{BODY_R, STEP_UP, Stops, World, in_body};
 use glam::{Vec2, Vec3};
@@ -64,6 +64,17 @@ impl Layer {
     }
 }
 
+/// Walking distances from one place (its source) over the grid, and the way back
+/// to it from anywhere it reaches.
+pub struct Field {
+    source: Option<usize>,
+    /// The grid's `gate_changes` when the field was filled.
+    gates_seen: u32,
+    /// Distance from the source node in tenths of a cell; UNREACHED otherwise.
+    dist: Vec<u32>,
+    prev: Vec<u32>,
+}
+
 pub struct Nav {
     layers: Vec<Layer>,
     /// Node index of each layer's first cell.
@@ -78,15 +89,13 @@ pub struct Nav {
     /// Nodes reachable from the start without passing a closed gate.
     region: Vec<bool>,
     start: Vec3,
-    /// Distance from the source node in tenths of a cell; UNREACHED otherwise.
-    dist: Vec<u32>,
-    prev: Vec<u32>,
-    source: Option<usize>,
+    /// Bumped when a gate opens or closes, so fields know to refill.
+    gate_changes: u32,
 }
 
 impl Nav {
-    /// The grid for `world` (its gates as they stand), routes measured from `start`
-    /// until the first `update`.
+    /// The grid for `world` (its gates as they stand); `start` is where the player
+    /// begins, for `open_at`.
     pub fn new(world: &World, start: Vec3) -> Self {
         let mut layers = Vec::new();
         let mut first = Vec::new();
@@ -170,9 +179,7 @@ impl Nav {
             layers,
             first,
             links,
-            dist: vec![UNREACHED; nodes],
-            prev: vec![UNREACHED; nodes],
-            source: None,
+            gate_changes: 0,
         };
         nav.refresh_gates();
         nav
@@ -187,7 +194,7 @@ impl Nav {
     }
 
     fn refresh_gates(&mut self) {
-        self.source = None;
+        self.gate_changes += 1;
         self.gated.fill(false);
         for (g, &(l, mn, mx)) in self.gates.iter().enumerate() {
             if !self.closed[g] {
@@ -352,7 +359,6 @@ impl Nav {
 
     /// The middle of the free cell nearest `p` on its floor (where a player would
     /// stand to reach something on a table, say), or `p` if none is near.
-    #[cfg(test)]
     pub fn standable_near(&self, p: Vec3) -> Vec3 {
         let Some(n) = self.locate(p) else { return p };
         let (layer, i) = self.layer_of(n);
@@ -375,21 +381,33 @@ impl Nav {
         best.map_or(p, |(_, m)| self.node_pos(m))
     }
 
-    /// Recompute the distance field if the player has changed cell (or a gate has
-    /// changed).
-    pub fn update(&mut self, from: Vec3) {
+    /// A field that reaches nowhere yet; `fill` it.
+    pub fn field(&self) -> Field {
+        let nodes = self.gated.len();
+        Field {
+            source: None,
+            gates_seen: self.gate_changes,
+            dist: vec![UNREACHED; nodes],
+            prev: vec![UNREACHED; nodes],
+        }
+    }
+
+    /// Fill `f` with walking distances from `from`, unless it already holds them
+    /// (same source cell, no gate changed since).
+    pub fn fill(&self, f: &mut Field, from: Vec3) {
         let Some(src) = self.locate(from) else { return };
-        if self.source == Some(src) {
+        if f.source == Some(src) && f.gates_seen == self.gate_changes {
             return;
         }
-        self.source = Some(src);
-        self.dist.fill(UNREACHED);
-        self.prev.fill(UNREACHED);
+        f.source = Some(src);
+        f.gates_seen = self.gate_changes;
+        f.dist.fill(UNREACHED);
+        f.prev.fill(UNREACHED);
         let mut heap = BinaryHeap::new();
-        // Seed every free cell nearby that the player can walk to in a straight line, at
-        // its true distance. The player's own cell may lie inside furniture clearance
-        // (between two chairs, say) with no free neighbours; the seeds get past that.
-        self.dist[src] = 0;
+        // Seed every free cell nearby that can be walked to in a straight line, at its
+        // true distance. The source cell may lie inside furniture clearance (between
+        // two chairs, say) with no free neighbours; the seeds get past that.
+        f.dist[src] = 0;
         heap.push(Reverse((0u32, src as u32)));
         let l = self.level_of_node(src);
         let layer = &self.layers[l];
@@ -409,30 +427,31 @@ impl Nav {
                 }
                 let c = self.layers[l].center(n - self.first[l]);
                 let d = (p.distance(c) / CELL * STEP as f32).round() as u32;
-                self.dist[n] = d;
+                f.dist[n] = d;
+                f.prev[n] = src as u32;
                 heap.push(Reverse((d, n as u32)));
             }
         }
         while let Some(Reverse((d, n))) = heap.pop() {
             let n = n as usize;
-            if d > self.dist[n] {
+            if d > f.dist[n] {
                 continue;
             }
             for (m, cost) in self.neighbours(n, |nav, m| nav.free(m)) {
                 let nd = d + cost;
-                if nd < self.dist[m] {
-                    self.dist[m] = nd;
-                    self.prev[m] = n as u32;
+                if nd < f.dist[m] {
+                    f.dist[m] = nd;
+                    f.prev[m] = n as u32;
                     heap.push(Reverse((nd, m as u32)));
                 }
             }
         }
     }
 
-    /// The reached node nearest `p` (its own cell, or a neighbour if that one is blocked).
-    fn reached_near(&self, p: Vec3) -> Option<usize> {
+    /// The node of `f` nearest `p` (its own cell, or a neighbour if that one is blocked).
+    fn reached_near(&self, f: &Field, p: Vec3) -> Option<usize> {
         let n = self.locate(p)?;
-        if self.dist[n] != UNREACHED {
+        if f.dist[n] != UNREACHED {
             return Some(n);
         }
         let (layer, i) = self.layer_of(n);
@@ -447,10 +466,10 @@ impl Nav {
                     continue;
                 }
                 let j = nz as usize * layer.w + nx as usize;
-                if self.dist[base + j] == UNREACHED {
+                if f.dist[base + j] == UNREACHED {
                     continue;
                 }
-                let d = self.dist[base + j] as f32 * CELL / STEP as f32 + layer.center(j).distance(at);
+                let d = f.dist[base + j] as f32 * CELL / STEP as f32 + layer.center(j).distance(at);
                 if best.is_none_or(|(bd, _)| d < bd) {
                     best = Some((d, base + j));
                 }
@@ -459,24 +478,24 @@ impl Nav {
         best.map(|(_, n)| n)
     }
 
-    fn field_distance(&self, node: usize, to: Vec3) -> f32 {
+    fn field_distance(&self, f: &Field, node: usize, to: Vec3) -> f32 {
         let c = self.node_pos(node);
-        self.dist[node] as f32 * CELL / STEP as f32 + Vec2::new(c.x, c.z).distance(Vec2::new(to.x, to.z))
+        f.dist[node] as f32 * CELL / STEP as f32 + Vec2::new(c.x, c.z).distance(Vec2::new(to.x, to.z))
     }
 
-    /// Walking distance from `from` (the field's source) to `to`; infinite if unreachable.
-    pub fn distance(&self, from: Vec3, to: Vec3) -> f32 {
+    /// Walking distance from `from` (`f`'s source) to `to`; infinite if unreachable.
+    pub fn distance(&self, f: &Field, from: Vec3, to: Vec3) -> f32 {
         if self.clear(from, to) {
             return Vec2::new(from.x, from.z).distance(Vec2::new(to.x, to.z));
         }
-        match self.reached_near(to) {
-            Some(n) => self.field_distance(n, to),
+        match self.reached_near(f, to) {
+            Some(n) => self.field_distance(f, n, to),
             None => f32::INFINITY,
         }
     }
 
-    /// The route from `from` (the field's source) to `to`.
-    pub fn route(&self, from: Vec3, to: Vec3) -> Option<Route> {
+    /// The route from `from` (`f`'s source) to `to`.
+    pub fn route(&self, f: &Field, from: Vec3, to: Vec3) -> Option<Route> {
         if self.clear(from, to) {
             return Some(Route {
                 waypoint: to,
@@ -484,19 +503,19 @@ impl Nav {
                 direct: true,
             });
         }
-        let end = self.reached_near(to)?;
-        let dist = self.field_distance(end, to);
-        // Walk back toward the player; the first node in plain view is the farthest
+        let end = self.reached_near(f, to)?;
+        let dist = self.field_distance(f, end, to);
+        // Walk back toward the source; the first node in plain view is the farthest
         // visible point along the route.
         let mut n = end;
         let mut waypoint = self.node_pos(end);
-        while self.prev[n] != UNREACHED {
+        while f.prev[n] != UNREACHED {
             let c = self.node_pos(n);
             if self.clear(from, c) {
                 waypoint = c;
                 break;
             }
-            n = self.prev[n] as usize;
+            n = f.prev[n] as usize;
             waypoint = self.node_pos(n);
         }
         Some(Route {
@@ -504,6 +523,18 @@ impl Nav {
             dist,
             direct: false,
         })
+    }
+
+    /// The way from `to` back to `f`'s source, as the floor points of the cells along
+    /// it (`to`'s own cell first, the source's last); `None` if `f` doesn't reach `to`.
+    pub fn way_back(&self, f: &Field, to: Vec3) -> Option<Vec<Vec3>> {
+        let mut n = self.reached_near(f, to)?;
+        let mut out = vec![self.node_pos(n)];
+        while f.prev[n] != UNREACHED {
+            n = f.prev[n] as usize;
+            out.push(self.node_pos(n));
+        }
+        Some(out)
     }
 }
 
@@ -542,10 +573,11 @@ mod tests {
                     q.distance(Vec2::new(x, z)) >= 0.3 - 1e-3
                 });
             assert!(ok, "test spot ({x}, {z}) is not standable");
-            nav.update(p);
-            let d = nav.distance(p, open_floor);
+            let mut f = nav.field();
+            nav.fill(&mut f, p);
+            let d = nav.distance(&f, p, open_floor);
             assert!(d.is_finite() && d < 40.0, "from ({x}, {z}): {d}");
-            let r = nav.route(p, Vec3::new(-16.0, 0.0, -9.0)).expect("route");
+            let r = nav.route(&f, p, Vec3::new(-16.0, 0.0, -9.0)).expect("route");
             assert!(r.dist.is_finite());
         }
     }
@@ -557,12 +589,13 @@ mod tests {
         let mut nav = Nav::new(&lib.world, lib.spawn.0);
         let (west, east) = (Vec3::new(5.0, 0.0, 6.0), Vec3::new(16.0, 0.0, 6.0));
         assert!(nav.open_at(west) && !nav.open_at(east));
-        nav.update(west);
-        assert!(!nav.distance(west, east).is_finite());
+        let mut f = nav.field();
+        nav.fill(&mut f, west);
+        assert!(!nav.distance(&f, west, east).is_finite());
         nav.set_gate(0, false);
         assert!(nav.open_at(east));
-        nav.update(west);
-        let d = nav.distance(west, east);
+        nav.fill(&mut f, west);
+        let d = nav.distance(&f, west, east);
         assert!((11.0..14.0).contains(&d), "{d}");
     }
 }

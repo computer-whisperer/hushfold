@@ -986,7 +986,7 @@ impl Loose {
 
     /// Resting books on level `lv` whose centres lie within `radius` of `at` (with no
     /// wall, case or closed gate between), passing `keep`.
-    fn near(&mut self, lv: usize, at: Vec2, radius: f32, keep: impl Fn(u32) -> bool) -> Vec<u32> {
+    pub fn near(&mut self, lv: usize, at: Vec2, radius: f32, keep: impl Fn(u32) -> bool) -> Vec<u32> {
         self.stamp += 1;
         let mut out = Vec::new();
         let r = Vec2::splat(radius);

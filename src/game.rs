@@ -1,11 +1,17 @@
-//! Game state: player, books in motion, upgrades, familiars, progression, save/load.
+//! Game state: player, books in motion, upgrades, progression, save/load (familiars
+//! in `familiar`).
+
+mod familiar;
+
+use familiar::Familiar;
+pub use familiar::Role;
 
 use crate::audio::{Audio, Sfx};
 use crate::catalog;
 use crate::gfx::{Globals, GpuLight, Inst, MAX_LIGHTS, kind};
 use crate::library::*;
 use crate::loose::{Loose, Rest};
-use crate::nav::{Nav, Route};
+use crate::nav::{Field, Nav, Route};
 use crate::scene::Scene;
 use crate::world::{BODY_R, STEP_UP, Stops};
 use glam::{Mat4, Quat, Vec2, Vec3};
@@ -20,8 +26,6 @@ const SHELF_REACH: f32 = 4.2;
 const HAND_VISIBLE: usize = 8;
 /// Shelving Aura by level: (radius in metres, books per second).
 const AURA_LEVELS: [(f32, f32); 4] = [(0.0, 0.0), (3.0, 2.0), (4.5, 4.0), (6.0, 8.0)];
-/// Familiar Wings by level: (flight speed in m/s, books carried).
-const WINGS_LEVELS: [(f32, usize); 3] = [(2.6, 2), (3.8, 3), (5.0, 5)];
 /// Sifting Touch by level: radius in metres.
 const SIFT_RADIUS: [f32; 5] = [0.0, 0.9, 1.8, 2.7, 3.6];
 /// Seconds to charge a toss fully.
@@ -88,12 +92,13 @@ pub enum Upg {
     Tidy,
     Bundle,
     Aura,
-    Familiar,
+    Shelver,
+    Courier,
     Wings,
 }
 
 /// Every skill, in the Grimoire's order within its tier.
-pub const UPGRADES: [Upg; 15] = [
+pub const UPGRADES: [Upg; 16] = [
     Upg::SortSense,
     Upg::Wayfinding,
     Upg::Lens,
@@ -107,7 +112,8 @@ pub const UPGRADES: [Upg; 15] = [
     Upg::Tidy,
     Upg::Bundle,
     Upg::Aura,
-    Upg::Familiar,
+    Upg::Shelver,
+    Upg::Courier,
     Upg::Wings,
 ];
 
@@ -172,14 +178,19 @@ pub fn upg_def(u: Upg) -> UpgDef {
             "Books you carry drift to their slots whenever you pass close by.",
             Tier::Filing,
         ),
-        Upg::Familiar => (
-            "Paper Familiar",
-            "A folded-paper crane that ferries books to their shelves on its own.",
+        Upg::Shelver => (
+            "Shelver",
+            "A paper crane that rides with you until you post it (G). It files loose books lying near its post whose shelves are close by.",
+            Tier::Familiars,
+        ),
+        Upg::Courier => (
+            "Courier",
+            "A paper crane that carries loose books lying near its post (G) to a shelver that can file them, or else to their room.",
             Tier::Familiars,
         ),
         Upg::Wings => (
             "Familiar Wings",
-            "Familiars fly faster and carry more.",
+            "Familiars fly faster, carry more, and reach further from their posts.",
             Tier::Familiars,
         ),
     };
@@ -203,7 +214,8 @@ pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
             Upg::Tidy => &[90],
             Upg::Bundle => &[120],
             Upg::Aura => &[500, 1500, 3000],
-            Upg::Familiar => &[250, 600, 1200, 2200, 3200],
+            Upg::Shelver => &[250, 600, 1200, 2200, 3200],
+            Upg::Courier => &[800, 1800],
             Upg::Wings => &[800, 2000],
         },
         Layout::Great => match u {
@@ -220,7 +232,8 @@ pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
             Upg::Tidy => &[250],
             Upg::Bundle => &[500],
             Upg::Aura => &[4000, 18000, 40000],
-            Upg::Familiar => &[1000, 3000, 6000, 10000, 15000],
+            Upg::Shelver => &[700, 1500, 3000, 5000, 7000, 9000, 11000, 13000, 15000, 17000],
+            Upg::Courier => &[1200, 2500, 4500, 7000, 10000, 13000, 16000, 20000],
             Upg::Wings => &[8000, 20000],
         },
     }
@@ -286,23 +299,6 @@ struct Flight {
     dest: Dest,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum FamTask {
-    Idle,
-    /// To the top of a pile (on a level).
-    ToPile(usize, Vec3),
-    ToSlot,
-}
-
-struct Familiar {
-    pos: Vec3,
-    vel: Vec3,
-    task: FamTask,
-    carry: Vec<u32>,
-    phase: f32,
-    rest: f32,
-}
-
 struct Particle {
     pos: Vec3,
     vel: Vec3,
@@ -343,6 +339,8 @@ pub enum Aim {
         run: Option<Run>,
         dist: f32,
     },
+    /// A posted familiar (its crane or its perch).
+    Familiar(usize),
 }
 
 #[derive(Default)]
@@ -364,6 +362,8 @@ pub struct Input {
     pub regroup: bool,
     /// V: the Seeker's Lens on or off.
     pub lens: bool,
+    /// G: post a familiar, or take one back.
+    pub post: bool,
 }
 
 pub struct Player {
@@ -426,6 +426,9 @@ struct SaveData {
     /// Books in the air: (book, position). They fall from there on load.
     #[serde(default)]
     airborne: Vec<(u32, [f32; 3])>,
+    /// Each familiar's role and where it is posted (none: riding).
+    #[serde(default)]
+    familiars: Vec<(String, Option<[f32; 3]>)>,
 }
 
 /// The 0.1.x upgrade order, for reading old saves.
@@ -436,7 +439,7 @@ const LEGACY_ORDER: [Upg; 9] = [
     Upg::Tidy,
     Upg::Bundle,
     Upg::Lodestone,
-    Upg::Familiar,
+    Upg::Shelver,
     Upg::Aura,
     Upg::Wings,
 ];
@@ -492,6 +495,8 @@ pub struct Game {
     scene_gates: Vec<bool>,
     pub loose: Loose,
     nav: Nav,
+    /// Walking distances from the player.
+    walk: Field,
     /// Where the compass points, if anywhere.
     pub sense: Option<Sense>,
     /// What toss and sift take: the active (or aimed) book's department, category
@@ -539,6 +544,7 @@ impl Game {
             dept_total[lib.dept_of(lib.category_of_book(b))] += 1;
         }
         let loose = Loose::new(&lib);
+        let nav = Nav::new(&lib.world, lib.spawn.0);
         let pos = (0..n as u32).map(|b| loose.pose(b).0).collect();
         let rot = (0..n as u32).map(|b| loose.pose(b).1).collect();
         let mut rng = StdRng::seed_from_u64(0x5eed);
@@ -605,7 +611,8 @@ impl Game {
             ),
             scene_gates: vec![false; lib.world.gates().len()],
             loose,
-            nav: Nav::new(&lib.world, lib.spawn.0),
+            walk: nav.field(),
+            nav,
             sense: None,
             group: Group::Category,
             lens: false,
@@ -649,8 +656,18 @@ impl Game {
         self.lumens -= cost;
         self.upg[upg_index(u)] += 1;
         audio.play(Sfx::Purchase, 0.7);
-        if u == Upg::Familiar {
-            self.spawn_familiar();
+        let role = match u {
+            Upg::Shelver => Some(Role::Shelver),
+            Upg::Courier => Some(Role::Courier),
+            _ => None,
+        };
+        if let Some(role) = role {
+            self.spawn_familiar(role);
+            let msg = format!(
+                "Your {} rides with you: aim at the floor and press G to post it.",
+                role.name()
+            );
+            self.hint = Some((msg, 4.0));
         }
         if u == Upg::Tidy {
             let prev = self.active_book();
@@ -658,31 +675,18 @@ impl Game {
             self.follow_active(prev);
         }
         let def = upg_def(u);
-        let name = if upg_costs(self.layout, u).len() > 1 {
+        let news = if let Some(role) = role {
+            format!("A {} joins you", role.name())
+        } else if upg_costs(self.layout, u).len() > 1 {
             let roman = ["I", "II", "III", "IV", "V"];
-            format!(
-                "{} {}",
-                def.name,
-                roman[(self.level(u) as usize - 1).min(roman.len() - 1)]
-            )
+            let level = roman[(self.level(u) as usize - 1).min(roman.len() - 1)];
+            format!("{} {level} learned", def.name)
         } else {
-            def.name.to_string()
+            format!("{} learned", def.name)
         };
-        self.toast(format!("{name} learned"), [0.95, 0.8, 0.45], false);
+        self.toast(news, [0.95, 0.8, 0.45], false);
         self.dirty_save = true;
         true
-    }
-
-    fn spawn_familiar(&mut self) {
-        let p = self.player.eye() + self.player.forward() * 1.0 + Vec3::Y * 0.5;
-        self.familiars.push(Familiar {
-            pos: p,
-            vel: Vec3::ZERO,
-            task: FamTask::Idle,
-            carry: Vec::new(),
-            phase: self.rng.gen_range(0.0..1.0f32) * 10.0,
-            rest: 0.5,
-        });
     }
 
     pub fn toast(&mut self, text: String, color: [f32; 3], big: bool) {
@@ -775,6 +779,9 @@ impl Game {
                     self.hint = Some(("The Seeker's Lens is learned in the Grimoire (Tab).".into(), 2.0));
                 }
             }
+            if input.post {
+                self.post_or_recall(audio);
+            }
             if input.cycle != 0 && !self.held.is_empty() {
                 let n = self.held.len() as i32;
                 self.active = ((self.active as i32 + input.cycle).rem_euclid(n)) as usize;
@@ -803,7 +810,7 @@ impl Game {
         let tidy = self.level(Upg::Tidy) > 0;
         let sense = self.level(Upg::SortSense) > 0 || self.level(Upg::Wayfinding) > 0;
         if (tidy || sense) && !self.held.is_empty() {
-            self.nav.update(self.player.pos);
+            self.nav.fill(&mut self.walk, self.player.pos);
         }
         if tidy && self.manual_pick.is_none() {
             self.pick_nearest_active();
@@ -1006,6 +1013,11 @@ impl Game {
                 point: o + d * t,
                 dist: t,
             };
+            best_t = t;
+        }
+        // Posted familiars, nearer still.
+        if let Some((i, _)) = self.aimed_familiar(o, d, best_t.min(block).min(SHELF_REACH * 2.0)) {
+            best = Aim::Familiar(i);
         }
         best
     }
@@ -1439,11 +1451,11 @@ impl Game {
         let sense = self.level(Upg::SortSense);
         let from = self.player.pos;
         if sense >= 2 || (sense == 1 && here == Some(dept)) {
-            let route = self.nav.route(from, self.approach(b))?;
+            let route = self.nav.route(&self.walk, from, self.approach(b))?;
             return Some(Sense { route, room: None });
         }
         if self.level(Upg::Wayfinding) > 0 && here != Some(dept) {
-            let route = self.nav.route(from, self.lib.rooms[dept].door)?;
+            let route = self.nav.route(&self.walk, from, self.lib.rooms[dept].door)?;
             return Some(Sense {
                 route,
                 room: Some(dept),
@@ -1459,7 +1471,7 @@ impl Game {
             return;
         }
         let from = self.player.pos;
-        let cost = |g: &Self, b: u32| g.nav.distance(from, g.approach(b));
+        let cost = |g: &Self, b: u32| g.nav.distance(&g.walk, from, g.approach(b));
         let mut best = (f32::INFINITY, 0);
         for (i, &b) in self.held.iter().enumerate() {
             let d = cost(self, b);
@@ -1498,115 +1510,6 @@ impl Game {
             }
         }
         self.follow_active(prev);
-    }
-
-    fn update_familiars(&mut self, dt: f32) {
-        let wings = self.level(Upg::Wings) as usize;
-        let (speed, cap) = WINGS_LEVELS[wings];
-        let cruise = 4.9f32;
-        let open: Vec<bool> = (0..self.lib.catalog.departments.len())
-            .map(|d| self.dept_open(d))
-            .collect();
-        let mut fams = std::mem::take(&mut self.familiars);
-        for (fi, fam) in fams.iter_mut().enumerate() {
-            fam.phase += dt * 9.0;
-            if fam.rest > 0.0 {
-                fam.rest -= dt;
-                fam.vel *= 1.0 - dt * 3.0;
-                fam.pos += fam.vel * dt + Vec3::Y * (fam.phase * 0.3).sin() * 0.002;
-                continue;
-            }
-            // Choose a task.
-            if fam.task == FamTask::Idle {
-                if !fam.carry.is_empty() {
-                    fam.task = FamTask::ToSlot;
-                } else {
-                    let (nav, rng) = (&self.nav, &mut self.rng);
-                    let at = fam.pos;
-                    let fileable = |b: u32| open[self.lib.dept_of(self.lib.category_of_book(b))];
-                    let pile = (self.loose).best_pile(|_, c, books| {
-                        (nav.open_at(c) && books.iter().any(|&b| fileable(b)))
-                            .then(|| (c + Vec3::Y * 1.5).distance(at) + rng.gen_range(0.0..4.0))
-                    });
-                    match pile {
-                        Some((lv, top)) => fam.task = FamTask::ToPile(lv, top),
-                        None => {
-                            fam.rest = 1.0;
-                            continue;
-                        }
-                    }
-                }
-            }
-            let target = match fam.task {
-                FamTask::ToPile(_, top) => top + Vec3::Y * 0.45,
-                FamTask::ToSlot => {
-                    let b = fam.carry[0] as usize;
-                    let f = &self.lib.faces[self.lib.books[b].face as usize];
-                    self.lib.books[b].slot_pos + f.normal * 0.55 + Vec3::Y * 0.1
-                }
-                FamTask::Idle => fam.pos,
-            };
-            let to = target - fam.pos;
-            let horiz = Vec2::new(to.x, to.z).length();
-            let goal = if horiz > 1.2 {
-                Vec3::new(target.x, cruise.max(target.y), target.z)
-            } else {
-                target
-            };
-            // Climb first when far below cruise altitude and far away.
-            let goal = if horiz > 1.2 && fam.pos.y < cruise - 0.6 {
-                Vec3::new(fam.pos.x + to.x * 0.15, cruise, fam.pos.z + to.z * 0.15)
-            } else {
-                goal
-            };
-            let dir = goal - fam.pos;
-            let desired = dir.normalize_or_zero() * speed * (dir.length() / 0.8).min(1.0);
-            fam.vel = fam.vel.lerp(desired, 1.0 - (-dt * 4.0).exp());
-            fam.pos += fam.vel * dt;
-            if fam.pos.distance(target) < 0.25 {
-                match fam.task {
-                    FamTask::ToPile(lv, top) => {
-                        // Someone may have cleared it meanwhile; then this comes back empty.
-                        // Only books whose shelves are open: the rest stay put.
-                        let lib = &self.lib;
-                        let fileable = |b: u32| open[lib.dept_of(lib.category_of_book(b))];
-                        for b in self.loose.gather(lv, Vec2::new(top.x, top.z), 0.45, cap, fileable) {
-                            self.state[b as usize] = BookState::Carried(fi as u8);
-                            fam.carry.push(b);
-                        }
-                        // Visit slots in shelf order.
-                        fam.carry.sort();
-                        fam.task = FamTask::Idle;
-                        fam.rest = 0.25;
-                    }
-                    FamTask::ToSlot => {
-                        let b = fam.carry.remove(0);
-                        self.state[b as usize] = BookState::Filing;
-                        self.flights.retain(|f| f.book != b);
-                        self.flights.push(Flight {
-                            book: b,
-                            from_pos: self.pos[b as usize],
-                            from_rot: self.rot[b as usize],
-                            t: 0.0,
-                            dur: 0.35,
-                            delay: 0.0,
-                            dest: Dest::Shelf,
-                        });
-                        fam.task = FamTask::Idle;
-                        fam.rest = 0.15;
-                    }
-                    FamTask::Idle => {}
-                }
-            }
-            // Carried books dangle beneath.
-            for (k, &b) in fam.carry.iter().enumerate() {
-                let sway = (fam.phase * 0.5 + k as f32).sin() * 0.1;
-                self.pos[b as usize] = fam.pos - Vec3::Y * (0.18 + k as f32 * 0.05);
-                self.rot[b as usize] =
-                    Quat::from_rotation_y(fam.phase * 0.05 + k as f32) * Quat::from_rotation_z(PI * 0.5 + sway);
-            }
-        }
-        self.familiars = fams;
     }
 
     // -------------------------------------------------------------- scripting aids
@@ -1736,7 +1639,7 @@ impl Game {
             0.6,
         );
         for f in &self.familiars {
-            push(&mut list, f.pos, 3.5, [0.75, 0.85, 1.0], 0.8);
+            push(&mut list, f.pos, 3.5, f.role.light(), 0.8);
         }
         // The library's lights nearest the eye (by how far their reach falls short of
         // it), as many as are left.
@@ -1929,55 +1832,7 @@ impl Game {
             ));
         }
 
-        // Familiars: folded-paper cranes with a soft inner glow.
-        for f in &self.familiars {
-            let heading = if f.vel.length_squared() > 0.01 {
-                f.vel.x.atan2(-f.vel.z)
-            } else {
-                0.0
-            };
-            let body_rot = Quat::from_rotation_y(-heading);
-            let k = 1.6;
-            let glow = [0.55, 0.65, 1.0, 0.3];
-            dyn_insts.push(Inst::new(
-                f.pos,
-                body_rot,
-                Vec3::new(0.05, 0.05, 0.3) * k,
-                kind::PAPER,
-                glow,
-                0,
-            ));
-            let flap = f.phase.sin() * 0.6;
-            for s in [-1.0f32, 1.0] {
-                let wing_rot = body_rot * Quat::from_rotation_z(s * (0.2 + flap));
-                let off = wing_rot * Vec3::new(s * 0.14 * k, 0.0, 0.0);
-                dyn_insts.push(Inst::new(
-                    f.pos + off,
-                    wing_rot,
-                    Vec3::new(0.26, 0.008, 0.14) * k,
-                    kind::PAPER,
-                    glow,
-                    0,
-                ));
-            }
-            // Neck and tail.
-            dyn_insts.push(Inst::new(
-                f.pos + body_rot * Vec3::new(0.0, 0.06, -0.16) * k,
-                body_rot * Quat::from_rotation_x(0.6),
-                Vec3::new(0.025, 0.12, 0.025) * k,
-                kind::PAPER,
-                glow,
-                0,
-            ));
-            dyn_insts.push(Inst::new(
-                f.pos + body_rot * Vec3::new(0.0, 0.05, 0.15) * k,
-                body_rot * Quat::from_rotation_x(-0.7),
-                Vec3::new(0.02, 0.1, 0.02) * k,
-                kind::PAPER,
-                glow,
-                0,
-            ));
-        }
+        self.draw_familiars(&mut dyn_insts);
 
         // Particles and dust motes.
         for p in &self.particles {
@@ -2173,6 +2028,9 @@ impl Game {
                 .map(|(b, l, _)| (b, l as u8))
                 .collect(),
             airborne: self.loose.airborne().map(|(b, p)| (b, p.to_array())).collect(),
+            familiars: (self.familiars.iter())
+                .map(|f| (f.role.name().to_string(), f.post.as_ref().map(|p| p.at.to_array())))
+                .collect(),
         };
         let path = self.save_path();
         if let Some(dir) = path.parent() {
@@ -2297,9 +2155,15 @@ impl Game {
                 self.upg[i] = data.levels.get(&format!("{u:?}")).copied().unwrap_or(0);
             }
         }
-        if data.version == 0 && self.level(Upg::SortSense) == 1 {
+        if data.version == 0 {
             // Sort Sense found the slot from anywhere before it had levels.
-            self.upg[upg_index(Upg::SortSense)] = 2;
+            if self.level(Upg::SortSense) == 1 {
+                self.upg[upg_index(Upg::SortSense)] = 2;
+            }
+            // Paper Familiars filed books from anywhere; they come back as shelvers.
+            if let Some(&n) = data.levels.get("Familiar") {
+                self.upg[upg_index(Upg::Shelver)] = n;
+            }
         }
         for (i, &u) in UPGRADES.iter().enumerate() {
             self.upg[i] = self.upg[i].min(upg_costs(self.layout, u).len() as u32);
@@ -2311,8 +2175,26 @@ impl Game {
         self.player.pos = Vec3::new(x, y, z);
         self.player.yaw = yaw;
         self.player.pitch = pitch;
-        for _ in 0..self.level(Upg::Familiar) {
-            self.spawn_familiar();
+        for role in [Role::Shelver, Role::Courier] {
+            let upg = if role == Role::Shelver {
+                Upg::Shelver
+            } else {
+                Upg::Courier
+            };
+            for _ in 0..self.level(upg) {
+                self.spawn_familiar(role);
+            }
+        }
+        for (name, at) in &data.familiars {
+            let Some(at) = at.map(Vec3::from_array) else { continue };
+            let free = (0..self.familiars.len())
+                .find(|&i| self.familiars[i].role.name() == name && self.familiars[i].post.is_none());
+            if let Some(i) = free
+                && self.nav.open_at(at)
+            {
+                self.post_familiar(i, at);
+                self.familiars[i].perch();
+            }
         }
         for c in 0..self.lib.catalog.categories.len() {
             if self.category_shelved[c] == self.lib.category_books[c] {
@@ -2420,22 +2302,19 @@ mod tests {
             let open: Vec<bool> = (0..g.dept_total.len()).map(|d| g.dept_open(d)).collect();
             let fileable = |b: u32| open[book_dept[b as usize]];
             let count = |books: &[u32]| books.iter().filter(|&&b| fileable(b)).count();
-            // Familiars: each files ~one book per (flight time + handling), approximated.
-            let fams = g.level(Upg::Familiar) as f32;
-            let trip_start = t;
             // Where a player would go: the fewest seconds of walking per book gathered.
             let (cap, walk) = (g.capacity(), speed(&g));
-            g.nav.update(pos);
+            g.nav.fill(&mut g.walk, pos);
             let Some((lv, top)) = g.loose.best_pile(|_, c, books| {
                 let n = count(books);
-                (n > 0 && g.nav.open_at(c)).then(|| (g.nav.distance(pos, c) / walk + 1.0) / n.min(cap) as f32)
+                (n > 0 && g.nav.open_at(c)).then(|| (g.nav.distance(&g.walk, pos, c) / walk + 1.0) / n.min(cap) as f32)
             }) else {
                 break;
             };
             let floor = g.lib.world.ground(Vec2::new(top.x, top.z), top.y).unwrap_or(0.0);
             let at = g.nav.standable_near(Vec3::new(top.x, floor, top.z));
             let reach = g.gather_reach();
-            let d = g.nav.distance(pos, at);
+            let d = g.nav.distance(&g.walk, pos, at);
             if !d.is_finite() {
                 break;
             }
@@ -2463,7 +2342,7 @@ mod tests {
             // File, nearest slot on foot first; a click files one book, or a whole
             // series with Bundle. Walks between slots are measured on the field from
             // where the armful was gathered.
-            g.nav.update(pos);
+            g.nav.fill(&mut g.walk, pos);
             let (aura_r, aura_rate) = AURA_LEVELS[g.level(Upg::Aura) as usize];
             let mut here = pos;
             let mut here_d = 0.0f32;
@@ -2471,7 +2350,7 @@ mod tests {
                 let (i, d) = (g.held.iter().enumerate())
                     .map(|(i, &b)| {
                         let to = g.approach(b);
-                        let d = g.nav.distance(pos, to);
+                        let d = g.nav.distance(&g.walk, pos, to);
                         (i, if d.is_finite() { d } else { pos.distance(to) })
                     })
                     .min_by(|a, b| (a.1 - here_d).abs().total_cmp(&(b.1 - here_d).abs()))
@@ -2512,27 +2391,6 @@ mod tests {
                 }
             }
             pos = here;
-            // Familiars over the elapsed trip, at measured rates per Wings level.
-            let rate = [0.095, 0.17, 0.25][g.level(Upg::Wings) as usize] * fams;
-            let mut left = (rate * (t - trip_start)) as usize;
-            let open: Vec<bool> = (0..g.dept_total.len()).map(|d| g.dept_open(d)).collect();
-            let fileable = |b: u32| open[book_dept[b as usize]];
-            while left > 0 {
-                let Some((lv, top)) = g.loose.best_pile(|_, c, books| {
-                    (g.nav.open_at(c) && books.iter().any(|&b| fileable(b))).then(|| c.distance(pos))
-                }) else {
-                    break;
-                };
-                let books = g.loose.gather(lv, Vec2::new(top.x, top.z), 0.45, left, fileable);
-                if books.is_empty() {
-                    break;
-                }
-                left -= books.len();
-                for b in books {
-                    let mut thunks = 0;
-                    g.on_shelved(b, &mut audio, &mut thunks);
-                }
-            }
             // Spend.
             loop {
                 // The bot never sifts or tosses, so it doesn't buy them.
@@ -2583,9 +2441,9 @@ mod tests {
             let mut g = Game::new(layout);
             g.open_all_gates();
             let from = g.player.pos;
-            g.nav.update(from);
+            g.nav.fill(&mut g.walk, from);
             let stuck: Vec<u32> = (0..g.lib.books.len() as u32)
-                .filter(|&b| !g.nav.distance(from, g.approach(b)).is_finite())
+                .filter(|&b| !g.nav.distance(&g.walk, from, g.approach(b)).is_finite())
                 .collect();
             assert!(
                 stuck.is_empty(),
@@ -2609,29 +2467,6 @@ mod tests {
     #[ignore]
     fn pacing_great_library() {
         simulate(Layout::Great);
-    }
-
-    /// Measures what familiars actually shelve per second, by running the real familiar
-    /// code headless. Feeds the rates in `pacing_simulation`. Run with `--ignored --nocapture`.
-    #[test]
-    #[ignore]
-    fn familiar_throughput() {
-        let mut audio = crate::audio::Audio::silent();
-        for wings in 0..=2 {
-            for fams in [1, 5] {
-                let mut g = Game::new(Layout::Hall);
-                g.upg[upg_index(Upg::Wings)] = wings;
-                for _ in 0..fams {
-                    g.spawn_familiar();
-                }
-                let secs = 180.0;
-                for _ in 0..(secs * 60.0) as usize {
-                    g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
-                }
-                let rate = g.total_shelved() as f32 / secs / fams as f32;
-                println!("wings {wings} familiars {fams}: {rate:.3} books/s each");
-            }
-        }
     }
 
     /// Every slot must be fileable when looked at from a natural oblique standpoint
@@ -2907,14 +2742,14 @@ mod tests {
         let mut g = Game::new(Layout::Great);
         g.open_all_gates();
         let from = g.player.pos;
-        g.nav.update(from);
+        g.nav.fill(&mut g.walk, from);
         for dept in [4, 8] {
             let b = (0..g.lib.books.len() as u32)
                 .find(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == dept)
                 .unwrap();
             let to = g.approach(b);
-            let d = g.nav.distance(from, to);
-            let r = g.nav.route(from, to).expect("a route");
+            let d = g.nav.distance(&g.walk, from, to);
+            let r = g.nav.route(&g.walk, from, to).expect("a route");
             // Straight-line distance is no measure of a walk up a storey or two.
             assert!(
                 d.is_finite() && d > from.distance(to) + 5.0 && d < 120.0,
@@ -3183,9 +3018,18 @@ mod tests {
             g.on_shelved(b, &mut audio, &mut thunks);
         }
         assert!(g.lib.world.gates_open()[0] && !g.lib.world.gates_open()[1]);
+        g.spawn_familiar(Role::Courier);
+        g.spawn_familiar(Role::Shelver);
+        g.upg[upg_index(Upg::Courier)] = 1;
+        g.upg[upg_index(Upg::Shelver)] = 1;
+        let post = g.nav.standable_near(Vec3::new(4.0, 0.0, 6.0));
+        g.post_familiar(1, post);
         g.save();
         let mut l = Game::new(Layout::Great);
         assert!(l.load());
+        let roles: Vec<(Role, bool)> = l.familiars().collect();
+        assert_eq!(roles, vec![(Role::Shelver, true), (Role::Courier, false)]);
+        assert_eq!(l.familiars[0].post.as_ref().map(|p| p.at), Some(post));
         assert_eq!(l.total_shelved(), g.total_shelved());
         assert_eq!(l.lib.world.gates_open(), g.lib.world.gates_open());
         assert_eq!(l.loose.heightfield_errors(), 0);
@@ -3199,6 +3043,20 @@ mod tests {
         let mut hall = Game::new(Layout::Hall);
         assert!(hall.load());
         assert_eq!(hall.lumens, 42);
+        // A save from before phase 3: Paper Familiars come back as shelvers (riding),
+        // and Sort Sense, which then reached anywhere, as Sort Sense II.
+        let json = format!(
+            r#"{{"seed":{SEED},"lumens":5,"earned":900,"levels":{{"Familiar":3,"SortSense":1,"Arms":2}},
+                "shelved":[],"held":[],"player":[0.0,0.0,6.5,0.0,0.0],"play_time":60.0}}"#
+        );
+        std::fs::write(hall.save_path(), json).unwrap();
+        let mut old = Game::new(Layout::Hall);
+        assert!(old.load());
+        assert_eq!(old.level(Upg::Shelver), 3);
+        assert_eq!(old.level(Upg::SortSense), 2);
+        assert_eq!(old.level(Upg::Arms), 2);
+        let riding = old.familiars().filter(|&(r, posted)| r == Role::Shelver && !posted);
+        assert_eq!(riding.count(), 3);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3210,11 +3068,17 @@ mod tests {
             let mut g = Game::new(layout);
             g.open_all_gates();
             let from = g.player.pos;
-            g.nav.update(from);
+            g.nav.fill(&mut g.walk, from);
             assert_eq!(g.lib.rooms.len(), g.lib.catalog.departments.len());
             for (d, r) in g.lib.rooms.iter().enumerate() {
-                assert_eq!(g.lib.room_at(r.door), Some(d), "{layout:?}: room {d}'s door");
-                assert!(g.nav.distance(from, r.door).is_finite(), "{layout:?}: room {d}'s door");
+                for (what, p) in [("door", r.door), ("drop", r.drop)] {
+                    assert_eq!(g.lib.room_at(p), Some(d), "{layout:?}: room {d}'s {what}");
+                    let walk = g.nav.distance(&g.walk, from, p);
+                    assert!(walk.is_finite(), "{layout:?}: room {d}'s {what}");
+                }
+                // Couriers' piles lie clear of the cases.
+                let clear = g.nav.standable_near(r.drop);
+                assert!(clear.distance(r.drop) < 0.4, "{layout:?}: room {d}'s drop {}", r.drop);
             }
             for b in 0..g.lib.books.len() as u32 {
                 let d = g.lib.dept_of(g.lib.category_of_book(b));

@@ -330,6 +330,12 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 }
             }
         }
+        Aim::Familiar(i) => {
+            painter.circle_stroke(c, 7.0, Stroke::new(1.5_f32, GOLD));
+            if let Some((role, _)) = g.familiars().nth(i) {
+                tip = Some((format!("A {} at its post · G take it back", role.name()), INK));
+            }
+        }
         Aim::None => {
             painter.circle_filled(c, 2.0, INK.gamma_multiply(0.7));
         }
@@ -413,6 +419,10 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 }
                 if g.lens {
                     status.push_str("  ·  lens");
+                }
+                let riding = g.familiars().filter(|&(_, posted)| !posted).count();
+                if riding > 0 {
+                    status.push_str(&format!("  ·  {riding} riding (G posts)"));
                 }
                 ui.label(RichText::new(status).font(serif(13.0)).color(DIM));
                 if let Some(b) = g.active_book() {
@@ -650,6 +660,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                         "WASD walk · Shift hurry · Mouse look · Click gather/file\n\
                          Hold right mouse to toss a group, release to throw · F sift\n\
                          R sort by department, category or series · V lens\n\
+                         G post a familiar where you aim, or take one back\n\
                          Scroll or Q/E cycle the active book · Tab Grimoire\n\
                          M music · F11 fullscreen · Esc pause",
                     )

@@ -145,6 +145,8 @@ pub struct Room {
     pub max: Vec2,
     /// In the doorway, on the floor.
     pub door: Vec3,
+    /// Where couriers set its books down, inside it, clear of the way in.
+    pub drop: Vec3,
 }
 
 pub struct Library {
