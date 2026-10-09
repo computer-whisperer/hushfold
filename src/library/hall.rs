@@ -28,6 +28,20 @@ pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
     lib.build_stacks(rng);
     lib.build_center();
     lib.build_piles(rng);
+    // The wings are the rooms, the veil's line their doorway (the reading room is
+    // the West Wing's).
+    lib.rooms.push(Room {
+        level: 0,
+        min: Vec2::new(-HALL_X, -HALL_Z),
+        max: Vec2::new(VEIL_X, HALL_Z),
+        door: Vec3::new(VEIL_X - 0.6, 0.0, 0.0),
+    });
+    lib.rooms.push(Room {
+        level: 0,
+        min: Vec2::new(VEIL_X, -HALL_Z),
+        max: Vec2::new(HALL_X, HALL_Z),
+        door: Vec3::new(VEIL_X + 0.4, 0.0, 0.0),
+    });
     // The veil hangs between the east columns until 60% of the West Wing is home.
     lib.world.add_gate(Gate {
         level: 0,

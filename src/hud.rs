@@ -1,7 +1,7 @@
 //! egui HUD: crosshair, armful, active-book card, world labels, toasts, Grimoire.
 
 use crate::catalog;
-use crate::game::{Aim, Game, UPGRADES, Upg, upg_def};
+use crate::game::{Aim, Game, Tier, UPGRADES, Upg, upg_costs, upg_def};
 use crate::library::{LabelKind, Layout, ROWS};
 use crate::settings::Settings;
 use egui::{Align2, Color32, FontFamily, FontId, Pos2, Rect, RichText, Stroke, Vec2};
@@ -191,19 +191,31 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         );
     }
 
-    // ---- Sort Sense marker.
-    if g.level(Upg::SortSense) > 0
+    // ---- The compass: Sort Sense's marker on the slot, or Wayfinding's on the way
+    // to the room.
+    if let Some(sense) = g.sense
         && let Some(b) = g.active_book()
     {
-        let slot = g.lib.books[b as usize].slot_pos;
         let s = &g.lib.series[g.lib.books[b as usize].series as usize];
-        let col = bright(s.color);
+        let (slot, col) = match sense.room {
+            None => (g.lib.books[b as usize].slot_pos, bright(s.color)),
+            Some(d) => {
+                let first = g.lib.catalog.departments[d].categories.start;
+                let c = catalog::category_color(&g.lib.catalog.categories[first]);
+                (g.lib.rooms[d].door + glam::Vec3::Y * 1.6, bright(c))
+            }
+        };
         let center = Pos2::new(screen.x * 0.5, screen.y * 0.5);
         // When the slot is round the back of a case, point along the walk instead.
-        let (target, dist, direct) = match g.sense_route {
-            Some(r) if !r.direct => (r.waypoint + glam::Vec3::Y * 1.1, r.dist, false),
-            Some(r) => (slot, r.dist, true),
-            None => (slot, slot.distance(eye), true),
+        let r = sense.route;
+        let (target, dist, direct) = if r.direct {
+            (slot, r.dist, true)
+        } else {
+            (r.waypoint + glam::Vec3::Y * 1.1, r.dist, false)
+        };
+        let label = match sense.room {
+            Some(d) => format!("{} · {dist:.0} m", g.lib.catalog.departments[d].name),
+            None => format!("{dist:.0} m"),
         };
         match project(&vp, target, screen) {
             Some(p) if p.x > 30.0 && p.x < screen.x - 30.0 && p.y > 30.0 && p.y < screen.y - 30.0 => {
@@ -232,14 +244,8 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                     painter.line_segment([tip, tip - ahead * 6.0 + perp * 5.0], Stroke::new(2.0_f32, col));
                     painter.line_segment([tip, tip - ahead * 6.0 - perp * 5.0], Stroke::new(2.0_f32, col));
                 }
-                if dist > 3.0 || !direct {
-                    painter.text(
-                        p + Vec2::new(0.0, 12.0),
-                        Align2::CENTER_TOP,
-                        format!("{dist:.0} m"),
-                        serif(13.0),
-                        col,
-                    );
+                if dist > 3.0 || !direct || sense.room.is_some() {
+                    painter.text(p + Vec2::new(0.0, 12.0), Align2::CENTER_TOP, label, serif(13.0), col);
                 }
             }
             proj => {
@@ -261,13 +267,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                     col.gamma_multiply(0.85),
                     Stroke::NONE,
                 ));
-                painter.text(
-                    edge - dir * 16.0,
-                    Align2::CENTER_CENTER,
-                    format!("{dist:.0} m"),
-                    serif(13.0),
-                    col,
-                );
+                painter.text(edge - dir * 16.0, Align2::CENTER_CENTER, label, serif(13.0), col);
             }
         }
     }
@@ -283,11 +283,18 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             let what = if room == 0 {
                 "arms full".to_string()
             } else if g.level(Upg::Sift) > 0 {
-                "click gather · F sift".to_string()
+                format!("click gather · F sift {}", g.group.name())
             } else {
                 "click gather".to_string()
             };
-            tip = Some((format!("{} · {what}", g.lib.catalog.categories[cat].name), INK));
+            let name = &g.lib.catalog.categories[cat].name;
+            let many = g.lib.catalog.departments.len() > 2;
+            let place = if many {
+                format!("{name} ({})", g.lib.catalog.departments[g.lib.dept_of(cat)].name)
+            } else {
+                name.clone()
+            };
+            tip = Some((format!("{place} · {what}"), INK));
         }
         Aim::Shelf { face, row, run, .. } => {
             let f = &g.lib.faces[face as usize];
@@ -395,11 +402,19 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         .show(ctx, |ui| {
             panel_frame().show(ui, |ui| {
                 ui.set_max_width(380.0);
-                ui.label(
-                    RichText::new(format!("Arms  {}/{}", g.held.len(), g.capacity()))
-                        .font(serif(13.0))
-                        .color(DIM),
+                let mut status = format!(
+                    "Arms  {}/{}  ·  sorting by {}",
+                    g.held.len(),
+                    g.capacity(),
+                    g.group.name()
                 );
+                if g.groups().len() > 1 {
+                    status.push_str(" (R)");
+                }
+                if g.lens {
+                    status.push_str("  ·  lens");
+                }
+                ui.label(RichText::new(status).font(serif(13.0)).color(DIM));
                 if let Some(b) = g.active_book() {
                     let info = &g.lib.books[b as usize];
                     let s = &g.lib.series[info.series as usize];
@@ -468,7 +483,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             let m = if hud.settings.music { "on" } else { "off" };
             ui.label(
                 RichText::new(format!(
-                    "Click gather/file · Hold right toss · Scroll cycle · Tab Grimoire · M music ({m}) · Esc pause"
+                    "Click gather/file · Hold right toss · Scroll cycle · R sort by · Tab Grimoire · M music ({m}) · Esc pause"
                 ))
                 .font(serif(12.0))
                 .color(DIM.gamma_multiply(0.8)),
@@ -540,49 +555,20 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 );
                 ui.add_space(6.0);
                 egui::ScrollArea::vertical().max_height(screen.y * 0.7).show(ui, |ui| {
-                    for u in UPGRADES {
-                        let def = upg_def(u);
-                        let lvl = g.level(u);
-                        let max = def.costs.len() as u32;
-                        ui.horizontal(|ui| {
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(420.0, 0.0),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    ui.set_width(420.0);
-                                    let title = if max > 1 {
-                                        format!("{}  ·  {}/{}", def.name, lvl, max)
-                                    } else {
-                                        def.name.to_string()
-                                    };
-                                    ui.label(RichText::new(title).font(serif(17.0)).color(INK));
-                                    ui.label(RichText::new(def.blurb).font(serif(13.0)).color(DIM));
-                                },
-                            );
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                match g.next_cost(u) {
-                                    Some(cost) => {
-                                        let afford = g.lumens >= cost;
-                                        let btn = egui::Button::new(
-                                            RichText::new(format!("✦ {cost}")).font(serif(16.0)).color(if afford {
-                                                GOLD
-                                            } else {
-                                                DIM
-                                            }),
-                                        )
-                                        .min_size(Vec2::new(96.0, 32.0));
-                                        if ui.add_enabled(afford, btn).clicked() {
-                                            actions.push(HudAction::Buy(u));
-                                        }
-                                    }
-                                    None => {
-                                        ui.label(RichText::new("mastered").font(serif(14.0)).color(GOLD));
-                                    }
-                                }
-                            });
-                        });
-                        ui.add_space(4.0);
+                    for tier in Tier::ALL {
+                        let skills: Vec<Upg> = (UPGRADES.iter().copied())
+                            .filter(|&u| upg_def(u).tier == tier && !upg_costs(g.layout, u).is_empty())
+                            .collect();
+                        if skills.is_empty() {
+                            continue;
+                        }
+                        ui.add_space(6.0);
+                        ui.label(RichText::new(tier.name()).font(serif(19.0)).color(GOLD));
+                        ui.label(RichText::new(tier.blurb()).font(serif(12.0)).color(DIM).italics());
                         ui.separator();
+                        for u in skills {
+                            grimoire_entry(ui, g, u, &mut actions);
+                        }
                     }
                 });
                 ui.add_space(8.0);
@@ -662,7 +648,8 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 ui.label(
                     RichText::new(
                         "WASD walk · Shift hurry · Mouse look · Click gather/file\n\
-                         Hold right mouse to toss a category, release to throw · F sift\n\
+                         Hold right mouse to toss a group, release to throw · F sift\n\
+                         R sort by department, category or series · V lens\n\
                          Scroll or Q/E cycle the active book · Tab Grimoire\n\
                          M music · F11 fullscreen · Esc pause",
                     )
@@ -730,6 +717,48 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             });
     }
     actions
+}
+
+/// One skill in the Grimoire: its name, level and blurb, and the button to learn
+/// the next level.
+fn grimoire_entry(ui: &mut egui::Ui, g: &Game, u: Upg, actions: &mut Vec<HudAction>) {
+    let def = upg_def(u);
+    let lvl = g.level(u);
+    let max = upg_costs(g.layout, u).len() as u32;
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(Vec2::new(420.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(420.0);
+            let title = if max > 1 {
+                format!("{}  ·  {}/{}", def.name, lvl, max)
+            } else {
+                def.name.to_string()
+            };
+            ui.label(RichText::new(title).font(serif(17.0)).color(INK));
+            ui.label(RichText::new(def.blurb).font(serif(13.0)).color(DIM));
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            match g.next_cost(u) {
+                Some(cost) => {
+                    let afford = g.lumens >= cost;
+                    let btn =
+                        egui::Button::new(RichText::new(format!("✦ {cost}")).font(serif(16.0)).color(if afford {
+                            GOLD
+                        } else {
+                            DIM
+                        }))
+                        .min_size(Vec2::new(96.0, 32.0));
+                    if ui.add_enabled(afford, btn).clicked() {
+                        actions.push(HudAction::Buy(u));
+                    }
+                }
+                None => {
+                    let done = if max > 1 { "mastered" } else { "learned" };
+                    ui.label(RichText::new(done).font(serif(14.0)).color(GOLD));
+                }
+            }
+        });
+    });
+    ui.add_space(4.0);
 }
 
 /// "Start over…", then a confirmation, on the pause screen.

@@ -82,6 +82,9 @@ pub struct Globals {
     pub fog: [f32; 4],
     pub ambient_top: [f32; 4],
     pub ambient_bottom: [f32; 4],
+    /// The Seeker's Lens: x = the group sought (0 off, 1 department, 2 category,
+    /// 3 series), y = which one.
+    pub lens: [f32; 4],
     pub lights: [GpuLight; MAX_LIGHTS],
 }
 

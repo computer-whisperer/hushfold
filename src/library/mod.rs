@@ -137,6 +137,16 @@ pub struct Label {
     pub level: usize,
 }
 
+/// Where a department's books are shelved: a rectangle of one level (the Hall's
+/// rooms are its wings), and the doorway into it.
+pub struct Room {
+    pub level: usize,
+    pub min: Vec2,
+    pub max: Vec2,
+    /// In the doorway, on the floor.
+    pub door: Vec3,
+}
+
 pub struct Library {
     pub catalog: Catalogue,
     pub series: Vec<Series>,
@@ -145,6 +155,8 @@ pub struct Library {
     pub faces: Vec<Face>,
     pub runs: Vec<[Vec<Run>; ROWS]>,
     pub world: World,
+    /// Each department's room, by department.
+    pub rooms: Vec<Room>,
     /// Where each book is first dropped, in order: (book, level, point, direction of
     /// its length).
     pub drops: Vec<(u32, usize, Vec2, Vec2)>,
@@ -177,6 +189,7 @@ impl Library {
             faces: Vec::new(),
             runs: Vec::new(),
             world: World::default(),
+            rooms: Vec::new(),
             drops: Vec::new(),
             static_insts: Vec::new(),
             static_trans: Vec::new(),
@@ -200,6 +213,13 @@ impl Library {
 
     pub fn category_of_book(&self, b: u32) -> usize {
         self.series[self.books[b as usize].series as usize].category
+    }
+
+    /// The department whose room `p` is in, if any.
+    pub fn room_at(&self, p: Vec3) -> Option<usize> {
+        let l = self.world.level_at(p);
+        let q = Vec2::new(p.x, p.z);
+        (self.rooms.iter()).position(|r| r.level == l && q.cmpge(r.min).all() && q.cmplt(r.max).all())
     }
 
     /// The departments a gate counts, by name ("West Wing", "Astronomy and Botany").

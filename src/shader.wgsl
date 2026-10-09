@@ -11,6 +11,7 @@ struct Globals {
     fog: vec4<f32>,            // rgb fog colour, w density
     ambient_top: vec4<f32>,
     ambient_bottom: vec4<f32>, // w = light count
+    lens: vec4<f32>,           // x = group sought (0 off, 1 dept, 2 category, 3 series), y = which
     lights: array<Light, 64>,
 };
 
@@ -336,6 +337,26 @@ fn book_surface(i: VOut) -> Surf {
             // Pages are slightly shadowed near the covers.
             let shadow = smoothstep(0.0, 0.01, edge_x - cover_t);
             s.albedo = paper * lines * (0.6 + 0.4 * shadow);
+        }
+    }
+    // Book flags: 1 active, 2 loose, bits 2..6 department, 7..14 category; the
+    // series id rides in color.a.
+    let lens = u32(g.lens.x);
+    if (lens != 0u && (flags & 2u) != 0u) {
+        // The Seeker's Lens: loose books of the group sought glow, the rest fade.
+        var key = u32(round(i.color.a));
+        if (lens == 1u) {
+            key = (flags >> 2u) & 31u;
+        } else if (lens == 2u) {
+            key = (flags >> 7u) & 255u;
+        }
+        if (key == u32(round(g.lens.y))) {
+            let sig = base / max(max(base.r, base.g), max(base.b, 1e-3));
+            let rim = 1.0 - smoothstep(0.002, 0.006, box_edge(i.local, i.scale, ln));
+            let pulse = 0.5 + 0.5 * sin(g.cam_pos.w * 3.0);
+            s.emit = sig * (0.25 + 0.1 * pulse + rim * 1.4);
+        } else {
+            s.albedo = s.albedo * 0.22;
         }
     }
     if ((flags & 1u) != 0u) {

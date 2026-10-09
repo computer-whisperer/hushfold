@@ -445,6 +445,13 @@ impl Library {
         }
         // The department's sign over its door, on the atrium side.
         let dept = r;
+        let (mn, mx) = side.rect(-ROOM_HALF, ROOM_HALF, ATRIUM, OUTER);
+        self.rooms.push(Room {
+            level: l,
+            min: mn,
+            max: mx,
+            door: side.at3(d, ATRIUM + 0.5, y),
+        });
         let sign = side.at3(d, ATRIUM - h - 0.03, y + DOOR_H + 0.75);
         let rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Y.cross(-side.out3()), Vec3::Y, -side.out3()));
         let first = self.catalog.departments[dept].categories.start;

@@ -67,9 +67,14 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
 - Click a pile: gather the topmost books within a radius of the aim point, up
   to arm capacity; whatever lay on them falls.
 - Hold right mouse: charge a toss (the arc and landing ring show where it goes);
-  release to throw every held book of the active book's category as a stream.
-- F (Sifting Touch): draw books of the aimed book's category out of the pile
+  release to throw every held book of the active book's group as a stream.
+- F (Sifting Touch): draw books of the aimed book's group out of the pile
   around the aim point, from any depth.
+- R: what toss and sift take, the *group*: category, or with skills department
+  (Broad Strokes) or series (Fine Fingers).
+- V (Seeker's Lens): loose books of the active (or aimed) book's group glow and
+  the rest fade; done in the shader from ids each book carries, so toggling it
+  rebuilds nothing.
 - Click shelf: aiming anywhere on a series run places a held book of that series
   into its exact slot (forgiving aim; the skill is finding the run).
 - Scroll/Q/E: cycle the active book (HUD shows its category/series/volume).
@@ -77,12 +82,18 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
 
 ## Progression (Lumens ✦)
 1 per book, +volumes on series completion, +100 per category.
-Upgrades: Deeper Arms I–IV, Swift Slippers I–II, Sort Sense (compass + exact-slot
-pulse), Sifting Touch I–II (sift a category out of a pile; 0.9 / 1.8 m),
-Series Bundle (place whole series at once), Tidy Arms (stack sorted by
-slot, active = nearest target), Lodestone Grasp (long reach, hold to pull),
-Shelving Aura I–III (books float to nearby slots on their own),
-Paper Familiars ×5 (autonomous helpers), Familiar Wings I–II.
+Skills are grouped in the Grimoire by what they work on; each library offers
+those that fit it, at its own costs (`upg_costs`), and a skill does the same in
+both. Reading: Sort Sense I–II (compass and exact-slot pulse: in the book's
+room, then anywhere), Wayfinding (the compass points to the book's room), the
+Seeker's Lens. Moving: Sifting Touch I–IV (0.9–3.6 m), Broad Strokes and Fine
+Fingers (sort by department, by series), Long Toss I–II (harder, tighter
+throws), Lodestone Grasp (long reach, hold to pull). Filing: Deeper Arms I–IV,
+Swift Slippers I–II, Tidy Arms (stack sorted by slot, active = nearest target),
+Series Bundle (place whole series at once), Shelving Aura I–III (books float to
+nearby slots on their own). Familiars: Paper Familiars ×5 (autonomous helpers),
+Familiar Wings I–II. Each department has a room (the Hall's are its wings) with
+a doorway, which Sort Sense I and Wayfinding use.
 
 "Nearest" means nearest on foot: `nav.rs` keeps a Dijkstra distance field from
 the player over a 0.5 m grid per level (furniture inflated by the player's

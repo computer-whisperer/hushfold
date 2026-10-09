@@ -100,6 +100,8 @@ impl Catalogue {
                 _ => panic!("catalogue: unknown line {line:?}"),
             }
         }
+        // A book's instance carries both for the Seeker's Lens, in 5 and 8 bits.
+        assert!(cat.departments.len() <= 32 && cat.categories.len() <= 256);
         cat
     }
 }

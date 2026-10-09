@@ -192,6 +192,8 @@ impl Running {
                 self.save_settings();
             }
             KeyCode::KeyF => self.input.sift_pressed = true,
+            KeyCode::KeyR => self.input.regroup = true,
+            KeyCode::KeyV => self.input.lens = true,
             KeyCode::KeyQ => self.input.cycle -= 1,
             KeyCode::KeyE => self.input.cycle += 1,
             KeyCode::F12 => {
@@ -256,6 +258,8 @@ impl Running {
         self.input.toss_pressed = false;
         self.input.sift_pressed = false;
         self.input.cycle = 0;
+        self.input.regroup = false;
+        self.input.lens = false;
 
         self.save_timer += dt;
         if self.save_timer > AUTOSAVE_SECS && self.game.dirty_save {
@@ -361,6 +365,8 @@ impl Running {
                 Some("charge") => self.input.toss_down = true,
                 Some("throw") => self.input.toss_down = false,
                 Some("sift") => self.input.sift_pressed = true,
+                Some("regroup") => self.input.regroup = true,
+                Some("lens") => self.input.lens = true,
                 Some("unveil") => self.game.open_all_gates(),
                 Some("facefam") => self.game.script_face_familiar(num(1) as usize),
                 Some("fill") => self.game.script_fill_category(num(1) as usize, num(2)),

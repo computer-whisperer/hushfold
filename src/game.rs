@@ -23,11 +23,13 @@ const AURA_LEVELS: [(f32, f32); 4] = [(0.0, 0.0), (3.0, 2.0), (4.5, 4.0), (6.0, 
 /// Familiar Wings by level: (flight speed in m/s, books carried).
 const WINGS_LEVELS: [(f32, usize); 3] = [(2.6, 2), (3.8, 3), (5.0, 5)];
 /// Sifting Touch by level: radius in metres.
-const SIFT_RADIUS: [f32; 3] = [0.0, 0.9, 1.8];
+const SIFT_RADIUS: [f32; 5] = [0.0, 0.9, 1.8, 2.7, 3.6];
 /// Seconds to charge a toss fully.
 const TOSS_CHARGE: f32 = 0.9;
-/// Toss speed in m/s, uncharged and fully charged.
-const TOSS_SPEED: (f32, f32) = (3.0, 12.0);
+/// Toss speed in m/s, uncharged.
+const TOSS_MIN: f32 = 3.0;
+/// Long Toss by level: (fully charged speed in m/s, how widely the books scatter).
+const LONG_TOSS: [(f32, f32); 3] = [(12.0, 1.0), (16.0, 0.7), (20.0, 0.45)];
 
 /// Vertical FOV: `v_deg` on wide windows, widened on narrow ones so the horizontal
 /// FOV never drops below `v_deg` × 85/70 (85° at the default 70°).
@@ -39,91 +41,217 @@ fn vfov(aspect: f32, v_deg: f32) -> f32 {
 
 // ------------------------------------------------------------------ upgrades
 
+/// What a skill works on, for the Grimoire's sections: finding where books go,
+/// moving many books roughly, filing them exactly, and the helpers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tier {
+    Reading,
+    Moving,
+    Filing,
+    Familiars,
+}
+
+impl Tier {
+    pub const ALL: [Tier; 4] = [Tier::Reading, Tier::Moving, Tier::Filing, Tier::Familiars];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Tier::Reading => "Reading",
+            Tier::Moving => "Moving",
+            Tier::Filing => "Filing",
+            Tier::Familiars => "Familiars",
+        }
+    }
+
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Tier::Reading => "Knowing where a book belongs.",
+            Tier::Moving => "Moving many books a long way, roughly.",
+            Tier::Filing => "Putting books exactly in their place.",
+            Tier::Familiars => "Paper helpers that work where you post them.",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Upg {
+    SortSense,
+    Wayfinding,
+    Lens,
+    Sift,
+    Broad,
+    Fine,
+    LongToss,
+    Lodestone,
     Arms,
     Slippers,
-    SortSense,
-    Sift,
-    Bundle,
     Tidy,
-    Lodestone,
+    Bundle,
     Aura,
     Familiar,
     Wings,
 }
 
-pub const UPGRADES: [Upg; 10] = [
+/// Every skill, in the Grimoire's order within its tier.
+pub const UPGRADES: [Upg; 15] = [
+    Upg::SortSense,
+    Upg::Wayfinding,
+    Upg::Lens,
+    Upg::Sift,
+    Upg::Broad,
+    Upg::Fine,
+    Upg::LongToss,
+    Upg::Lodestone,
     Upg::Arms,
     Upg::Slippers,
-    Upg::SortSense,
-    Upg::Sift,
     Upg::Tidy,
     Upg::Bundle,
-    Upg::Lodestone,
-    Upg::Familiar,
     Upg::Aura,
+    Upg::Familiar,
     Upg::Wings,
 ];
 
 pub struct UpgDef {
     pub name: &'static str,
     pub blurb: &'static str,
-    pub costs: &'static [u64],
+    pub tier: Tier,
 }
 
 pub fn upg_def(u: Upg) -> UpgDef {
-    match u {
-        Upg::Arms => UpgDef {
-            name: "Deeper Arms",
-            blurb: "Carry more books at once.",
-            costs: &[20, 80, 250, 700],
+    let (name, blurb, tier) = match u {
+        Upg::SortSense => (
+            "Sort Sense",
+            "The active book's slot pulses and a compass points the way: while you are in its room, then anywhere.",
+            Tier::Reading,
+        ),
+        Upg::Wayfinding => (
+            "Wayfinding",
+            "Out of Sort Sense's reach, the compass points the way to the active book's room.",
+            Tier::Reading,
+        ),
+        Upg::Lens => (
+            "Seeker's Lens",
+            "Press V: loose books of the active book's group glow, and the rest fade.",
+            Tier::Reading,
+        ),
+        Upg::Sift => (
+            "Sifting Touch",
+            "Press F at a pile to draw out only books of the aimed book's group; each level reaches wider.",
+            Tier::Moving,
+        ),
+        Upg::Broad => (
+            "Broad Strokes",
+            "Press R to sort by department: toss and sift whole departments at once.",
+            Tier::Moving,
+        ),
+        Upg::Fine => (
+            "Fine Fingers",
+            "Press R to sort by series: toss and sift a single series.",
+            Tier::Moving,
+        ),
+        Upg::LongToss => ("Long Toss", "Throw harder, and the books scatter less.", Tier::Moving),
+        Upg::Lodestone => (
+            "Lodestone Grasp",
+            "Gather from piles at a distance; hold the button to keep gathering.",
+            Tier::Moving,
+        ),
+        Upg::Arms => ("Deeper Arms", "Carry more books at once.", Tier::Filing),
+        Upg::Slippers => ("Swift Slippers", "Pad through the stacks faster.", Tier::Filing),
+        Upg::Tidy => (
+            "Tidy Arms",
+            "Your armful sorts itself, and the book nearest its home rises to the top.",
+            Tier::Filing,
+        ),
+        Upg::Bundle => (
+            "Series Bundle",
+            "Filing one volume files every volume of that series you carry.",
+            Tier::Filing,
+        ),
+        Upg::Aura => (
+            "Shelving Aura",
+            "Books you carry drift to their slots whenever you pass close by.",
+            Tier::Filing,
+        ),
+        Upg::Familiar => (
+            "Paper Familiar",
+            "A folded-paper crane that ferries books to their shelves on its own.",
+            Tier::Familiars,
+        ),
+        Upg::Wings => (
+            "Familiar Wings",
+            "Familiars fly faster and carry more.",
+            Tier::Familiars,
+        ),
+    };
+    UpgDef { name, blurb, tier }
+}
+
+/// What a skill costs in `layout`, level by level; empty where that library doesn't
+/// offer it. The same skill does the same thing in both.
+pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
+    match layout {
+        Layout::Hall => match u {
+            Upg::SortSense => &[60, 300],
+            Upg::Wayfinding | Upg::Broad => &[],
+            Upg::Lens => &[150],
+            Upg::Sift => &[40, 400],
+            Upg::Fine => &[600],
+            Upg::LongToss => &[200],
+            Upg::Lodestone => &[300],
+            Upg::Arms => &[20, 80, 250, 700],
+            Upg::Slippers => &[30, 400],
+            Upg::Tidy => &[90],
+            Upg::Bundle => &[120],
+            Upg::Aura => &[500, 1500, 3000],
+            Upg::Familiar => &[250, 600, 1200, 2200, 3200],
+            Upg::Wings => &[800, 2000],
         },
-        Upg::Slippers => UpgDef {
-            name: "Swift Slippers",
-            blurb: "Pad through the stacks faster.",
-            costs: &[30, 400],
+        Layout::Great => match u {
+            Upg::SortSense => &[60, 6000],
+            Upg::Wayfinding => &[400],
+            Upg::Lens => &[900],
+            Upg::Sift => &[80, 1500, 8000, 25000],
+            Upg::Broad => &[2500],
+            Upg::Fine => &[10000],
+            Upg::LongToss => &[1500, 12000],
+            Upg::Lodestone => &[3000],
+            Upg::Arms => &[20, 150, 900, 5000],
+            Upg::Slippers => &[40, 3000],
+            Upg::Tidy => &[250],
+            Upg::Bundle => &[500],
+            Upg::Aura => &[4000, 18000, 40000],
+            Upg::Familiar => &[1000, 3000, 6000, 10000, 15000],
+            Upg::Wings => &[8000, 20000],
         },
-        Upg::SortSense => UpgDef {
-            name: "Sort Sense",
-            blurb: "The active book's exact slot pulses, and a compass points the way.",
-            costs: &[60],
-        },
-        Upg::Sift => UpgDef {
-            name: "Sifting Touch",
-            blurb: "Press F at a pile to draw out only books of the category you aim at.",
-            costs: &[40, 400],
-        },
-        Upg::Tidy => UpgDef {
-            name: "Tidy Arms",
-            blurb: "Your armful sorts itself, and the book nearest its home rises to the top.",
-            costs: &[90],
-        },
-        Upg::Bundle => UpgDef {
-            name: "Series Bundle",
-            blurb: "Filing one volume files every volume of that series you carry.",
-            costs: &[120],
-        },
-        Upg::Lodestone => UpgDef {
-            name: "Lodestone Grasp",
-            blurb: "Gather from piles at a distance; hold the button to keep gathering.",
-            costs: &[300],
-        },
-        Upg::Familiar => UpgDef {
-            name: "Paper Familiar",
-            blurb: "A folded-paper crane that ferries books to their shelves on its own.",
-            costs: &[250, 600, 1200, 2200, 3200],
-        },
-        Upg::Aura => UpgDef {
-            name: "Shelving Aura",
-            blurb: "Books you carry drift to their slots whenever you pass close by.",
-            costs: &[500, 1500, 3000],
-        },
-        Upg::Wings => UpgDef {
-            name: "Familiar Wings",
-            blurb: "Familiars fly faster and carry more.",
-            costs: &[800, 2000],
-        },
+    }
+}
+
+/// The level of the hierarchy that toss and sift work at: every book of the active
+/// (or aimed) book's department, category or series.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Group {
+    Department,
+    Category,
+    Series,
+}
+
+impl Group {
+    /// Which department, category or series book `b` is in.
+    pub fn of(self, lib: &Library, b: u32) -> usize {
+        let series = lib.books[b as usize].series as usize;
+        match self {
+            Group::Department => lib.dept_of(lib.series[series].category),
+            Group::Category => lib.series[series].category,
+            Group::Series => series,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Group::Department => "department",
+            Group::Category => "category",
+            Group::Series => "series",
+        }
     }
 }
 
@@ -184,6 +312,15 @@ struct Particle {
     size: f32,
 }
 
+/// The compass: the way to the active book's slot (Sort Sense), or to its
+/// department's room (Wayfinding).
+#[derive(Clone, Copy, Debug)]
+pub struct Sense {
+    pub route: Route,
+    /// The department whose doorway the route leads to; `None` for the slot.
+    pub room: Option<usize>,
+}
+
 pub struct Toast {
     pub text: String,
     pub color: [f32; 3],
@@ -223,6 +360,10 @@ pub struct Input {
     pub sift_down: bool,
     pub sift_pressed: bool,
     pub cycle: i32,
+    /// R: the next sorting group.
+    pub regroup: bool,
+    /// V: the Seeker's Lens on or off.
+    pub lens: bool,
 }
 
 pub struct Player {
@@ -251,8 +392,13 @@ impl Player {
     }
 }
 
+/// Saves before phase 3's skills are version 0 (the field is absent).
+const SAVE_VERSION: u32 = 1;
+
 #[derive(Serialize, Deserialize)]
 struct SaveData {
+    #[serde(default)]
+    version: u32,
     seed: u64,
     lumens: u64,
     earned: u64,
@@ -346,8 +492,13 @@ pub struct Game {
     scene_gates: Vec<bool>,
     pub loose: Loose,
     nav: Nav,
-    /// Sort Sense: the way to the active book's slot.
-    pub sense_route: Option<Route>,
+    /// Where the compass points, if anywhere.
+    pub sense: Option<Sense>,
+    /// What toss and sift take: the active (or aimed) book's department, category
+    /// or series.
+    pub group: Group,
+    /// The Seeker's Lens is on.
+    pub lens: bool,
     /// Vertical field of view on wide windows, in degrees (a setting).
     pub fov: f32,
     pub dirty_save: bool,
@@ -455,7 +606,9 @@ impl Game {
             scene_gates: vec![false; lib.world.gates().len()],
             loose,
             nav: Nav::new(&lib.world, lib.spawn.0),
-            sense_route: None,
+            sense: None,
+            group: Group::Category,
+            lens: false,
             fov: 70.0,
             dirty_save: false,
             persist: true,
@@ -485,7 +638,7 @@ impl Game {
     }
 
     pub fn next_cost(&self, u: Upg) -> Option<u64> {
-        upg_def(u).costs.get(self.level(u) as usize).copied()
+        upg_costs(self.layout, u).get(self.level(u) as usize).copied()
     }
 
     pub fn buy(&mut self, u: Upg, audio: &mut Audio) -> bool {
@@ -505,7 +658,7 @@ impl Game {
             self.follow_active(prev);
         }
         let def = upg_def(u);
-        let name = if def.costs.len() > 1 {
+        let name = if upg_costs(self.layout, u).len() > 1 {
             let roman = ["I", "II", "III", "IV", "V"];
             format!(
                 "{} {}",
@@ -602,6 +755,26 @@ impl Game {
         self.aim = if can_play { self.compute_aim() } else { Aim::None };
 
         if can_play {
+            if input.regroup {
+                let groups = self.groups();
+                let at = groups.iter().position(|&g| g == self.group).unwrap_or(0);
+                self.group = groups[(at + 1) % groups.len()];
+                audio.play(Sfx::Tick, 0.25);
+                if groups.len() == 1 {
+                    self.hint = Some((
+                        "Broad Strokes and Fine Fingers (Grimoire) sort by more than category.".into(),
+                        2.5,
+                    ));
+                }
+            }
+            if input.lens {
+                if self.level(Upg::Lens) > 0 {
+                    self.lens = !self.lens;
+                    audio.play(Sfx::Tick, 0.25);
+                } else {
+                    self.hint = Some(("The Seeker's Lens is learned in the Grimoire (Tab).".into(), 2.0));
+                }
+            }
             if input.cycle != 0 && !self.held.is_empty() {
                 let n = self.held.len() as i32;
                 self.active = ((self.active as i32 + input.cycle).rem_euclid(n)) as usize;
@@ -628,7 +801,7 @@ impl Game {
             self.manual_pick = None;
         }
         let tidy = self.level(Upg::Tidy) > 0;
-        let sense = self.level(Upg::SortSense) > 0;
+        let sense = self.level(Upg::SortSense) > 0 || self.level(Upg::Wayfinding) > 0;
         if (tidy || sense) && !self.held.is_empty() {
             self.nav.update(self.player.pos);
         }
@@ -637,10 +810,7 @@ impl Game {
         }
         self.update_aura(dt);
         // After the aura, which may have filed the active book.
-        self.sense_route = match self.active_book() {
-            Some(b) if sense => self.nav.route(self.player.pos, self.approach(b)),
-            _ => None,
-        };
+        self.sense = self.active_book().and_then(|b| self.sense_for(b));
         self.update_flights(dt, audio);
         let landings = self.loose.update(dt, &mut self.pos, &mut self.rot);
         self.dirty_save |= !landings.is_empty();
@@ -924,11 +1094,26 @@ impl Game {
         self.dirty_save = true;
     }
 
-    fn category_of(&self, b: u32) -> usize {
-        self.lib.series[self.lib.books[b as usize].series as usize].category
+    /// Which department, category or series (by the sorting group) book `b` is in.
+    fn group_of(&self, b: u32) -> usize {
+        self.group.of(&self.lib, b)
     }
 
-    /// Sifting Touch: draw books of the aimed book's category out of the pile around it.
+    /// The groups R cycles through, coarsest first: category always, department with
+    /// Broad Strokes, series with Fine Fingers.
+    pub fn groups(&self) -> Vec<Group> {
+        let mut out = Vec::new();
+        if self.level(Upg::Broad) > 0 {
+            out.push(Group::Department);
+        }
+        out.push(Group::Category);
+        if self.level(Upg::Fine) > 0 {
+            out.push(Group::Series);
+        }
+        out
+    }
+
+    /// Sifting Touch: draw books of the aimed book's group out of the pile around it.
     fn sift(&mut self, audio: &mut Audio, fresh_press: bool) {
         let lvl = self.level(Upg::Sift) as usize;
         let Aim::Loose { book, point, .. } = self.aim else {
@@ -949,9 +1134,8 @@ impl Game {
             self.sift_cooldown = 0.3;
             return;
         }
-        let cat = self.category_of(book);
-        let lib = &self.lib;
-        let same = |b: u32| lib.category_of_book(b) == cat;
+        let (lib, group, key) = (&self.lib, self.group, self.group_of(book));
+        let same = |b: u32| group.of(lib, b) == key;
         let lv = self.loose.level_of(book);
         let books = self
             .loose
@@ -974,7 +1158,8 @@ impl Game {
         }
         // A little above the crosshair, so a level throw carries.
         let dir = (self.player.forward() + Vec3::Y * 0.18).normalize();
-        let speed = TOSS_SPEED.0 + (TOSS_SPEED.1 - TOSS_SPEED.0) * self.toss_charge;
+        let top = LONG_TOSS[self.level(Upg::LongToss) as usize].0;
+        let speed = TOSS_MIN + (top - TOSS_MIN) * self.toss_charge;
         (hand, dir * speed)
     }
 
@@ -1002,27 +1187,23 @@ impl Game {
         }
     }
 
-    /// Throw every held book of the active book's category, as a loose stream.
+    /// Throw every held book of the active book's group, as a loose stream.
     fn toss(&mut self, audio: &mut Audio) {
         let Some(active) = self.active_book() else { return };
-        let cat = self.category_of(active);
-        let group: Vec<u32> = self
-            .held
-            .iter()
-            .copied()
-            .filter(|&b| self.category_of(b) == cat)
-            .collect();
+        let key = self.group_of(active);
+        let group: Vec<u32> = self.held.iter().copied().filter(|&b| self.group_of(b) == key).collect();
         let prev = self.active_book();
         self.held.retain(|b| !group.contains(b));
         self.follow_active(prev);
         let (from, vel) = self.toss_launch();
         let speed = vel.length();
         let gap = (0.5 / group.len() as f32).min(0.04);
+        let spread = LONG_TOSS[self.level(Upg::LongToss) as usize].1;
         for (i, &b) in group.iter().enumerate() {
             self.flights.retain(|f| f.book != b);
             self.state[b as usize] = BookState::Loose;
             let mut j = || self.rng.gen_range(-1.0..1.0f32);
-            let scatter = Vec3::new(j(), j(), j()) * (0.06 * speed + 0.3);
+            let scatter = Vec3::new(j(), j(), j()) * (0.06 * speed + 0.3) * spread;
             let spin = Vec3::new(j(), j(), j()) * 9.0;
             let rot = self.hand_xform(0).1;
             self.loose.throw(b, from, vel + scatter, rot, spin, i as f32 * gap);
@@ -1250,6 +1431,27 @@ impl Game {
         Vec3::new(p.x, face.center.y, p.z)
     }
 
+    /// Where the compass points for book `b`: its slot while Sort Sense reaches (in
+    /// its room at I, anywhere at II), else with Wayfinding the doorway of its room.
+    fn sense_for(&self, b: u32) -> Option<Sense> {
+        let dept = self.lib.dept_of(self.lib.category_of_book(b));
+        let here = self.lib.room_at(self.player.pos);
+        let sense = self.level(Upg::SortSense);
+        let from = self.player.pos;
+        if sense >= 2 || (sense == 1 && here == Some(dept)) {
+            let route = self.nav.route(from, self.approach(b))?;
+            return Some(Sense { route, room: None });
+        }
+        if self.level(Upg::Wayfinding) > 0 && here != Some(dept) {
+            let route = self.nav.route(from, self.lib.rooms[dept].door)?;
+            return Some(Sense {
+                route,
+                room: Some(dept),
+            });
+        }
+        None
+    }
+
     /// Make the held book nearest its home on foot the active one. A bookcase's far
     /// side is a walk around the row, not the width of the case.
     fn pick_nearest_active(&mut self) {
@@ -1454,7 +1656,7 @@ impl Game {
     /// Instantly shelve a fraction of a category (debug/screenshot aid; no rewards).
     pub fn script_fill_category(&mut self, cat: usize, frac: f32) {
         let ids: Vec<u32> = (0..self.lib.books.len() as u32)
-            .filter(|&b| self.category_of(b) == cat)
+            .filter(|&b| self.lib.category_of_book(b) == cat)
             .collect();
         let n = (ids.len() as f32 * frac) as usize;
         let ids: Vec<u32> = ids
@@ -1478,7 +1680,7 @@ impl Game {
     /// Put `n` books of a category, spread across its shelves, into the arms (debug/screenshot aid).
     pub fn script_take(&mut self, cat: usize, n: usize) {
         let ids: Vec<u32> = (0..self.lib.books.len() as u32)
-            .filter(|&b| self.loose.is_resting(b) && self.category_of(b) == cat)
+            .filter(|&b| self.loose.is_resting(b) && self.lib.category_of_book(b) == cat)
             .collect();
         let step = (ids.len() / n.max(1)).max(1);
         let room = self.capacity().saturating_sub(self.held.len());
@@ -1578,7 +1780,28 @@ impl Game {
             fog: [0.035, 0.03, 0.04, 0.022],
             ambient_top: [0.19, 0.18, 0.24, 0.0],
             ambient_bottom: [0.09, 0.065, 0.05, n],
+            lens: self.lens_sought(),
             lights,
+        }
+    }
+
+    /// What the Seeker's Lens lights (see `Globals::lens`): the active book's group,
+    /// or with empty hands the aimed book's.
+    fn lens_sought(&self) -> [f32; 4] {
+        let target = self.active_book().or(match self.aim {
+            Aim::Loose { book, .. } => Some(book),
+            _ => None,
+        });
+        match target {
+            Some(b) if self.lens => {
+                let mode = match self.group {
+                    Group::Department => 1.0,
+                    Group::Category => 2.0,
+                    Group::Series => 3.0,
+                };
+                [mode, self.group_of(b) as f32, 0.0, 0.0]
+            }
+            _ => [0.0; 4],
         }
     }
 
@@ -1588,16 +1811,22 @@ impl Game {
         proj * view
     }
 
-    fn book_inst(&self, b: usize, pos: Vec3, rot: Quat, flags: u32) -> Inst {
+    /// A book's instance; `active` marks the active book in hand. Loose books carry
+    /// their department, category and series for the Seeker's Lens (see the shader's
+    /// book flags).
+    fn book_inst(&self, b: usize, pos: Vec3, rot: Quat, active: bool) -> Inst {
         let info = &self.lib.books[b];
         let s = &self.lib.series[info.series as usize];
+        let loose = self.state[b] == BookState::Loose;
+        let flags =
+            active as u32 | (loose as u32) << 1 | (self.lib.dept_of(s.category) as u32) << 2 | (s.category as u32) << 7;
         let param = s.pattern | (s.trim << 4) | (info.volume << 8) | (flags << 16);
         Inst::new(
             pos,
             rot,
             info.size,
             kind::BOOK,
-            [s.color[0], s.color[1], s.color[2], 1.0],
+            [s.color[0], s.color[1], s.color[2], info.series as f32],
             param,
         )
     }
@@ -1644,7 +1873,7 @@ impl Game {
                 BookState::Shelved => false,
             };
             if moving {
-                dyn_insts.push(self.book_inst(b, self.pos[b], self.rot[b], 0));
+                dyn_insts.push(self.book_inst(b, self.pos[b], self.rot[b], false));
             }
         }
         // Ghosts: the series you carry glow, the one you aim at brightens, and with
@@ -1657,7 +1886,9 @@ impl Game {
             lit.entry(r.series).or_insert((0, false)).1 = true;
         }
         scene.highlight(lit);
-        let active = self.active_book().filter(|_| self.level(Upg::SortSense) > 0);
+        let active = self
+            .active_book()
+            .filter(|_| self.sense.is_some_and(|s| s.room.is_none()));
         scene.set_active(active.map(|b| (b, self.lib.books[b as usize].slot_pos)));
         if scene_gates_changed(&mut self.scene_gates, self.lib.world.gates_open()) {
             scene.redraw_all();
@@ -1675,7 +1906,7 @@ impl Game {
             let b = self.held[i];
             if !in_flight.contains(&b) {
                 let (p, q) = layout[i];
-                held_insts.push(self.book_inst(b as usize, p, q, (i == self.active) as u32));
+                held_insts.push(self.book_inst(b as usize, p, q, i == self.active));
             }
         }
 
@@ -1851,7 +2082,7 @@ impl Game {
                 BookState::Shelved => (self.lib.books[b as usize].slot_pos, self.lib.books[b as usize].slot_rot),
                 _ => self.loose.pose(b),
             };
-            opaque.push(self.book_inst(b as usize, p, q, 0));
+            opaque.push(self.book_inst(b as usize, p, q, false));
         }
         let active = scene.active();
         for &b in &scene.chunks[c].ghosts {
@@ -1916,6 +2147,7 @@ impl Game {
         }
         let p = &self.player;
         let data = SaveData {
+            version: SAVE_VERSION,
             seed: SEED,
             lumens: self.lumens,
             earned: self.earned,
@@ -2065,8 +2297,12 @@ impl Game {
                 self.upg[i] = data.levels.get(&format!("{u:?}")).copied().unwrap_or(0);
             }
         }
-        for (i, u) in UPGRADES.iter().enumerate() {
-            self.upg[i] = self.upg[i].min(upg_def(*u).costs.len() as u32);
+        if data.version == 0 && self.level(Upg::SortSense) == 1 {
+            // Sort Sense found the slot from anywhere before it had levels.
+            self.upg[upg_index(Upg::SortSense)] = 2;
+        }
+        for (i, &u) in UPGRADES.iter().enumerate() {
+            self.upg[i] = self.upg[i].min(upg_costs(self.layout, u).len() as u32);
         }
         self.lumens = data.lumens;
         self.earned = data.earned;
@@ -2099,7 +2335,7 @@ mod tests {
         for b in 0..lib.books.len() as u32 {
             assert!(g.loose.is_resting(b));
             let east = g.loose.rest(b).c.x > VEIL_X;
-            assert_eq!(east, lib.dept_of(g.category_of(b)) == 1, "book {b}");
+            assert_eq!(east, lib.dept_of(g.lib.category_of_book(b)) == 1, "book {b}");
         }
         // Volumes run left to right along each shelf run.
         for runs in &lib.runs {
@@ -2478,7 +2714,7 @@ mod tests {
         let mut audio = crate::audio::Audio::silent();
         g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
         assert_eq!(g.active_book(), Some(near as u32));
-        assert!(g.sense_route.is_some_and(|r| r.direct));
+        assert!(g.sense.is_some_and(|s| s.room.is_none() && s.route.direct));
         // A book chosen by cycling stays active while you walk to it.
         let cycle = Input {
             cycle: 1,
@@ -2494,7 +2730,7 @@ mod tests {
         g.held.retain(|&b| b == far as u32);
         g.active = 0;
         g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
-        let r = g.sense_route.unwrap();
+        let r = g.sense.unwrap().route;
         assert!(!r.direct);
         assert!(r.dist > 4.0, "route {r:?}");
         assert!(
@@ -2559,7 +2795,7 @@ mod tests {
                 g.open_gate(gate);
             }
             let stranded = (0..n)
-                .filter(|&b| g.lib.dept_of(g.category_of(b)) == d && !g.nav.open_at(g.loose.pose(b).0))
+                .filter(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == d && !g.nav.open_at(g.loose.pose(b).0))
                 .count();
             assert_eq!(stranded, 0, "department {d}: {stranded} books out of reach");
         }
@@ -2674,7 +2910,7 @@ mod tests {
         g.nav.update(from);
         for dept in [4, 8] {
             let b = (0..g.lib.books.len() as u32)
-                .find(|&b| g.lib.dept_of(g.category_of(b)) == dept)
+                .find(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == dept)
                 .unwrap();
             let to = g.approach(b);
             let d = g.nav.distance(from, to);
@@ -2939,7 +3175,7 @@ mod tests {
         assert!(levels.contains(&1) && levels.contains(&2), "{levels:?}");
         // Enough of the first department home to lift the first gate.
         let first: Vec<u32> = (0..g.lib.books.len() as u32)
-            .filter(|&b| g.lib.dept_of(g.category_of(b)) == 0 && g.loose.is_resting(b))
+            .filter(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == 0 && g.loose.is_resting(b))
             .take(g.gate_books_left(0) as usize)
             .collect();
         g.loose.take(&first);
@@ -2964,5 +3200,127 @@ mod tests {
         assert!(hall.load());
         assert_eq!(hall.lumens, 42);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every department has a room holding all its slots, entered by a doorway that is
+    /// a walk from the start once the gates are open.
+    #[test]
+    fn rooms_hold_their_departments() {
+        for layout in Layout::ALL {
+            let mut g = Game::new(layout);
+            g.open_all_gates();
+            let from = g.player.pos;
+            g.nav.update(from);
+            assert_eq!(g.lib.rooms.len(), g.lib.catalog.departments.len());
+            for (d, r) in g.lib.rooms.iter().enumerate() {
+                assert_eq!(g.lib.room_at(r.door), Some(d), "{layout:?}: room {d}'s door");
+                assert!(g.nav.distance(from, r.door).is_finite(), "{layout:?}: room {d}'s door");
+            }
+            for b in 0..g.lib.books.len() as u32 {
+                let d = g.lib.dept_of(g.lib.category_of_book(b));
+                assert_eq!(g.lib.room_at(g.approach(b)), Some(d), "{layout:?}: book {b}");
+            }
+        }
+    }
+
+    /// Sort Sense I finds the slot only in the book's room, Wayfinding points to the
+    /// room from elsewhere, and Sort Sense II finds the slot from anywhere.
+    #[test]
+    fn sort_sense_is_scoped_to_the_room() {
+        let mut g = Game::new(Layout::Great);
+        let mut audio = crate::audio::Audio::silent();
+        let b = (0..g.lib.books.len() as u32)
+            .find(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == 0)
+            .unwrap();
+        g.state[b as usize] = BookState::Held;
+        g.held.push(b);
+        let atrium = g.player.pos;
+        assert_eq!(g.lib.room_at(atrium), None);
+        let mut step = |g: &mut Game| g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
+        g.upg[upg_index(Upg::SortSense)] = 1;
+        step(&mut g);
+        assert!(g.sense.is_none(), "{:?}", g.sense);
+        g.upg[upg_index(Upg::Wayfinding)] = 1;
+        step(&mut g);
+        let s = g.sense.expect("wayfinding");
+        assert_eq!(s.room, Some(0));
+        assert!(s.route.dist.is_finite() && s.route.dist > 3.0, "{s:?}");
+        g.player.pos = g.lib.rooms[0].door;
+        step(&mut g);
+        assert!(g.sense.is_some_and(|s| s.room.is_none()), "{:?}", g.sense);
+        g.player.pos = atrium;
+        g.upg[upg_index(Upg::SortSense)] = 2;
+        step(&mut g);
+        assert!(g.sense.is_some_and(|s| s.room.is_none()), "{:?}", g.sense);
+    }
+
+    /// Toss throws, and sift draws, the active (or aimed) book's group; R cycles the
+    /// groups learned; the lens seeks the same group.
+    #[test]
+    fn toss_and_sift_take_the_group() {
+        let mut g = Game::new(Layout::Great);
+        let mut audio = crate::audio::Audio::silent();
+        let dept = |g: &Game, b: u32| g.lib.dept_of(g.lib.category_of_book(b));
+        let cat = |g: &Game, b: u32| g.lib.category_of_book(b);
+        let n = g.lib.books.len() as u32;
+        let a = 0;
+        let same_dept = (0..n)
+            .find(|&b| dept(&g, b) == dept(&g, a) && cat(&g, b) != cat(&g, a))
+            .unwrap();
+        let other = (0..n).find(|&b| dept(&g, b) != dept(&g, a)).unwrap();
+        let hold = |g: &mut Game| {
+            for b in [a, same_dept, other] {
+                g.loose.take(&[b]);
+                g.state[b as usize] = BookState::Held;
+                g.held.push(b);
+            }
+            g.active = 0;
+        };
+        hold(&mut g);
+        g.toss_charge = 0.5;
+        g.toss(&mut audio);
+        assert_eq!(g.held, vec![same_dept, other]);
+        // Learn Broad Strokes; R moves from category to department.
+        g.upg[upg_index(Upg::Broad)] = 1;
+        let r = Input {
+            regroup: true,
+            ..Input::default()
+        };
+        g.update(1.0 / 60.0, &r, &mut audio, true);
+        assert_eq!(g.group, Group::Department);
+        g.held.clear();
+        hold(&mut g);
+        g.toss(&mut audio);
+        assert_eq!(g.held, vec![other]);
+        // The lens seeks the active book's department.
+        g.upg[upg_index(Upg::Lens)] = 1;
+        let v = Input {
+            lens: true,
+            ..Input::default()
+        };
+        g.update(1.0 / 60.0, &v, &mut audio, true);
+        assert!(g.lens);
+        assert_eq!(g.lens_sought(), [1.0, dept(&g, other) as f32, 0.0, 0.0]);
+        // Sift by department draws only the aimed book's department, across categories.
+        g.held.clear();
+        g.upg[upg_index(Upg::Sift)] = 4;
+        g.upg[upg_index(Upg::Arms)] = 4;
+        let aimed = (0..n)
+            .find(|&b| g.loose.is_resting(b) && g.loose.level_of(b) == 0)
+            .unwrap();
+        let point = g.loose.pose(aimed).0;
+        g.aim = Aim::Loose {
+            book: aimed,
+            point,
+            dist: 2.0,
+        };
+        g.sift(&mut audio, true);
+        assert!(g.held.len() > 1);
+        assert!(g.held.iter().all(|&b| dept(&g, b) == dept(&g, aimed)));
+        assert!(
+            g.held.iter().any(|&b| cat(&g, b) != cat(&g, aimed)),
+            "{} books",
+            g.held.len()
+        );
     }
 }
