@@ -110,7 +110,9 @@ the implementation's own choices, revisable at the phase boundary.
   by index and rebuild unmoved piles from generation.
 - **Levels**: a floor elevation and roof height per level. Floors are slabs
   (rectangles); anywhere a level has no slab is a hole (the atrium well, stair
-  wells). Stairs are ramps from one level's floor to the next.
+  wells). Stairs are ramps from one level's floor to the next: bodies (player,
+  nav) walk them as a smooth slope, books rest on their treads (`Ramp::tread`),
+  so a thrown book lies on a step rather than sunk into it.
 - **Solids** have real vertical extent and stand on a level's floor (walls,
   railings, bookcases, tables). Slabs block sight and aim rays too.
 - **Departments** generalise wings, **gates** the veil. A gate is a thin solid

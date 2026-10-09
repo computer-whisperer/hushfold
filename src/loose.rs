@@ -234,7 +234,7 @@ impl Grid {
                 };
                 for r in &ramps {
                     if r.contains(c) {
-                        h = h.max(r.height(c));
+                        h = h.max(r.tread(c));
                     }
                 }
                 for &(mn, mx) in &solids {

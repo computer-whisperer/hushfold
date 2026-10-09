@@ -181,23 +181,24 @@ impl Library {
                 0,
             );
             self.push(glass);
-            // Frame and sill.
+            // Sill, lintel and jambs: the jambs stand under the lintel and between the
+            // ends of sill and lintel, so no two faces share a plane.
             self.push(Inst::aabox(
                 c + Vec3::new(0.0, -2.2, 0.12),
-                Vec3::new(1.9, 0.14, 0.3),
+                Vec3::new(2.1, 0.14, 0.3),
                 kind::STONE,
                 [0.45, 0.42, 0.38],
             ));
             self.push(Inst::aabox(
-                c + Vec3::new(0.0, 2.2, 0.08),
-                Vec3::new(1.9, 0.2, 0.2),
+                c + Vec3::new(0.0, 2.2, 0.1),
+                Vec3::new(2.1, 0.2, 0.24),
                 kind::STONE,
                 [0.45, 0.42, 0.38],
             ));
             for s in [-1.0, 1.0] {
                 self.push(Inst::aabox(
-                    c + Vec3::new(s * 0.85, 0.0, 0.08),
-                    Vec3::new(0.2, 4.6, 0.2),
+                    c + Vec3::new(s * 0.85, -0.1, 0.08),
+                    Vec3::new(0.2, 4.4, 0.2),
                     kind::STONE,
                     [0.45, 0.42, 0.38],
                 ));

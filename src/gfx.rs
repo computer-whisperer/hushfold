@@ -54,6 +54,16 @@ impl Inst {
     pub fn minmax(min: Vec3, max: Vec3, kind: u32, rgb: [f32; 3]) -> Self {
         Self::aabox((min + max) * 0.5, max - min, kind, rgb)
     }
+
+    /// Its corners, if its rotation only swaps or flips axes.
+    #[cfg(test)]
+    pub fn axis_box(&self) -> Option<(Vec3, Vec3)> {
+        let m = glam::Mat3::from_quat(Quat::from_array(self.rot));
+        let square = (m.to_cols_array().iter()).all(|v| v.abs() < 1e-4 || (v.abs() - 1.0).abs() < 1e-4);
+        let half = (m * (Vec3::from(self.scale) * 0.5)).abs();
+        let c = Vec3::from(self.pos);
+        square.then_some((c - half, c + half))
+    }
 }
 
 #[repr(C)]

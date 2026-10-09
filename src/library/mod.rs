@@ -138,8 +138,12 @@ pub struct Slab {
     pub max: Vec2,
 }
 
-/// A flight of stairs, walked and settled on as a smooth slope: it rises from `y0`
-/// at its low end to `y1` along `axis` (a unit axis direction) across its rectangle.
+/// How far a stair's tread overhangs the riser below it.
+pub const NOSING: f32 = 0.03;
+
+/// A flight of `steps` stairs rising from `y0` at its low end to `y1` along `axis` (a
+/// unit axis direction) across its rectangle. Bodies walk it as a smooth slope; books
+/// rest on its treads.
 #[derive(Clone, Copy)]
 pub struct Ramp {
     pub level: usize,
@@ -148,6 +152,7 @@ pub struct Ramp {
     pub axis: Vec2,
     pub y0: f32,
     pub y1: f32,
+    pub steps: usize,
 }
 
 impl Ramp {
@@ -155,12 +160,26 @@ impl Ramp {
         p.cmpge(self.min).all() && p.cmple(self.max).all()
     }
 
+    /// The flight's length, and how far along it `p` is (not clamped).
+    fn along(&self, p: Vec2) -> (f32, f32) {
+        let c = (self.min + self.max) * 0.5;
+        let len = (self.max - self.min).dot(self.axis.abs());
+        (len, (p - c).dot(self.axis) + len * 0.5)
+    }
+
     /// Height of the slope above `p` (clamped to the ends).
     pub fn height(&self, p: Vec2) -> f32 {
-        let c = (self.min + self.max) * 0.5;
-        let half = ((self.max - self.min) * 0.5).dot(self.axis.abs());
-        let t = (((p - c).dot(self.axis) / half + 1.0) * 0.5).clamp(0.0, 1.0);
-        self.y0 + (self.y1 - self.y0) * t
+        let (len, d) = self.along(p);
+        self.y0 + (self.y1 - self.y0) * (d / len).clamp(0.0, 1.0)
+    }
+
+    /// Height of the tread above `p`: step `k` (from 0) rises to `k + 1` rises over
+    /// its stretch of the run, and its tread reaches `NOSING` past its riser.
+    pub fn tread(&self, p: Vec2) -> f32 {
+        let (len, d) = self.along(p);
+        let run = len / self.steps as f32;
+        let k = ((d + NOSING) / run).floor().clamp(0.0, (self.steps - 1) as f32);
+        self.y0 + (self.y1 - self.y0) * (k + 1.0) / self.steps as f32
     }
 }
 
@@ -420,8 +439,8 @@ impl Library {
                     [0.2, 0.09, 0.04],
                 ));
                 self.push(Inst::aabox(
-                    ch + Vec3::new(0.0, 0.75, sz * 0.21),
-                    Vec3::new(0.48, 0.6, 0.04),
+                    ch + Vec3::new(0.0, 0.75, sz * 0.2),
+                    Vec3::new(0.44, 0.6, 0.04),
                     kind::WOOD,
                     [0.2, 0.09, 0.04],
                 ));
@@ -537,7 +556,8 @@ impl Library {
         part(
             self,
             Vec3::Y * (UNIT_H + 0.105),
-            Vec3::new(UNIT_W + 0.16, 0.05, UNIT_DEPTH + 0.16),
+            // As wide as the pitch, so the caps of a row of cases meet without overlapping.
+            Vec3::new(UNIT_PITCH, 0.05, UNIT_DEPTH + 0.16),
             [0.12, 0.06, 0.028],
         );
         part(
@@ -779,5 +799,140 @@ impl Library {
                 Vec2::new(yaw.cos(), yaw.sin()),
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Space the player could see from: cells of `VOX` reached from the spawn point
+    /// without touching a static box.
+    struct Air {
+        min: Vec3,
+        dims: [usize; 3],
+        open: Vec<bool>,
+    }
+
+    const VOX: f32 = 0.2;
+
+    impl Air {
+        fn new(boxes: &[(Vec3, Vec3, u32)], seed: Vec3) -> Air {
+            let (min, max) = (boxes.iter()).fold(
+                (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+                |(a, b), &(mn, mx, _)| (a.min(mn), b.max(mx)),
+            );
+            let min = min - Vec3::splat(VOX);
+            let d = ((max - min) / VOX).ceil() + 1.0;
+            let dims = [d.x as usize, d.y as usize, d.z as usize];
+            let idx = |x: usize, y: usize, z: usize| (z * dims[1] + y) * dims[0] + x;
+            let mut solid = vec![false; dims[0] * dims[1] * dims[2]];
+            // Every cell a box touches is solid, so thin walls hold.
+            for &(mn, mx, _) in boxes {
+                let lo = ((mn - min) / VOX).floor().max(Vec3::ZERO);
+                let hi = ((mx - min) / VOX).ceil() - 1.0;
+                for z in lo.z as usize..=hi.z as usize {
+                    for y in lo.y as usize..=hi.y as usize {
+                        for x in lo.x as usize..=hi.x as usize {
+                            solid[idx(x, y, z)] = true;
+                        }
+                    }
+                }
+            }
+            let mut open = vec![false; solid.len()];
+            let s = ((seed - min) / VOX).floor();
+            let mut stack = vec![[s.x as usize, s.y as usize, s.z as usize]];
+            while let Some([x, y, z]) = stack.pop() {
+                let i = idx(x, y, z);
+                if open[i] || solid[i] {
+                    continue;
+                }
+                open[i] = true;
+                for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] {
+                    let (nx, ny, nz) = (x as isize + dx, y as isize + dy, z as isize + dz);
+                    if (0..dims[0] as isize).contains(&nx)
+                        && (0..dims[1] as isize).contains(&ny)
+                        && (0..dims[2] as isize).contains(&nz)
+                    {
+                        stack.push([nx as usize, ny as usize, nz as usize]);
+                    }
+                }
+            }
+            Air { min, dims, open }
+        }
+
+        fn at(&self, p: Vec3) -> bool {
+            let c = ((p - self.min) / VOX).floor();
+            let [x, y, z] = [c.x as usize, c.y as usize, c.z as usize];
+            x < self.dims[0]
+                && y < self.dims[1]
+                && z < self.dims[2]
+                && self.open[(z * self.dims[1] + y) * self.dims[0] + x]
+        }
+    }
+
+    /// Faces of opaque static boxes that lie in the same plane, facing the same way,
+    /// overlapping where they can be seen from inside the library.
+    fn coplanar(layout: Layout) -> Vec<String> {
+        let lib = Library::generate(layout, 7);
+        let boxes: Vec<(Vec3, Vec3, u32)> = (lib.static_insts.iter())
+            .filter_map(|i| i.axis_box().map(|(a, b)| (a, b, i.kind)))
+            .collect();
+        let air = Air::new(&boxes, lib.spawn.0 + Vec3::Y * 1.0);
+        let mut faces: HashMap<(usize, bool, i64), Vec<usize>> = HashMap::new();
+        for (k, &(mn, mx, _)) in boxes.iter().enumerate() {
+            for axis in 0..3 {
+                for (pos, v) in [(false, mn[axis]), (true, mx[axis])] {
+                    faces
+                        .entry((axis, pos, (v * 1000.0).round() as i64))
+                        .or_default()
+                        .push(k);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for (&(axis, pos, plane), ks) in &faces {
+            let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+            for (i, &a) in ks.iter().enumerate() {
+                for &b in &ks[i + 1..] {
+                    let (amn, amx, ak) = boxes[a];
+                    let (bmn, bmx, bk) = boxes[b];
+                    let lo = amn.max(bmn);
+                    let hi = amx.min(bmx);
+                    if hi[u] - lo[u] < 0.002 || hi[v] - lo[v] < 0.002 {
+                        continue;
+                    }
+                    // Seen if the space just in front of the shared patch can be reached.
+                    let mut p = (lo + hi) * 0.5;
+                    p[axis] = plane as f32 / 1000.0 + if pos { 1.01 * VOX } else { -1.01 * VOX };
+                    let mut q = p;
+                    q[axis] = plane as f32 / 1000.0 + if pos { 0.001 } else { -0.001 };
+                    let covered = (boxes.iter().enumerate())
+                        .any(|(k, &(mn, mx, _))| k != a && k != b && q.cmpgt(mn).all() && q.cmplt(mx).all());
+                    if air.at(p) && !covered {
+                        out.push(format!(
+                            "{layout:?} kinds {ak}/{bk} axis {axis}{} plane {:.3} at {:.2?} size {:.2}x{:.2}",
+                            if pos { "+" } else { "-" },
+                            plane as f32 / 1000.0,
+                            q,
+                            hi[u] - lo[u],
+                            hi[v] - lo[v],
+                        ));
+                    }
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn no_coplanar_faces() {
+        let found: Vec<String> = Layout::ALL.into_iter().flat_map(coplanar).collect();
+        for f in &found {
+            println!("{f}");
+        }
+        assert!(found.is_empty(), "{} coplanar overlapping faces", found.len());
     }
 }

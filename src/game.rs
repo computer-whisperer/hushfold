@@ -2667,6 +2667,56 @@ mod tests {
         assert_eq!(g.loose.heightfield_errors(), 0);
     }
 
+    /// Books dropped on the stairs come to rest on the treads, not sunk into them.
+    #[test]
+    fn books_rest_on_the_treads() {
+        let mut g = Game::new(Layout::Great);
+        let mut audio = crate::audio::Audio::silent();
+        let (lv, top) = g.loose.best_pile(|l, c, _| (l == 0).then(|| c.length())).unwrap();
+        let books = g.loose.gather(lv, Vec2::new(top.x, top.z), 1.5, 40, |_| true);
+        assert_eq!(books.len(), 40);
+        let ramps = g.lib.ramps.clone();
+        for (i, &b) in books.iter().enumerate() {
+            let r = &ramps[i % ramps.len()];
+            let (c, half) = ((r.min + r.max) * 0.5, (r.max - r.min) * 0.5);
+            let t = (i / ramps.len()) as f32 / 10.0 * 1.6 - 0.8;
+            let p = c + r.axis * half.dot(r.axis.abs()) * t;
+            let from = Vec3::new(p.x, r.height(p) + 1.0, p.y);
+            let rot = Quat::from_rotation_y(i as f32 * 0.7);
+            g.loose.throw(b, from, Vec3::ZERO, rot, Vec3::ZERO, 0.0);
+        }
+        for _ in 0..60 * 6 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
+        }
+        let solid: Vec<(Vec3, Vec3)> = (g.lib.static_insts.iter())
+            .filter(|i| [kind::STONE, kind::WOOD].contains(&i.kind))
+            .filter_map(|i| i.axis_box())
+            .collect();
+        let mut sunk = Vec::new();
+        for &b in &books {
+            assert!(g.loose.is_resting(b), "book {b} still moving");
+            let (pos, rot) = g.loose.pose(b);
+            let half = g.lib.books[b as usize].size * 0.5 - 0.01;
+            for k in 0..8 {
+                let s = Vec3::new([-1.0, 1.0][k & 1], [-1.0, 1.0][(k >> 1) & 1], [-1.0, 1.0][k >> 2]);
+                let q = pos + rot * (half * s);
+                let depth = (solid.iter())
+                    .filter(|(mn, mx)| q.cmpgt(*mn).all() && q.cmplt(*mx).all())
+                    .map(|(_, mx)| mx.y - q.y)
+                    .fold(0.0, f32::max);
+                if depth > 0.005 {
+                    sunk.push(format!("book {b} corner {q} {depth:.3} deep"));
+                }
+            }
+        }
+        assert!(
+            sunk.is_empty(),
+            "{} corners sunk: {:#?}",
+            sunk.len(),
+            &sunk[..sunk.len().min(8)]
+        );
+    }
+
     /// The way to a slot upstairs goes by the stairs.
     #[test]
     fn routes_climb_the_stairs() {

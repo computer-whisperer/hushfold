@@ -21,6 +21,8 @@ const DOOR_H: f32 = 3.6;
 const STAIR_W: f32 = 2.4;
 const STAIR_HALF_RUN: f32 = 5.5;
 const STEPS: usize = 33;
+/// Thickness of a stair's wooden tread.
+const TREAD_T: f32 = 0.05;
 const RAIL_H: f32 = 1.05;
 const RAIL_T: f32 = 0.12;
 /// The skylight over the well.
@@ -255,15 +257,16 @@ impl Library {
         self.newel(b, RAIL_H + 0.06, newels);
     }
 
-    /// Wooden panelling 1.1 m high on the face of a wall, over the rectangle `r` (a
-    /// strip in front of the face).
-    fn wainscot(&mut self, level: usize, (mn, mx): (Vec2, Vec2)) {
+    /// Wooden panelling 1.1 m high on the face of a wall: a strip `r` in front of the
+    /// face, facing `toward` the room. Its cap fills the strip; the panel is set back.
+    fn wainscot(&mut self, level: usize, (mn, mx): (Vec2, Vec2), toward: Vec2) {
         let y = floor_y(level);
-        let (a, b) = box3(mn, mx, y, y + 1.1);
+        let back = toward * 0.02;
+        let (pmn, pmx) = (mn - back.max(Vec2::ZERO), mx - back.min(Vec2::ZERO));
+        let (a, b) = box3(pmn, pmx, y, y + 1.1);
         self.push(Inst::minmax(a, b, kind::WOOD, [0.13, 0.065, 0.03]));
         let (a, b) = box3(mn, mx, y + 1.1, y + 1.16);
-        let pad = Vec3::new(0.02, 0.0, 0.02);
-        self.push(Inst::minmax(a - pad, b + pad, kind::WOOD, WALNUT));
+        self.push(Inst::minmax(a, b, kind::WOOD, WALNUT));
     }
 
     /// Floors: solid on the ground; upstairs, everywhere but the well and the
@@ -303,7 +306,8 @@ impl Library {
         }
         // The roof over the top storey, and the lantern of the well rising to the skylight.
         let top = floor_y(STOREYS - 1) + ROOM_H;
-        for (mn, mx) in cut(vec![(-ext, ext)], (Vec2::splat(-WELL), Vec2::splat(WELL))) {
+        let lantern = WELL + 0.2;
+        for (mn, mx) in cut(vec![(-ext, ext)], (Vec2::splat(-lantern), Vec2::splat(lantern))) {
             self.push(Inst::minmax(
                 Vec3::new(mn.x, top, mn.y),
                 Vec3::new(mx.x, top + SLAB, mx.y),
@@ -312,7 +316,7 @@ impl Library {
             ));
         }
         for side in SIDES {
-            let (mn, mx) = side.rect(-WELL - 0.2, WELL + 0.2, WELL, WELL + 0.2);
+            let (mn, mx) = side.rect(-lantern, lantern, WELL, lantern);
             self.push(Inst::minmax(
                 Vec3::new(mn.x, top, mn.y),
                 Vec3::new(mx.x, SKY, mx.y),
@@ -333,7 +337,7 @@ impl Library {
             let x = k as f32 * 3.6;
             for (mn, mx) in [
                 (Vec3::new(x - 0.12, SKY - 0.2, -WELL), Vec3::new(x + 0.12, SKY, WELL)),
-                (Vec3::new(-WELL, SKY - 0.2, x - 0.12), Vec3::new(WELL, SKY, x + 0.12)),
+                (Vec3::new(-WELL, SKY - 0.15, x - 0.1), Vec3::new(WELL, SKY, x + 0.1)),
             ] {
                 self.push(Inst::minmax(mn, mx, kind::WOOD, DARK_WOOD));
             }
@@ -378,6 +382,7 @@ impl Library {
                 axis: side.across,
                 y0,
                 y1,
+                steps: STEPS,
             });
             let run = 2.0 * r / STEPS as f32;
             let rise = (y1 - y0) / STEPS as f32;
@@ -387,16 +392,12 @@ impl Library {
             for k in 0..STEPS {
                 let a0 = -r + k as f32 * run;
                 let top = y0 + (k + 1) as f32 * rise;
-                let (lo, hi) = box3(
-                    side.rect(a0, a0 + run, WELL, WELL + STAIR_W).0,
-                    side.rect(a0, a0 + run, WELL, WELL + STAIR_W).1,
-                    y0,
-                    top - 0.035,
-                );
+                let (sl, sh) = side.rect(a0, a0 + run, WELL, WELL + STAIR_W);
+                let (lo, hi) = box3(sl, sh, y0, top - TREAD_T);
                 self.push(Inst::minmax(lo, hi, kind::STONE, [0.4, 0.37, 0.33]));
-                // The tread overhangs its riser a little.
-                let (tl, th) = side.rect(a0 - 0.03, a0 + run, WELL, WELL + STAIR_W);
-                let (lo, hi) = box3(tl, th, top - 0.035, top + 0.015);
+                // The tread overhangs its riser a little (as books find it: `Ramp::tread`).
+                let (tl, th) = side.rect(a0 - NOSING, a0 + run, WELL, WELL + STAIR_W);
+                let (lo, hi) = box3(tl, th, top - TREAD_T, top);
                 self.push(Inst::minmax(lo, hi, kind::WOOD, WALNUT));
             }
             for (o_rail, o_string) in [
@@ -415,7 +416,7 @@ impl Library {
                 // Balusters on every other tread, a handrail along the slope.
                 for k in (0..STEPS).step_by(2) {
                     let a = -r + (k as f32 + 0.5) * run;
-                    let foot = y0 + (k + 1) as f32 * rise + 0.015;
+                    let foot = y0 + (k + 1) as f32 * rise;
                     let h = slope(a) + 0.92 - foot;
                     self.post(at(a, o_rail, foot), h, 0.045, BALUSTER);
                 }
@@ -453,7 +454,7 @@ impl Library {
             self.railing(at(-r - 0.06, WELL + 0.06, y1), at(-r - 0.06, edge + 0.06, y1), newels);
             for rect in [
                 side.rect(-r, r, edge - 0.06, edge),
-                side.rect(-r - 0.06, -r, WELL, edge),
+                side.rect(-r, -r + 0.06, WELL, edge - 0.06),
             ] {
                 let (lo, hi) = box3(rect.0, rect.1, y1 - SLAB - 0.05, y1 + 0.03);
                 self.push(Inst::minmax(lo, hi, kind::WOOD, WALNUT));
@@ -498,10 +499,10 @@ impl Library {
                 }
                 // Panelling along the atrium face of the wall.
                 for (a0, a1) in [
-                    (-ATRIUM + h + 0.05, d - DOOR_HALF - 0.3),
-                    (d + DOOR_HALF + 0.3, ATRIUM - h - 0.05),
+                    (-ATRIUM + h + 0.07, d - DOOR_HALF - 0.3),
+                    (d + DOOR_HALF + 0.3, ATRIUM - h - 0.07),
                 ] {
-                    self.wainscot(l, side.rect(a0, a1, ATRIUM - h - 0.05, ATRIUM - h));
+                    self.wainscot(l, side.rect(a0, a1, ATRIUM - h - 0.07, ATRIUM - h), -side.out);
                 }
                 // Sconces either side of the door, facing the atrium.
                 for sa in [-7.5, 7.5] {
@@ -625,14 +626,12 @@ impl Library {
         }
         // Panelling round the walls, beams across the ceiling.
         let inner = ROOM_HALF - h;
-        self.wainscot(l, side.rect(-inner, -inner + 0.05, ATRIUM + h, OUTER - h - 0.05));
-        self.wainscot(l, side.rect(inner - 0.05, inner, ATRIUM + h, OUTER - h - 0.05));
-        self.wainscot(l, side.rect(-inner, inner, OUTER - h - 0.05, OUTER - h));
-        for (a0, a1) in [
-            (-inner + 0.05, d - DOOR_HALF - 0.3),
-            (d + DOOR_HALF + 0.3, inner - 0.05),
-        ] {
-            self.wainscot(l, side.rect(a0, a1, ATRIUM + h, ATRIUM + h + 0.05));
+        let t = 0.07;
+        self.wainscot(l, side.rect(-inner, -inner + t, ATRIUM + h, OUTER - h - t), side.across);
+        self.wainscot(l, side.rect(inner - t, inner, ATRIUM + h, OUTER - h - t), -side.across);
+        self.wainscot(l, side.rect(-inner, inner, OUTER - h - t, OUTER - h), -side.out);
+        for (a0, a1) in [(-inner + t, d - DOOR_HALF - 0.3), (d + DOOR_HALF + 0.3, inner - t)] {
+            self.wainscot(l, side.rect(a0, a1, ATRIUM + h, ATRIUM + h + t), side.out);
         }
         for k in 0..6 {
             let o = ATRIUM + h + 1.6 + k as f32 * 3.0;
