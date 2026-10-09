@@ -1,7 +1,7 @@
 //! egui HUD: crosshair, armful, active-book card, world labels, toasts, Grimoire.
 
 use crate::catalog;
-use crate::game::{Aim, Cheat, Game, Tier, UPGRADES, Upg, upg_costs, upg_def};
+use crate::game::{Aim, Cheat, Game, Group, Tier, UPGRADES, Upg, upg_costs, upg_def};
 use crate::library::{LabelKind, Layout, ROWS};
 use crate::settings::Settings;
 use egui::{Align2, Color32, FontFamily, FontId, Pos2, Rect, RichText, Stroke, Vec2};
@@ -79,6 +79,16 @@ fn bright(c: [f32; 3]) -> Color32 {
     let m = c[0].max(c[1]).max(c[2]).max(1e-3);
     let k = 0.85 / m;
     rgb([c[0] * k, c[1] * k, c[2] * k])
+}
+
+/// A group's name (a department's or category's, a series' title) and colour.
+fn group_label(g: &Game, group: Group, key: usize) -> (String, Color32) {
+    let name = match group {
+        Group::Department => &g.lib.catalog.departments[key].name,
+        Group::Category => &g.lib.catalog.categories[key].name,
+        Group::Series => &g.lib.series[key].title,
+    };
+    (name.clone(), bright(g.group_color(group, key)))
 }
 
 fn project(vp: &Mat4, p: Vec3, size: Vec2) -> Option<Pos2> {
@@ -286,10 +296,12 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             let room = g.capacity().saturating_sub(g.held.len());
             let what = if room == 0 {
                 "arms full".to_string()
-            } else if g.level(Upg::Sift) > 0 {
-                format!("click gather · F sift {}", g.group.name())
+            } else if g.level(Upg::Sift) == 0 {
+                "tap take · hold scoop".to_string()
+            } else if g.sought().is_some_and(|(group, key)| group.of(&g.lib, book) == key) {
+                "tap take · hold scoop · F stop seeking".to_string()
             } else {
-                "click gather".to_string()
+                format!("tap take · hold scoop · F seek {}", g.group.name())
             };
             let name = &g.lib.catalog.categories[cat].name;
             let many = g.lib.catalog.departments.len() > 2;
@@ -421,14 +433,19 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 if g.groups().len() > 1 {
                     status.push_str(" (R)");
                 }
-                if g.lens {
-                    status.push_str("  ·  lens");
-                }
                 let riding = g.familiars().filter(|&(_, posted)| !posted).count();
                 if riding > 0 {
                     status.push_str(&format!("  ·  {riding} riding (G posts)"));
                 }
                 ui.label(RichText::new(status).font(serif(13.0)).color(DIM));
+                if let Some((group, key)) = g.sought() {
+                    let (name, col) = group_label(g, group, key);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Seeking").font(serif(13.0)).color(DIM));
+                        ui.label(RichText::new(name).font(serif(14.0)).color(col));
+                        ui.label(RichText::new("(F at nothing stops)").font(serif(12.0)).color(DIM));
+                    });
+                }
                 if let Some(b) = g.active_book() {
                     let info = &g.lib.books[b as usize];
                     let s = &g.lib.series[info.series as usize];
@@ -481,7 +498,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                     }
                 } else {
                     ui.label(
-                        RichText::new("Empty-handed. Click a pile to gather books.")
+                        RichText::new("Empty-handed. Tap a book to take it, or hold on a pile to scoop.")
                             .font(serif(15.0))
                             .color(INK),
                     );
@@ -497,7 +514,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             let m = if hud.settings.music { "on" } else { "off" };
             ui.label(
                 RichText::new(format!(
-                    "Click gather/file · Hold right toss · Scroll cycle · R sort by · Tab Grimoire · M music ({m}) · Esc pause"
+                    "Tap take · Hold scoop · Click a run file · Hold right toss · F seek · R sort by · Scroll cycle · Tab Grimoire · M music ({m}) · Esc pause"
                 ))
                 .font(serif(12.0))
                 .color(DIM.gamma_multiply(0.8)),
@@ -632,8 +649,8 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 if fresh {
                     let body = "The night librarian has gone missing, and the library has come undone. \
                         Thousands of books lie in piles across the floor.\n\n\
-                        Gather an armful from any pile, then find each book's home: its category's \
-                        bookcases (look for the signs), its series (the glowing outlines in its colour), \
+                        Tap a book to take it, or hold on a pile to scoop an armful. Then find each book's home: \
+                        its category's bookcases (look for the signs), its series (the glowing outlines in its colour), \
                         and its place in the series. Click anywhere on a series' run of outlines to file a volume.\n\n\
                         Every book you file earns a lumen ✦. Spend them in the Grimoire to make the work lighter.";
                     ui.label(RichText::new(body).font(serif(15.0)).color(INK));
@@ -665,9 +682,10 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new(
-                        "WASD walk · Shift hurry · Mouse look · Click gather/file\n\
-                         Hold right mouse to toss a group, release to throw · F sift\n\
-                         R sort by department, category or series · V lens\n\
+                        "WASD walk · Shift hurry · Mouse look\n\
+                         Tap a book to take it · Hold on a pile to scoop · Click a run to file\n\
+                         Hold right mouse to toss a group, release to throw\n\
+                         F seek a book's kind · R sort by department, category or series\n\
                          G post a familiar where you aim, or take one back\n\
                          Scroll or Q/E cycle the active book · Tab Grimoire\n\
                          M music · F11 fullscreen · Esc pause",

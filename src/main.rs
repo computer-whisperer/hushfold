@@ -202,9 +202,8 @@ impl Running {
                 self.hud.settings.fullscreen = full;
                 self.save_settings();
             }
-            KeyCode::KeyF => self.input.sift_pressed = true,
+            KeyCode::KeyF => self.input.seek = true,
             KeyCode::KeyR => self.input.regroup = true,
-            KeyCode::KeyV => self.input.lens = true,
             KeyCode::KeyG => self.input.post = true,
             KeyCode::KeyQ => self.input.cycle -= 1,
             KeyCode::KeyE => self.input.cycle += 1,
@@ -257,21 +256,18 @@ impl Running {
             self.input.forward = (k(KeyCode::KeyW) as i32 - k(KeyCode::KeyS) as i32) as f32;
             self.input.strafe = (k(KeyCode::KeyD) as i32 - k(KeyCode::KeyA) as i32) as f32;
             self.input.sprint = k(KeyCode::ShiftLeft) || k(KeyCode::ShiftRight);
-            self.input.sift_down = k(KeyCode::KeyF);
         } else {
             self.input.forward = 0.0;
             self.input.strafe = 0.0;
-            self.input.sift_down = false;
             self.input.look = glam::Vec2::ZERO;
         }
         self.game.update(dt, &self.input, &mut self.audio, playing);
         self.input.look = glam::Vec2::ZERO;
         self.input.primary_pressed = false;
         self.input.toss_pressed = false;
-        self.input.sift_pressed = false;
+        self.input.seek = false;
         self.input.cycle = 0;
         self.input.regroup = false;
-        self.input.lens = false;
         self.input.post = false;
 
         self.save_timer += dt;
@@ -373,7 +369,13 @@ impl Running {
                     sc.wait = num(1) as u32;
                     return;
                 }
+                // click: a tap (takes one book, or files); press … wait N … release: a hold.
                 Some("click") => self.input.primary_pressed = true,
+                Some("press") => {
+                    self.input.primary_pressed = true;
+                    self.input.primary_down = true;
+                }
+                Some("release") => self.input.primary_down = false,
                 Some("facepile") => self.game.script_face_pile(),
                 // lookat <x> <y> <z> <dist>: stand <dist> m back (toward where you are) and look.
                 Some("lookat") => self
@@ -382,9 +384,8 @@ impl Running {
                 // charge … wait N … throw: hold and release the toss button.
                 Some("charge") => self.input.toss_down = true,
                 Some("throw") => self.input.toss_down = false,
-                Some("sift") => self.input.sift_pressed = true,
+                Some("seek") => self.input.seek = true,
                 Some("regroup") => self.input.regroup = true,
-                Some("lens") => self.input.lens = true,
                 Some("post") => self.input.post = true,
                 Some("unveil") => self.game.open_all_gates(),
                 Some("facefam") => self.game.script_face_familiar(num(1) as usize),

@@ -493,7 +493,6 @@ impl Loose {
     }
 
     /// Height of the surface (floor, table or books) at `p` on level `lv`.
-    #[cfg(test)]
     pub fn height_at(&self, lv: usize, p: Vec2) -> f32 {
         self.grids[lv].height(p)
     }

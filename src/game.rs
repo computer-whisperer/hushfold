@@ -30,8 +30,12 @@ const SHELF_REACH: f32 = 4.2;
 const HAND_VISIBLE: usize = 8;
 /// Shelving Aura by level: (radius in metres, books per second).
 const AURA_LEVELS: [(f32, f32); 4] = [(0.0, 0.0), (3.0, 2.0), (4.5, 4.0), (6.0, 8.0)];
-/// Sifting Touch by level: radius in metres.
+/// Sifting Touch by level: the largest scoop while seeking, in metres.
 const SIFT_RADIUS: [f32; 5] = [0.0, 0.9, 1.8, 2.7, 3.6];
+/// Seconds a press on a pile may last and still take only the book pressed on.
+const TAP: f32 = 0.18;
+/// Seconds over which a held scoop's ring then grows to its largest.
+const SCOOP_GROW: f32 = 0.4;
 /// Seconds to charge a toss fully.
 const TOSS_CHARGE: f32 = 0.9;
 /// Toss speed in m/s, uncharged.
@@ -141,30 +145,26 @@ pub fn upg_def(u: Upg) -> UpgDef {
         ),
         Upg::Lens => (
             "Seeker's Lens",
-            "Press V: loose books of the active book's group glow, and the rest fade.",
+            "While you seek, loose books of the kind you seek glow and the rest fade.",
             Tier::Reading,
         ),
         Upg::Sift => (
             "Sifting Touch",
-            "Press F at a pile to draw out only books of the aimed book's group; each level reaches wider.",
+            "Press F at a book to seek its kind: a held scoop then takes only those books, from any depth. Each level scoops wider.",
             Tier::Moving,
         ),
         Upg::Broad => (
             "Broad Strokes",
-            "Press R to sort by department: toss and sift whole departments at once.",
+            "Press R to sort by department: seek and toss whole departments at once.",
             Tier::Moving,
         ),
         Upg::Fine => (
             "Fine Fingers",
-            "Press R to sort by series: toss and sift a single series.",
+            "Press R to sort by series: seek and toss a single series.",
             Tier::Moving,
         ),
         Upg::LongToss => ("Long Toss", "Throw harder, and the books scatter less.", Tier::Moving),
-        Upg::Lodestone => (
-            "Lodestone Grasp",
-            "Gather from piles at a distance; hold the button to keep gathering.",
-            Tier::Moving,
-        ),
+        Upg::Lodestone => ("Lodestone Grasp", "Take books from piles at a distance.", Tier::Moving),
         Upg::Arms => ("Deeper Arms", "Carry more books at once.", Tier::Filing),
         Upg::Slippers => ("Swift Slippers", "Pad through the stacks faster.", Tier::Filing),
         Upg::Tidy => (
@@ -347,25 +347,37 @@ pub enum Aim {
     Familiar(usize),
 }
 
+/// A press on a pile while the button is held: released quickly it takes the book
+/// pressed on; held, a ring grows round the aim and releasing takes what is in it.
+#[derive(Clone, Copy, Debug)]
+pub struct Scoop {
+    /// The book under the crosshair when pressed.
+    book: u32,
+    /// Seconds held.
+    held: f32,
+    /// The ring's centre and level: the aim point, followed while it is on a pile.
+    pub at: Vec3,
+    lv: usize,
+}
+
 #[derive(Default)]
 pub struct Input {
     pub forward: f32,
     pub strafe: f32,
     pub sprint: bool,
     pub look: Vec2,
+    /// Left button: a tap takes one book, a hold scoops; a press on a run files.
     pub primary_down: bool,
     pub primary_pressed: bool,
     /// Held to charge a toss; released to throw.
     pub toss_down: bool,
     /// Pressed this frame (a press and release within one frame still tosses).
     pub toss_pressed: bool,
-    pub sift_down: bool,
-    pub sift_pressed: bool,
+    /// F: seek the aimed book's group, or stop.
+    pub seek: bool,
     pub cycle: i32,
     /// R: the next sorting group.
     pub regroup: bool,
-    /// V: the Seeker's Lens on or off.
-    pub lens: bool,
     /// G: post a familiar, or take one back.
     pub post: bool,
 }
@@ -477,8 +489,8 @@ pub struct Game {
     pub aim: Aim,
     pub time: f32,
     pub play_time: f64,
-    grab_cooldown: f32,
-    sift_cooldown: f32,
+    /// A press on a pile, while the button is held.
+    pub scoop: Option<Scoop>,
     /// Toss charge, 0..1, while the toss button is held.
     pub toss_charge: f32,
     toss_was_down: bool,
@@ -503,11 +515,11 @@ pub struct Game {
     walk: Field,
     /// Where the compass points, if anywhere.
     pub sense: Option<Sense>,
-    /// What toss and sift take: the active (or aimed) book's department, category
-    /// or series.
+    /// The level toss and seeking work at: department, category or series.
     pub group: Group,
-    /// The Seeker's Lens is on.
-    pub lens: bool,
+    /// While seeking: a book of the group sought (at `group`'s level, so R changes
+    /// what is sought).
+    pub seek: Option<u32>,
     /// Vertical field of view on wide windows, in degrees (a setting).
     pub fov: f32,
     pub dirty_save: bool,
@@ -595,8 +607,7 @@ impl Game {
             aim: Aim::None,
             time: 0.0,
             play_time: 0.0,
-            grab_cooldown: 0.0,
-            sift_cooldown: 0.0,
+            scoop: None,
             toss_charge: 0.0,
             toss_was_down: false,
             toss_arc: Vec::new(),
@@ -619,7 +630,7 @@ impl Game {
             nav,
             sense: None,
             group: Group::Category,
-            lens: false,
+            seek: None,
             fov: 70.0,
             dirty_save: false,
             persist: true,
@@ -775,13 +786,8 @@ impl Game {
                     ));
                 }
             }
-            if input.lens {
-                if self.level(Upg::Lens) > 0 {
-                    self.lens = !self.lens;
-                    audio.play(Sfx::Tick, 0.25);
-                } else {
-                    self.hint = Some(("The Seeker's Lens is learned in the Grimoire (Tab).".into(), 2.0));
-                }
+            if input.seek {
+                self.press_seek(audio);
             }
             if input.post {
                 self.post_or_recall(audio);
@@ -792,17 +798,13 @@ impl Game {
                 self.manual_pick = self.active_book();
                 audio.play(Sfx::Tick, 0.25);
             }
-            self.grab_cooldown -= dt;
-            let repeat = self.level(Upg::Lodestone) > 0 && input.primary_down && self.grab_cooldown <= 0.0;
-            if input.primary_pressed || repeat {
-                self.interact(audio, input.primary_pressed);
+            if input.primary_pressed {
+                self.press(audio);
             }
-            self.sift_cooldown -= dt;
-            if input.sift_pressed || (input.sift_down && self.sift_cooldown <= 0.0) {
-                self.sift(audio, input.sift_pressed);
-            }
+            self.update_scoop(dt, input, audio);
             self.update_toss(dt, input, audio);
         } else {
+            self.scoop = None;
             self.toss_charge = 0.0;
             self.toss_was_down = false;
             self.toss_arc.clear();
@@ -1026,30 +1028,24 @@ impl Game {
         best
     }
 
-    fn interact(&mut self, audio: &mut Audio, fresh_press: bool) {
+    /// The left button goes down: on a pile it starts a scoop (taken on release), on
+    /// a series' run it files.
+    fn press(&mut self, audio: &mut Audio) {
         match self.aim {
             Aim::Loose { book, point, .. } => {
-                let room = self.capacity().saturating_sub(self.held.len());
-                if room == 0 {
-                    if fresh_press {
-                        audio.play(Sfx::Nope, 0.4);
-                        self.hint = Some(("Your arms are full — file some books first.".into(), 2.0));
-                    }
-                    self.grab_cooldown = 0.3;
+                if self.held.len() >= self.capacity() {
+                    audio.play(Sfx::Nope, 0.4);
+                    self.hint = Some(("Your arms are full — file some books first.".into(), 2.0));
                     return;
                 }
-                let radius = 0.35 + 0.05 * (room as f32).sqrt();
-                let lv = self.loose.level_of(book);
-                let books = self
-                    .loose
-                    .gather(lv, Vec2::new(point.x, point.z), radius, room, |_| true);
-                self.take_into_arms(&books, audio);
-                self.grab_cooldown = 0.35;
+                self.scoop = Some(Scoop {
+                    book,
+                    held: 0.0,
+                    at: point,
+                    lv: self.loose.level_of(book),
+                });
             }
             Aim::Shelf { run: Some(run), .. } => {
-                if !fresh_press {
-                    return;
-                }
                 let s = run.series;
                 let matching: Vec<usize> = (0..self.held.len())
                     .filter(|&i| self.lib.books[self.held[i] as usize].series == s)
@@ -1129,35 +1125,93 @@ impl Game {
         out
     }
 
-    /// Sifting Touch: draw books of the aimed book's group out of the pile around it.
-    fn sift(&mut self, audio: &mut Audio, fresh_press: bool) {
-        let lvl = self.level(Upg::Sift) as usize;
-        let Aim::Loose { book, point, .. } = self.aim else {
+    /// A group's colour: a department's is its first category's.
+    pub fn group_color(&self, group: Group, key: usize) -> [f32; 3] {
+        let cats = &self.lib.catalog.categories;
+        match group {
+            Group::Department => catalog::category_color(&cats[self.lib.catalog.departments[key].categories.start]),
+            Group::Category => catalog::category_color(&cats[key]),
+            Group::Series => self.lib.series[key].color,
+        }
+    }
+
+    /// What is sought: the level and which group of it.
+    pub fn sought(&self) -> Option<(Group, usize)> {
+        self.seek.map(|b| (self.group, self.group_of(b)))
+    }
+
+    /// F (with Sifting Touch): seek the aimed book's group, or stop if it is the one
+    /// sought; aimed at no book, stop, or seek the active book's group.
+    fn press_seek(&mut self, audio: &mut Audio) {
+        if self.level(Upg::Sift) == 0 {
+            self.hint = Some(("Seeking is learned with Sifting Touch, in the Grimoire (Tab).".into(), 2.0));
             return;
+        }
+        let sought = self.sought().map(|(_, key)| key);
+        self.seek = match self.aim {
+            Aim::Loose { book, .. } if sought != Some(self.group_of(book)) => Some(book),
+            Aim::Loose { .. } => None,
+            _ if sought.is_some() => None,
+            _ => self.active_book(),
         };
-        if lvl == 0 {
-            if fresh_press {
-                self.hint = Some(("Sifting is learned in the Grimoire (Tab).".into(), 2.0));
-            }
+        if sought.is_none() && self.seek.is_none() {
+            self.hint = Some(("Aim at a book to seek its kind.".into(), 2.0));
             return;
         }
+        audio.play(Sfx::Tick, 0.3);
+    }
+
+    /// The largest a scoop's ring grows: Sifting Touch's reach while seeking, else
+    /// wider the more the arms have room for.
+    fn scoop_max(&self) -> f32 {
         let room = self.capacity().saturating_sub(self.held.len());
-        if room == 0 {
-            if fresh_press {
-                audio.play(Sfx::Nope, 0.4);
-                self.hint = Some(("Your arms are full — file some books first.".into(), 2.0));
-            }
-            self.sift_cooldown = 0.3;
+        let plain = 0.35 + 0.05 * (room as f32).sqrt();
+        match self.sought() {
+            Some(_) => SIFT_RADIUS[self.level(Upg::Sift) as usize].max(plain),
+            None => plain,
+        }
+    }
+
+    /// The ring of a scoop held past a tap.
+    pub fn scoop_radius(&self, s: &Scoop) -> Option<f32> {
+        let t = s.held - TAP;
+        (t >= 0.0).then(|| self.scoop_max() * (0.25 + 0.75 * (t / SCOOP_GROW).min(1.0)))
+    }
+
+    /// Grow a held scoop, its ring following the aim across piles; on release take
+    /// what it holds.
+    fn update_scoop(&mut self, dt: f32, input: &Input, audio: &mut Audio) {
+        let Some(mut s) = self.scoop else { return };
+        if !input.primary_down {
+            self.scoop = None;
+            self.take_scoop(&s, audio);
             return;
         }
-        let (lib, group, key) = (&self.lib, self.group, self.group_of(book));
-        let same = |b: u32| group.of(lib, b) == key;
-        let lv = self.loose.level_of(book);
-        let books = self
-            .loose
-            .gather(lv, Vec2::new(point.x, point.z), SIFT_RADIUS[lvl], room, same);
+        s.held += dt;
+        if let Aim::Loose { book, point, .. } = self.aim {
+            s.at = point;
+            s.lv = self.loose.level_of(book);
+        }
+        self.scoop = Some(s);
+    }
+
+    /// A tap takes the book pressed on; a hold, the top of the pile inside the ring,
+    /// or while seeking only the sought group's books there, from any depth.
+    fn take_scoop(&mut self, s: &Scoop, audio: &mut Audio) {
+        let books = match self.scoop_radius(s) {
+            None if self.loose.is_resting(s.book) => {
+                self.loose.take(&[s.book]);
+                vec![s.book]
+            }
+            None => return,
+            Some(r) => {
+                let room = self.capacity().saturating_sub(self.held.len());
+                let (lib, sought) = (&self.lib, self.sought());
+                let keep = |b: u32| sought.is_none_or(|(group, key)| group.of(lib, b) == key);
+                self.loose.gather(s.lv, Vec2::new(s.at.x, s.at.z), r, room, keep)
+            }
+        };
         self.take_into_arms(&books, audio);
-        self.sift_cooldown = 0.4;
     }
 
     /// Where a toss at the current charge leaves the hand, and how fast.
@@ -1203,10 +1257,14 @@ impl Game {
         }
     }
 
-    /// Throw every held book of the active book's group, as a loose stream.
+    /// Throw every held book of the group sought, or if none is held the active
+    /// book's group, as a loose stream.
     fn toss(&mut self, audio: &mut Audio) {
         let Some(active) = self.active_book() else { return };
-        let key = self.group_of(active);
+        let key = match self.sought() {
+            Some((_, key)) if self.held.iter().any(|&b| self.group_of(b) == key) => key,
+            _ => self.group_of(active),
+        };
         let group: Vec<u32> = self.held.iter().copied().filter(|&b| self.group_of(b) == key).collect();
         let prev = self.active_book();
         self.held.retain(|b| !group.contains(b));
@@ -1707,21 +1765,16 @@ impl Game {
         }
     }
 
-    /// What the Seeker's Lens lights (see `Globals::lens`): the active book's group,
-    /// or with empty hands the aimed book's.
+    /// What the Seeker's Lens lights (see `Globals::lens`): the group sought.
     fn lens_sought(&self) -> [f32; 4] {
-        let target = self.active_book().or(match self.aim {
-            Aim::Loose { book, .. } => Some(book),
-            _ => None,
-        });
-        match target {
-            Some(b) if self.lens => {
-                let mode = match self.group {
+        match self.sought() {
+            Some((group, key)) if self.level(Upg::Lens) > 0 => {
+                let mode = match group {
                     Group::Department => 1.0,
                     Group::Category => 2.0,
                     Group::Series => 3.0,
                 };
-                [mode, self.group_of(b) as f32, 0.0, 0.0]
+                [mode, key as f32, 0.0, 0.0]
             }
             _ => [0.0; 4],
         }
@@ -1893,6 +1946,32 @@ impl Game {
                         0,
                     ));
                 }
+            }
+        }
+
+        // A held scoop: a ring on the pile, in the sought group's colour.
+        if let Some(s) = self.scoop
+            && let Some(r) = self.scoop_radius(&s)
+        {
+            let col = match self.sought() {
+                Some((group, key)) => signal_color(self.group_color(group, key)),
+                None => [1.0, 0.8, 0.5],
+            };
+            let n = (r * 30.0).clamp(16.0, 96.0) as usize;
+            for k in 0..n {
+                let a = k as f32 / n as f32 * std::f32::consts::TAU + self.time * 0.6;
+                let xz = Vec2::new(s.at.x + a.cos() * r, s.at.z + a.sin() * r);
+                // On the pile's surface, or level with the aim where that falls away.
+                let h = self.loose.height_at(s.lv, xz);
+                let y = if (h - s.at.y).abs() < 1.0 { h } else { s.at.y };
+                dyn_insts.push(Inst::new(
+                    Vec3::new(xz.x, y + 0.07, xz.y),
+                    Quat::from_rotation_y(-a),
+                    Vec3::new(0.012, 0.012, 0.07),
+                    kind::EMISSIVE,
+                    [col[0], col[1], col[2], 2.2],
+                    0,
+                ));
             }
         }
 
@@ -2468,7 +2547,7 @@ mod tests {
                     run: Some(run),
                     dist: 1.0,
                 };
-                g.interact(&mut audio, true);
+                g.press(&mut audio);
             }
             let f = g.flights.iter().find(|f| f.book == b).expect("filing flight");
             let d = f.from_pos.distance(g.player.eye());
@@ -2660,7 +2739,12 @@ mod tests {
         g.script_face_pile();
         for _ in 0..3 {
             g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
-            g.interact(&mut audio, true);
+            // A full scoop.
+            g.press(&mut audio);
+            if let Some(mut s) = g.scoop.take() {
+                s.held = TAP + SCOOP_GROW;
+                g.take_scoop(&s, &mut audio);
+            }
         }
         check(&mut g);
         assert!(g.held.len() > 10, "gathered {}", g.held.len());
@@ -2980,10 +3064,11 @@ mod tests {
         assert!(g.sense.is_some_and(|s| s.room.is_none()), "{:?}", g.sense);
     }
 
-    /// Toss throws, and sift draws, the active (or aimed) book's group; R cycles the
-    /// groups learned; the lens seeks the same group.
+    /// Toss throws the active book's group, or the group sought; R cycles the groups
+    /// learned; F seeks, the lens lights what is sought, and a held scoop takes only
+    /// it.
     #[test]
-    fn toss_and_sift_take_the_group() {
+    fn toss_and_seek_take_the_group() {
         let mut g = Game::new(Layout::Great);
         let mut audio = crate::audio::Audio::silent();
         let dept = |g: &Game, b: u32| g.lib.dept_of(g.lib.category_of_book(b));
@@ -3018,21 +3103,23 @@ mod tests {
         hold(&mut g);
         g.toss(&mut audio);
         assert_eq!(g.held, vec![other]);
-        // The lens seeks the active book's department.
-        g.upg[upg_index(Upg::Lens)] = 1;
-        let v = Input {
-            lens: true,
-            ..Input::default()
-        };
-        g.update(1.0 / 60.0, &v, &mut audio, true);
-        assert!(g.lens);
-        assert_eq!(g.lens_sought(), [1.0, dept(&g, other) as f32, 0.0, 0.0]);
-        // Sift by department draws only the aimed book's department, across categories.
-        g.held.clear();
+        // F at nothing seeks the active book's department, and the lens lights it.
         g.upg[upg_index(Upg::Sift)] = 4;
+        g.upg[upg_index(Upg::Lens)] = 1;
         g.upg[upg_index(Upg::Arms)] = 4;
+        g.aim = Aim::None;
+        g.press_seek(&mut audio);
+        assert_eq!(g.sought(), Some((Group::Department, dept(&g, other))));
+        assert_eq!(g.lens_sought(), [1.0, dept(&g, other) as f32, 0.0, 0.0]);
+        // Holding one of the group sought, toss throws it rather than the active book's.
+        g.held.clear();
+        hold(&mut g);
+        g.toss(&mut audio);
+        assert_eq!(g.held, vec![a, same_dept]);
+        // F at a book of another department seeks that one instead.
+        g.held.clear();
         let aimed = (0..n)
-            .find(|&b| g.loose.is_resting(b) && g.loose.level_of(b) == 0)
+            .find(|&b| g.loose.is_resting(b) && g.loose.level_of(b) == 0 && dept(&g, b) != dept(&g, other))
             .unwrap();
         let point = g.loose.pose(aimed).0;
         g.aim = Aim::Loose {
@@ -3040,7 +3127,16 @@ mod tests {
             point,
             dist: 2.0,
         };
-        g.sift(&mut audio, true);
+        g.press_seek(&mut audio);
+        assert_eq!(g.sought(), Some((Group::Department, dept(&g, aimed))));
+        // A full scoop takes only that department, across its categories.
+        let scoop = Scoop {
+            book: aimed,
+            held: TAP + SCOOP_GROW,
+            at: point,
+            lv: 0,
+        };
+        g.take_scoop(&scoop, &mut audio);
         assert!(g.held.len() > 1);
         assert!(g.held.iter().all(|&b| dept(&g, b) == dept(&g, aimed)));
         assert!(
@@ -3048,5 +3144,54 @@ mod tests {
             "{} books",
             g.held.len()
         );
+        // F at a book of the group sought stops seeking.
+        g.press_seek(&mut audio);
+        assert_eq!(g.sought(), None);
+        assert_eq!(g.lens_sought(), [0.0; 4]);
+    }
+
+    /// A tap takes just the book pressed on, even from under others; a hold takes
+    /// the top of the pile inside its ring, up to what the arms hold.
+    #[test]
+    fn a_tap_takes_one_book_and_a_hold_scoops() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = crate::audio::Audio::silent();
+        let dt = 1.0 / 60.0;
+        let aim_at = |g: &mut Game, b: u32| {
+            g.aim = Aim::Loose {
+                book: b,
+                point: g.loose.pose(b).0,
+                dist: 2.0,
+            };
+        };
+        let (_, _, books) = (g.loose.piles()).max_by_key(|(_, _, books)| books.len()).unwrap();
+        let books = books.to_vec();
+        let y = |g: &Game, b: u32| g.loose.pose(b).0.y;
+        let bottom = *books.iter().min_by(|&&a, &&b| y(&g, a).total_cmp(&y(&g, b))).unwrap();
+        let top = *books.iter().max_by(|&&a, &&b| y(&g, a).total_cmp(&y(&g, b))).unwrap();
+        assert!(y(&g, top) > y(&g, bottom) + 0.1, "a pile with books on books");
+        // Pressed and released within a frame: a tap.
+        aim_at(&mut g, bottom);
+        g.press(&mut audio);
+        g.update_scoop(dt, &Input::default(), &mut audio);
+        assert_eq!(g.held, vec![bottom]);
+        // Held past a tap, the ring grows; released, it takes the top of the pile.
+        aim_at(&mut g, top);
+        g.press(&mut audio);
+        let down = Input {
+            primary_down: true,
+            ..Input::default()
+        };
+        let mut t = 0.0;
+        while t < TAP + SCOOP_GROW {
+            g.update_scoop(dt, &down, &mut audio);
+            t += dt;
+        }
+        assert!(g.scoop.as_ref().and_then(|s| g.scoop_radius(s)).is_some());
+        g.update_scoop(dt, &Input::default(), &mut audio);
+        assert!(g.held.contains(&top));
+        assert_eq!(g.held.len(), g.capacity(), "a full scoop fills six-book arms");
+        assert!(g.scoop.is_none());
+        assert_eq!(g.loose.heightfield_errors(), 0);
     }
 }

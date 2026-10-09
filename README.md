@@ -27,11 +27,10 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 |---|---|
 | WASD / Shift | walk / hurry |
 | Mouse | look |
-| Left click | gather the top of a pile · file onto a series run |
-| Right mouse (hold) | charge a toss, with an arc showing where it lands; release to throw every book you carry of the active book's group |
-| F | sift: draw only books of the aimed book's group out of a pile (an upgrade) |
-| R | what toss and sift take: the active book's category, or with upgrades its department or series |
-| V | the Seeker's Lens: loose books of the active book's group glow (an upgrade) |
+| Left click | tap a book to take it · hold on a pile to scoop what is inside the ring · click a series run to file |
+| Right mouse (hold) | charge a toss, with an arc showing where it lands; release to throw every book you carry of the group you seek, or else of the active book's group |
+| F | seek the aimed book's kind: scoops take only those books, from any depth (Sifting Touch); F again stops |
+| R | the level you seek and toss at: category, or with upgrades department or series |
 | G | post a familiar riding with you at the floor you aim at, or take a posted one back |
 | Scroll, Q / E | cycle the active book |
 | Tab | the Grimoire (upgrades) |
@@ -76,10 +75,10 @@ that fit it.
 
 - **Reading**: Sort Sense (the exact slot pulses and a compass points the way:
   in the book's room, then anywhere), Wayfinding (the way to the book's room),
-  the Seeker's Lens.
-- **Moving**: Sifting Touch (sift a group out of a pile, reaching wider with
-  each level), Broad Strokes and Fine Fingers (sort by department, by series),
-  Long Toss, Lodestone Grasp (long reach, hold to gather).
+  the Seeker's Lens (what you seek glows).
+- **Moving**: Sifting Touch (seek a kind of book and scoop only it, wider with
+  each level), Broad Strokes and Fine Fingers (seek by department, by series),
+  Long Toss, Lodestone Grasp (long reach).
 - **Filing**: Deeper Arms (6 → 96 books), Swift Slippers, Tidy Arms
   (self-sorting armful, nearest home first), Series Bundle (file a whole series
   at once), Shelving Aura (books drift home as you pass).
@@ -121,7 +120,9 @@ that fit it.
   Scripted runs use a fixed 60 Hz step and never touch the real save; they start
   in the Hall unless `HUSHFOLD_LIBRARY=great`. Commands
   (one per line): `pose x y z yaw pitch`, `wait frames`, `walk fwd frames`,
-  `click`, `cycle n`, `charge` / `throw` (hold and release the toss), `sift`,
+  `click` (a tap), `press` / `release` (hold and release the left button),
+  `cycle n`, `charge` / `throw` (hold and release the toss), `seek`, `regroup`,
+  `post`, `cheats on|off`, `cheat lumens n|skills|veils|shelve fraction|goto [department]`,
   `facepile`, `faceslot`, `facefam i`, `lookat x y z dist`, `fill category fraction`,
   `take category n`, `unveil`, `library hall|great` (a fresh one), `grant lumens`,
   `buy <Upgrade>`, `menu on|off`,

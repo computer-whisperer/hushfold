@@ -3,10 +3,10 @@
 //!
 //! It walks at real speeds on the nav field (round furniture, up stairs) to the
 //! pile that gives the most books per second of walking and gathers an armful. A
-//! plain click takes the top of the pile whatever it is, and books it can't file
-//! yet are set down where it stands; with Sifting Touch it sifts the group (the
-//! coarsest it has) with the most books in reach; further clicks take only piles
-//! it can see. It files the armful nearest slot first, and walks to post its
+//! plain scoop takes the top of the pile whatever it is, and books it can't file
+//! yet are set down where it stands; with Sifting Touch it seeks the group (the
+//! coarsest it has) with the most books in reach and scoops only that; further
+//! scoops take only piles it can see. It files the armful nearest slot first, and walks to post its
 //! familiars (couriers at heaps of books far from home, shelvers at the cases with
 //! books piling up near them; one idle two minutes is walked to, taken back and
 //! posted again), running their real code over each trip. It buys the cheapest
@@ -21,8 +21,10 @@ use std::collections::HashMap;
 
 /// Time step for familiars, flights and falling books over a trip.
 const DT: f32 = 0.05;
-/// Seconds per gathering or sifting click, and per filing click.
-const CLICK: f32 = 0.4;
+/// Seconds per scoop (aiming, then holding to the full ring), and per filing click.
+const SCOOP: f32 = 0.2 + TAP + SCOOP_GROW;
+/// Seconds to aim at a book of another group and press F to seek it.
+const SEEK: f32 = 0.5;
 const FILE_CLICK: f32 = 0.9;
 /// Cells ranked by walking per book before the bot looks closer at what to sift.
 const SHORTLIST: usize = 10;
@@ -34,7 +36,7 @@ const AIM: f32 = 12.0;
 /// Seconds per G.
 const POST: f32 = 1.0;
 
-/// What to sift: a group and which one of it (`None`: a plain click).
+/// What to seek: a group and which one of it (`None`: a plain scoop).
 type Sift = Option<(Group, usize)>;
 
 struct Bot {
@@ -47,15 +49,17 @@ struct Bot {
     /// Seconds spent on stairs, and books shelved by familiars.
     climbing: f32,
     by_familiars: u32,
-    /// Where the time goes: [walking to piles, gathering clicks, walking to slots,
-    /// filing clicks], seconds; trips and books gathered.
+    /// Where the time goes: [walking to piles, scooping, walking to slots, filing
+    /// clicks], seconds; trips and books gathered.
     spent: [f32; 4],
     trips: u32,
     gathered: u32,
-    /// Clicks that took nothing (the books lay past a case from the click).
-    empty_clicks: u32,
+    /// Scoops that took nothing (the books lay past a case from the aim).
+    empty_scoops: u32,
     /// Familiars taken back from an idle post to be posted elsewhere.
     reposts: u32,
+    /// The group it seeks.
+    seeking: Sift,
 }
 
 impl Bot {
@@ -106,7 +110,7 @@ impl Bot {
         self.by_familiars += self.g.total_shelved() - before;
     }
 
-    /// Where to gather next, and which group to sift (`None`: a plain click).
+    /// Where to gather next, and which group to seek (`None`: a plain scoop).
     fn choose(&mut self) -> Option<(usize, Vec3, Sift)> {
         let fileable = self.fileable();
         let (cap, speed, pos) = (self.g.capacity(), self.walk_speed(), self.pos);
@@ -140,7 +144,7 @@ impl Bot {
                 continue;
             };
             let walk = g.nav.distance(&g.walk, pos, c);
-            let score = (walk / speed + 1.0 + CLICK) / n.min(cap) as f32;
+            let score = (walk / speed + 1.0 + SCOOP) / n.min(cap) as f32;
             if best.is_none_or(|b| score < b.0) {
                 best = Some((score, lv, c, (group, key)));
             }
@@ -148,7 +152,7 @@ impl Bot {
         best.map(|(_, lv, c, k)| (lv, c, Some(k)))
     }
 
-    /// Gather an armful at the pile in cell `c` on level `lv`, clicking again at
+    /// Gather an armful at the pile in cell `c` on level `lv`, scooping again at
     /// whatever is in reach until the arms are full.
     fn gather(&mut self, lv: usize, c: Vec3, sift: Sift) -> bool {
         let fileable = self.fileable();
@@ -157,6 +161,11 @@ impl Bot {
         let reach = self.g.gather_reach();
         if self.walk(at, reach).is_none() {
             return false;
+        }
+        if sift.is_some() && sift != self.seeking {
+            self.seeking = sift;
+            self.t += SEEK;
+            self.spent[1] += SEEK;
         }
         let cap = self.g.capacity();
         let mut aside = Vec::new();
@@ -177,7 +186,7 @@ impl Bot {
                     .gather(lv, spot, 0.35 + 0.05 * (room as f32).sqrt(), room, |_| true),
             };
             if books.is_empty() {
-                self.empty_clicks += 1;
+                self.empty_scoops += 1;
                 break;
             }
             for b in books {
@@ -188,8 +197,8 @@ impl Bot {
                     aside.push(b);
                 }
             }
-            self.t += CLICK;
-            self.spent[1] += CLICK;
+            self.t += SCOOP;
+            self.spent[1] += SCOOP;
             if g.held.len() + aside.len() >= cap {
                 break;
             }
@@ -418,7 +427,8 @@ pub(super) fn simulate(layout: Layout) -> f32 {
         spent: [0.0; 4],
         trips: 0,
         gathered: 0,
-        empty_clicks: 0,
+        empty_scoops: 0,
+        seeking: None,
         reposts: 0,
     };
     let mut next_report = 0.0;
@@ -474,7 +484,7 @@ pub(super) fn simulate(layout: Layout) -> f32 {
     }
     let g = &bot.g;
     println!(
-        "done at {:.2} h, shelved {}; familiars shelved {} ({:.0}%) and delivered {}, {} moved; {:.1}% of the time on stairs; {} empty clicks",
+        "done at {:.2} h, shelved {}; familiars shelved {} ({:.0}%) and delivered {}, {} moved; {:.1}% of the time on stairs; {} empty scoops",
         bot.t / 3600.0,
         g.total_shelved(),
         bot.by_familiars,
@@ -482,7 +492,7 @@ pub(super) fn simulate(layout: Layout) -> f32 {
         g.familiars.iter().map(|f| f.delivered).sum::<u32>(),
         bot.reposts,
         100.0 * bot.climbing / bot.t,
-        bot.empty_clicks
+        bot.empty_scoops
     );
     bot.t / 3600.0
 }

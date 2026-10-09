@@ -95,8 +95,9 @@ over 8 h; the player's own Toss and Sift stay the fastest coarse tools.
    landing, Sift filters, carts, restorable lifts and chutes), staging (labelled
    tables), filing (hands, Bundle, Tidy Arms, a weaker aura), familiar roles.
    Ideas parked for it: a toss that lands on its own series run files itself.
-   Design below (Phase 3 design). **Built; awaiting playtest.** The bot: the
-   Great Library ~10.6 h, the Hall ~1.6 h.
+   Design below (Phase 3 design). **Built and playtested** (2026-10-09); the
+   bot: the Great Library ~10.6 h, the Hall ~1.6 h. The follow-up (hands,
+   earned reading, spells) is below, "After the first playtest".
 4. The Great Library: content and balance. The pacing bot measures mechanism
    throughput with the real code; playtests judge whether the logistics are fun.
 
@@ -345,3 +346,90 @@ costed they don't pay for themselves (open question). Findings on the way:
   optimistic before it, so the first hour or two are flattered.
 - Costs: the first cut summed to more lumens than the library pays (~246k);
   now ~196k.
+
+## After the first playtest: hands, reading, spells
+
+Agreed 2026-10-09 after the first playtest of phase 3. Overbuild skills and spells
+now, pare down once play shows which don't earn their place.
+
+What the playtest found:
+- **Taking books was unclear.** A click took the top of the pile round the
+  crosshair, up to a full armful; there was no way to take one book. Sift took the
+  *aimed* book's group while the Lens lit the *held* book's, so aiming a hair off
+  sifted the neighbour's category; R, V and F were three keys for one idea.
+- **Reading was free.** From the first minute every empty slot of every carried
+  series glowed across the floor and carried categories' signs showed through the
+  stacks, so nobody needed the shelf letters or the alphabet.
+- **Throwing is fun.** Keep building on the toss.
+- **Couriers work at the hub**, posted in the atrium carrying books out to their
+  rooms; what they lack is a supply. (Reversed: I had proposed removing them.)
+- **The late game buys numbers.** In the bot's Great Library run 12 of 16 kinds of
+  ability arrive in the first 2 h and the last at 6.6 h; the last 4 h buy only
+  familiars and levels. Familiars take 60% of the lumens (118k of 196k).
+
+### Step 1: hands and seeking
+
+- **Tap** left on a loose book takes that book. **Hold** left: a ring grows on
+  the pile round the aim point (it follows the aim while held), and releasing
+  takes the top of the pile inside it, up to what the arms hold; the ring's
+  largest size is the old click's (grows with Deeper Arms). Left hold gathers,
+  right hold throws. Chose this over Ctrl-click for one book because the ring is
+  seen, and it mirrors the toss.
+- **Seeking** (needs Sifting Touch): F at a loose book seeks its group at R's
+  level; F at a book of the group sought, or at nothing, stops; F at nothing with
+  empty seeking seeks the held book's group. While seeking, the ring takes only
+  the sought group from any depth (Sifting Touch's levels set its largest size),
+  the Seeker's Lens (once learned) lights the sought books and dims the rest,
+  toss throws held books of the sought group, and the HUD names what is sought.
+  V goes. Chose one explicit filter because the Lens and Sift disagreed.
+- **Lodestone Grasp** is reach only (holding is the scoop now).
+- Before Sifting Touch, taking books one at a time is sorting by hand: reading
+  spines and picking one category's books out.
+
+### Step 2: reading, earned
+
+- Free: signs in view, shelf-edge letter ranges, the crosshair tip on a run (its
+  title, and "file 2" in gold when carried), faint outlines of empty slots.
+- **Signposts** (category): carried categories' signs show through the stacks.
+- **Kindred Glow I–III** (series): carried series' runs glow; I faint within ~3 m
+  (the case in front of you), II brighter within ~12 m, III the full glow and
+  glint everywhere (what was free).
+- **Sort Sense** and **Wayfinding** as before, dearer, after Glow II.
+- **Glimpse** (the first spell): for 10 s the slots of every carried book light
+  up; recharge 45 s. Spell first, passive (Sort Sense) later.
+- The bot gets a search time per series it files, by reading level (first guess:
+  8 s with nothing, 3 s at Glow I, 1 s at Glow II, none at Glow III or with Sort
+  Sense or Glimpse ready), to be calibrated against play.
+
+### Step 3: spells and the hub
+
+- **Spells** sit on a hotbar (keys 1–5), each with its own recharge dial; bought
+  in the Grimoire's Spells group like any skill, with levels.
+- **Gathering Charm**: cast at a heap; its books stream to the hub (the atrium
+  floor under the well; the Hall's reading room), flying the walking route at
+  head height like the cranes, out of doors and over the railing down the well.
+  Levels: a wider heap, a shorter recharge (first guess ~2 min). While seeking,
+  only the sought group goes.
+- **Couriers at the hub**: the charm feeds them; the bot posts them there.
+- **Familiars that last**: a shelver serves a whole category's cases from one
+  post; a familiar idle a while flies back to the player's shoulder by itself.
+
+### Step 4: the rest of the bank, and paths
+
+| Spell | Does | Recharge (first guess) | Overlaps |
+|---|---|---|---|
+| Echo | a ring sweeps out; loose books of the sought group flare through walls within ~25 m for 20 s | 60 s | Seeker's Lens (view only) |
+| Summon Series | loose books of the active book's series fly to the arms: from the room, the floor, anywhere by level | 90 s | — |
+| Shelving Rush | for 10 s carried books within ~6 m of their slots file themselves, no rate limit | 60 s | Shelving Aura |
+
+- **Homing Toss** (Moving, passive): a tossed book landing within ~2 m of its
+  slot slips into it. The bot learns this one use of the toss.
+- Rules: every spell asks where, what or when (no press-when-ready chores);
+  recharges are a few trips long so nobody waits; overlapping abilities compete
+  for the same limit (arms, walking), so owning both helps less than double.
+- **Paths**: the bot gets a preferred path (reading and spells; hands and
+  throwing; familiars; filing) and runs each; every path should finish in 8–10 h
+  and none much faster. If spells stack too well, the fallback is one shared pool
+  of magic instead of a recharge per spell.
+- Then re-cost the tree so a new kind of ability arrives every ~30–45 min in the
+  Great Library and every ~8 min in the Hall.

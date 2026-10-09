@@ -64,17 +64,26 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
   makes the starting piles.
 
 ## Verbs
-- Click a pile: gather the topmost books within a radius of the aim point, up
-  to arm capacity; whatever lay on them falls.
+- Tap a loose book: take that book, from wherever it lies in its pile; whatever
+  lay on it falls. Before Sifting Touch this is sorting by hand.
+- Hold on a pile: a ring grows round the aim point (following it across piles)
+  for 0.4 s after a 0.18 s tap; release to take the topmost books inside it, up
+  to arm capacity. Its largest size grows with the room in the arms.
 - Hold right mouse: charge a toss (the arc and landing ring show where it goes);
-  release to throw every held book of the active book's group as a stream.
-- F (Sifting Touch): draw books of the aimed book's group out of the pile
-  around the aim point, from any depth.
-- R: what toss and sift take, the *group*: category, or with skills department
-  (Broad Strokes) or series (Fine Fingers).
-- V (Seeker's Lens): loose books of the active (or aimed) book's group glow and
-  the rest fade; done in the shader from ids each book carries, so toggling it
-  rebuilds nothing.
+  release to throw every held book of the group sought, or if none is held the
+  active book's group, as a stream. Left hold gathers, right hold throws.
+- F (Sifting Touch): *seek* the aimed book's group (F at a book of the group
+  sought, or at nothing, stops; at nothing while not seeking, seeks the active
+  book's group). While seeking, the scoop takes only the group sought, from any
+  depth, and grows to Sifting Touch's reach; the HUD names what is sought. Chose
+  one explicit filter after the first playtest: the lens lit the held book's
+  group while sift took the aimed one's, so aiming a hair off sifted the
+  neighbour's.
+- R: the level toss and seeking work at, the *group*: category, or with skills
+  department (Broad Strokes) or series (Fine Fingers).
+- Seeker's Lens: while seeking, loose books of the group sought glow and the
+  rest fade; done in the shader from ids each book carries, so it rebuilds
+  nothing.
 - Click shelf: aiming anywhere on a series run places a held book of that series
   into its exact slot (forgiving aim; the skill is finding the run).
 - Scroll/Q/E: cycle the active book (HUD shows its category/series/volume).
