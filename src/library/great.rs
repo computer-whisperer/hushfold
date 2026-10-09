@@ -30,6 +30,8 @@ const ROWS_A: [f32; 4] = [-9.0, -3.0, 3.0, 9.0];
 const CASES_PER_ROW: usize = 5;
 /// The share of the departments already open that must be home to open the next.
 const GATE_NEED: f32 = 0.5;
+const BALUSTER: [f32; 3] = [0.2, 0.1, 0.045];
+const PALE_STONE: [f32; 3] = [0.48, 0.45, 0.4];
 
 /// A side of the atrium, as a frame: `a` runs across it, `o` outward from the centre.
 #[derive(Clone, Copy)]
@@ -85,6 +87,17 @@ impl Side {
 
     fn across3(&self) -> Vec3 {
         Vec3::new(self.across.x, 0.0, self.across.y)
+    }
+}
+
+/// Where along its wall (`a`) the door from the atrium into the room on `side` of
+/// `level` is: in the middle, unless a flight of stairs stands in front of the wall,
+/// when it moves past the foot of the stairs so it can be seen from the well.
+fn door_a(level: usize, side: usize) -> f32 {
+    if FLIGHTS.iter().any(|f| f.level == level && f.side == side) {
+        -10.5
+    } else {
+        0.0
     }
 }
 
@@ -156,9 +169,11 @@ pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
     lib.raised_roofs
         .push((STOREYS - 1, Vec2::splat(-WELL), Vec2::splat(WELL), SKY));
     lib.spawn = (Vec3::new(0.0, 0.0, 6.5), 0.0);
+    // Newel posts already placed, so railings that meet share one.
+    let mut newels = Vec::new();
     lib.build_floors();
-    lib.build_stairs();
-    lib.build_atrium();
+    lib.build_stairs(&mut newels);
+    lib.build_atrium(&mut newels);
     let mut titles = HashSet::new();
     for room in 0..STOREYS * 4 {
         lib.build_room(rng, room, &mut titles);
@@ -175,19 +190,80 @@ impl Library {
         self.obstacle(a, b, true);
     }
 
-    /// A railing (a low wooden balustrade) on `level`, `h` tall.
-    fn rail(&mut self, level: usize, (mn, mx): (Vec2, Vec2), h: f32) {
+    /// An invisible barrier on `level`, `h` tall (railings are drawn on their own).
+    fn barrier(&mut self, level: usize, (mn, mx): (Vec2, Vec2), h: f32) {
         let y = floor_y(level);
         let (a, b) = box3(mn, mx, y, y + h);
-        self.push(Inst::minmax(a, b - Vec3::Y * 0.08, kind::WOOD, DARK_WOOD));
-        let pad = Vec3::new(0.04, 0.0, 0.04);
-        self.push(Inst::minmax(
-            Vec3::new(a.x, b.y - 0.08, a.z) - pad,
-            b + pad,
-            kind::WOOD,
-            WALNUT,
-        ));
         self.obstacle(a, b, false);
+    }
+
+    /// A wooden box along the line `a`→`b`, `w` across and `h` tall, kept upright.
+    fn beam(&mut self, a: Vec3, b: Vec3, w: f32, h: f32, rgb: [f32; 3]) {
+        let d = b - a;
+        let len = d.length();
+        let x = d / len;
+        let z = x.cross(Vec3::Y).normalize();
+        let y = z.cross(x);
+        let rot = Quat::from_mat3(&Mat3::from_cols(x, y, z));
+        self.push(Inst::new(
+            (a + b) * 0.5,
+            rot,
+            Vec3::new(len, h, w),
+            kind::WOOD,
+            [rgb[0], rgb[1], rgb[2], 1.0],
+            0,
+        ));
+    }
+
+    /// A wooden post `w` square standing `h` tall on `foot`.
+    fn post(&mut self, foot: Vec3, h: f32, w: f32, rgb: [f32; 3]) {
+        self.push(Inst::aabox(
+            foot + Vec3::Y * (h * 0.5),
+            Vec3::new(w, h, w),
+            kind::WOOD,
+            rgb,
+        ));
+    }
+
+    /// A newel post with a cap at `foot`, unless one already stands there.
+    fn newel(&mut self, foot: Vec3, h: f32, newels: &mut Vec<Vec3>) {
+        if newels.iter().any(|n| n.distance(foot) < 0.3) {
+            return;
+        }
+        newels.push(foot);
+        self.post(foot, h, 0.15, WALNUT);
+        self.push(Inst::aabox(
+            foot + Vec3::Y * (h + 0.03),
+            Vec3::new(0.2, 0.06, 0.2),
+            kind::WOOD,
+            [0.12, 0.06, 0.028],
+        ));
+    }
+
+    /// A railing on the floor from `a` to `b`: a bottom rail, balusters, a handrail,
+    /// and newel posts at its ends.
+    fn railing(&mut self, a: Vec3, b: Vec3, newels: &mut Vec<Vec3>) {
+        let up = Vec3::Y;
+        self.beam(a + up * 0.05, b + up * 0.05, 0.1, 0.1, WALNUT);
+        let n = (a.distance(b) / 0.28).round().max(1.0) as usize;
+        for i in 1..n {
+            let p = a.lerp(b, i as f32 / n as f32);
+            self.post(p + up * 0.1, RAIL_H - 0.16, 0.045, BALUSTER);
+        }
+        self.beam(a + up * (RAIL_H - 0.03), b + up * (RAIL_H - 0.03), 0.12, 0.07, WALNUT);
+        self.newel(a, RAIL_H + 0.06, newels);
+        self.newel(b, RAIL_H + 0.06, newels);
+    }
+
+    /// Wooden panelling 1.1 m high on the face of a wall, over the rectangle `r` (a
+    /// strip in front of the face).
+    fn wainscot(&mut self, level: usize, (mn, mx): (Vec2, Vec2)) {
+        let y = floor_y(level);
+        let (a, b) = box3(mn, mx, y, y + 1.1);
+        self.push(Inst::minmax(a, b, kind::WOOD, [0.13, 0.065, 0.03]));
+        let (a, b) = box3(mn, mx, y + 1.1, y + 1.16);
+        let pad = Vec3::new(0.02, 0.0, 0.02);
+        self.push(Inst::minmax(a - pad, b + pad, kind::WOOD, WALNUT));
     }
 
     /// Floors: solid on the ground; upstairs, everywhere but the well and the
@@ -286,8 +362,11 @@ impl Library {
     }
 
     /// Four flights in the gallery strips: west and east from the ground floor to the
-    /// first, north and south from the first to the second.
-    fn build_stairs(&mut self) {
+    /// first, north and south from the first to the second. Each is solid stone with
+    /// wooden treads, stringers along its sides and a balustrade either side; the
+    /// stairwell it rises through is railed on the floor above.
+    fn build_stairs(&mut self, newels: &mut Vec<Vec3>) {
+        let r = STAIR_HALF_RUN;
         for f in &FLIGHTS {
             let side = SIDES[f.side];
             let (y0, y1) = (floor_y(f.level), floor_y(f.level + 1));
@@ -300,72 +379,137 @@ impl Library {
                 y0,
                 y1,
             });
-            let run = 2.0 * STAIR_HALF_RUN / STEPS as f32;
+            let run = 2.0 * r / STEPS as f32;
             let rise = (y1 - y0) / STEPS as f32;
+            // The walking slope and the points of a flight, along it.
+            let slope = |a: f32| y0 + (y1 - y0) * (a + r) / (2.0 * r);
+            let at = |a: f32, o: f32, y: f32| side.at3(a, o, y);
             for k in 0..STEPS {
-                let a0 = -STAIR_HALF_RUN + k as f32 * run;
-                let r = side.rect(a0, a0 + run, WELL, WELL + STAIR_W);
-                let (lo, hi) = box3(r.0, r.1, y0, y0 + (k + 1) as f32 * rise);
+                let a0 = -r + k as f32 * run;
+                let top = y0 + (k + 1) as f32 * rise;
+                let (lo, hi) = box3(
+                    side.rect(a0, a0 + run, WELL, WELL + STAIR_W).0,
+                    side.rect(a0, a0 + run, WELL, WELL + STAIR_W).1,
+                    y0,
+                    top - 0.035,
+                );
                 self.push(Inst::minmax(lo, hi, kind::STONE, [0.4, 0.37, 0.33]));
-                self.push(Inst::minmax(
-                    Vec3::new(lo.x, hi.y - 0.04, lo.z),
-                    hi + Vec3::Y * 0.01,
-                    kind::WOOD,
-                    WALNUT,
-                ));
+                // The tread overhangs its riser a little.
+                let (tl, th) = side.rect(a0 - 0.03, a0 + run, WELL, WELL + STAIR_W);
+                let (lo, hi) = box3(tl, th, top - 0.035, top + 0.015);
+                self.push(Inst::minmax(lo, hi, kind::WOOD, WALNUT));
             }
-            // The balustrade on the well side follows the flight up; on the other side
-            // a stringer as far as the floor above, whose stairwell is railed.
+            for (o_rail, o_string) in [
+                (WELL + 0.07, WELL - 0.035),
+                (WELL + STAIR_W - 0.07, WELL + STAIR_W + 0.035),
+            ] {
+                // A stringer over the ends of the steps, stopping short of the floor above.
+                let end = r - 0.46;
+                self.beam(
+                    at(-r, o_string, slope(-r) + 0.05),
+                    at(end, o_string, slope(end) + 0.05),
+                    0.07,
+                    0.42,
+                    WALNUT,
+                );
+                // Balusters on every other tread, a handrail along the slope.
+                for k in (0..STEPS).step_by(2) {
+                    let a = -r + (k as f32 + 0.5) * run;
+                    let foot = y0 + (k + 1) as f32 * rise + 0.015;
+                    let h = slope(a) + 0.92 - foot;
+                    self.post(at(a, o_rail, foot), h, 0.045, BALUSTER);
+                }
+                self.beam(
+                    at(-r, o_rail, slope(-r) + 0.95),
+                    at(r, o_rail, slope(r) + 0.95),
+                    0.1,
+                    0.07,
+                    WALNUT,
+                );
+                self.newel(at(-r, o_rail, y0), RAIL_H + 0.06, newels);
+                self.newel(at(r, o_rail, y1), RAIL_H + 0.06, newels);
+            }
+            // What stops a body or a book going over the sides: rails from the floor to
+            // a railing's height above the flight, in five steps.
             let segs = 5;
             for k in 0..segs {
-                let a0 = -STAIR_HALF_RUN + k as f32 * 2.0 * STAIR_HALF_RUN / segs as f32;
-                let a1 = a0 + 2.0 * STAIR_HALF_RUN / segs as f32;
-                let top = (y1 - y0) * (a1 + STAIR_HALF_RUN) / (2.0 * STAIR_HALF_RUN) + RAIL_H;
-                self.rail(f.level, side.rect(a0, a1, WELL, WELL + RAIL_T), top);
-                let stringer = top.min(ROOM_H);
-                self.rail(
-                    f.level,
-                    side.rect(a0, a1, WELL + STAIR_W - RAIL_T, WELL + STAIR_W),
-                    stringer,
-                );
+                let a0 = -r + k as f32 * 2.0 * r / segs as f32;
+                let a1 = a0 + 2.0 * r / segs as f32;
+                let top = slope(a1) - y0 + RAIL_H;
+                self.barrier(f.level, side.rect(a0, a1, WELL, WELL + RAIL_T), top);
+                self.barrier(f.level, side.rect(a0, a1, WELL + STAIR_W - RAIL_T, WELL + STAIR_W), top);
             }
             // The flight's high end is a stone face down to the floor below.
-            let (a, b) = side.rect(STAIR_HALF_RUN, STAIR_HALF_RUN + 0.1, WELL, WELL + STAIR_W);
+            let (a, b) = side.rect(r, r + 0.1, WELL, WELL + STAIR_W);
             let (lo, hi) = box3(a, b, y0, y1);
             self.obstacle(lo, hi, true);
+            // The stairwell on the floor above: railed along its outer side and its low
+            // end, its edges faced in wood.
             let up = f.level + 1;
-            self.rail(
-                up,
-                side.rect(-STAIR_HALF_RUN, STAIR_HALF_RUN, WELL + STAIR_W, WELL + STAIR_W + RAIL_T),
-                RAIL_H,
-            );
-            self.rail(
-                up,
-                side.rect(-STAIR_HALF_RUN - RAIL_T, -STAIR_HALF_RUN, WELL, WELL + STAIR_W),
-                RAIL_H,
-            );
+            let edge = WELL + STAIR_W;
+            self.barrier(up, side.rect(-r, r, edge, edge + RAIL_T), RAIL_H);
+            self.barrier(up, side.rect(-r - RAIL_T, -r, WELL, edge), RAIL_H);
+            self.railing(at(-r, edge + 0.06, y1), at(r, edge + 0.06, y1), newels);
+            self.railing(at(-r - 0.06, WELL + 0.06, y1), at(-r - 0.06, edge + 0.06, y1), newels);
+            for rect in [
+                side.rect(-r, r, edge - 0.06, edge),
+                side.rect(-r - 0.06, -r, WELL, edge),
+            ] {
+                let (lo, hi) = box3(rect.0, rect.1, y1 - SLAB - 0.05, y1 + 0.03);
+                self.push(Inst::minmax(lo, hi, kind::WOOD, WALNUT));
+            }
         }
     }
 
     /// The atrium's walls and doors, the galleries' railings, and the reading floor in
     /// the well.
-    fn build_atrium(&mut self) {
+    fn build_atrium(&mut self, newels: &mut Vec<Vec3>) {
         for l in 0..STOREYS {
             let y = floor_y(l);
             for (si, side) in SIDES.iter().enumerate() {
                 // The wall between the atrium and this side's room, with its door.
                 let h = WALL_T * 0.5;
-                self.wall(l, side.rect(-ATRIUM - h, -DOOR_HALF, ATRIUM - h, ATRIUM + h), ROOM_H);
-                self.wall(l, side.rect(DOOR_HALF, ATRIUM + h, ATRIUM - h, ATRIUM + h), ROOM_H);
-                let (a, b) = side.rect(-DOOR_HALF, DOOR_HALF, ATRIUM - h, ATRIUM + h);
+                let d = door_a(l, si);
+                self.wall(l, side.rect(-ATRIUM - h, d - DOOR_HALF, ATRIUM - h, ATRIUM + h), ROOM_H);
+                self.wall(l, side.rect(d + DOOR_HALF, ATRIUM + h, ATRIUM - h, ATRIUM + h), ROOM_H);
+                let (a, b) = side.rect(d - DOOR_HALF, d + DOOR_HALF, ATRIUM - h, ATRIUM + h);
                 let (lo, hi) = box3(a, b, y + DOOR_H, y + ROOM_H);
                 self.push(Inst::minmax(lo, hi, kind::STONE, [0.42, 0.39, 0.35]));
+                // A stone frame round the door, on both faces of the wall.
+                for (face, out) in [(ATRIUM - h, -1.0f32), (ATRIUM + h, 1.0)] {
+                    let o = |d: f32| (face.min(face + out * d), face.max(face + out * d));
+                    for (a0, a1) in [
+                        (d - DOOR_HALF - 0.3, d - DOOR_HALF),
+                        (d + DOOR_HALF, d + DOOR_HALF + 0.3),
+                    ] {
+                        let (o0, o1) = o(0.07);
+                        let (lo, hi) = box3(
+                            side.rect(a0, a1, o0, o1).0,
+                            side.rect(a0, a1, o0, o1).1,
+                            y,
+                            y + DOOR_H + 0.3,
+                        );
+                        self.push(Inst::minmax(lo, hi, kind::STONE, PALE_STONE));
+                    }
+                    let (o0, o1) = o(0.09);
+                    let rect = side.rect(d - DOOR_HALF - 0.36, d + DOOR_HALF + 0.36, o0, o1);
+                    let (lo, hi) = box3(rect.0, rect.1, y + DOOR_H, y + DOOR_H + 0.38);
+                    self.push(Inst::minmax(lo, hi, kind::STONE, PALE_STONE));
+                }
+                // Panelling along the atrium face of the wall.
+                for (a0, a1) in [
+                    (-ATRIUM + h + 0.05, d - DOOR_HALF - 0.3),
+                    (d + DOOR_HALF + 0.3, ATRIUM - h - 0.05),
+                ] {
+                    self.wainscot(l, side.rect(a0, a1, ATRIUM - h - 0.05, ATRIUM - h));
+                }
                 // Sconces either side of the door, facing the atrium.
                 for sa in [-7.5, 7.5] {
                     let p = side.at3(sa, ATRIUM - h - 0.15, y + 2.6);
                     self.sconce(p, -side.out3());
                 }
-                // The gallery railing round the well, except where stairs meet it.
+                // The gallery railing round the well, except where stairs meet it, and
+                // the gallery's edge faced in wood (except over a stairwell).
                 if l > 0 {
                     let stairs = FLIGHTS
                         .iter()
@@ -376,9 +520,54 @@ impl Library {
                         &[(-WELL, WELL)]
                     };
                     for &(a0, a1) in spans {
-                        self.rail(l, side.rect(a0, a1, WELL, WELL + RAIL_T), RAIL_H);
+                        self.barrier(l, side.rect(a0, a1, WELL, WELL + RAIL_T), RAIL_H);
+                        let o = WELL + RAIL_T * 0.5;
+                        self.railing(side.at3(a0, o, y), side.at3(a1, o, y), newels);
+                    }
+                    let stairwell = FLIGHTS.iter().any(|f| f.side == si && f.level + 1 == l);
+                    let edges: &[(f32, f32)] = if stairwell {
+                        &[(-WELL, -STAIR_HALF_RUN), (STAIR_HALF_RUN, WELL)]
+                    } else {
+                        &[(-WELL, WELL)]
+                    };
+                    for &(a0, a1) in edges {
+                        let rect = side.rect(a0, a1, WELL - 0.06, WELL);
+                        let (lo, hi) = box3(rect.0, rect.1, y - SLAB - 0.05, y + 0.03);
+                        self.push(Inst::minmax(lo, hi, kind::WOOD, WALNUT));
                     }
                 }
+            }
+        }
+        // Stone piers at the corners of the well, from the ground to the roof.
+        let roof = floor_y(STOREYS - 1) + ROOM_H;
+        for (sx, sz) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            let c = Vec3::new(sx * WELL, 0.0, sz * WELL);
+            self.push(Inst::minmax(
+                c - Vec3::new(0.35, 0.0, 0.35),
+                c + Vec3::new(0.35, roof, 0.35),
+                kind::STONE,
+                [0.42, 0.39, 0.35],
+            ));
+            for l in 0..STOREYS {
+                let y = floor_y(l);
+                let base = c + Vec3::Y * y;
+                self.push(Inst::aabox(
+                    base + Vec3::Y * 0.15,
+                    Vec3::new(0.9, 0.3, 0.9),
+                    kind::STONE,
+                    PALE_STONE,
+                ));
+                self.push(Inst::aabox(
+                    base + Vec3::Y * (ROOM_H - 0.12),
+                    Vec3::new(0.95, 0.24, 0.95),
+                    kind::STONE,
+                    PALE_STONE,
+                ));
+                self.obstacle(
+                    base - Vec3::new(0.45, 0.0, 0.45),
+                    base + Vec3::new(0.45, ROOM_H, 0.45),
+                    true,
+                );
             }
         }
         // The reading floor at the bottom of the well.
@@ -402,6 +591,7 @@ impl Library {
         let (l, side) = (r / 4, SIDES[r % 4]);
         let y = floor_y(l);
         let h = WALL_T * 0.5;
+        let d = door_a(l, r % 4);
         self.wall(l, side.rect(-ROOM_HALF - h, -ROOM_HALF + h, ATRIUM, OUTER + h), ROOM_H);
         self.wall(l, side.rect(ROOM_HALF - h, ROOM_HALF + h, ATRIUM, OUTER + h), ROOM_H);
         self.wall(l, side.rect(-ROOM_HALF, ROOM_HALF, OUTER - h, OUTER + h), ROOM_H);
@@ -433,9 +623,26 @@ impl Library {
                 self.sconce(p, -side.across3() * sa);
             }
         }
+        // Panelling round the walls, beams across the ceiling.
+        let inner = ROOM_HALF - h;
+        self.wainscot(l, side.rect(-inner, -inner + 0.05, ATRIUM + h, OUTER - h - 0.05));
+        self.wainscot(l, side.rect(inner - 0.05, inner, ATRIUM + h, OUTER - h - 0.05));
+        self.wainscot(l, side.rect(-inner, inner, OUTER - h - 0.05, OUTER - h));
+        for (a0, a1) in [
+            (-inner + 0.05, d - DOOR_HALF - 0.3),
+            (d + DOOR_HALF + 0.3, inner - 0.05),
+        ] {
+            self.wainscot(l, side.rect(a0, a1, ATRIUM + h, ATRIUM + h + 0.05));
+        }
+        for k in 0..6 {
+            let o = ATRIUM + h + 1.6 + k as f32 * 3.0;
+            let rect = side.rect(-inner, inner, o - 0.13, o + 0.13);
+            let (lo, hi) = box3(rect.0, rect.1, y + ROOM_H - 0.3, y + ROOM_H);
+            self.push(Inst::minmax(lo, hi, kind::WOOD, [0.11, 0.055, 0.025]));
+        }
         // The department's sign over its door, on the atrium side.
         let dept = r;
-        let sign = side.at3(0.0, ATRIUM - h - 0.03, y + DOOR_H + 0.55);
+        let sign = side.at3(d, ATRIUM - h - 0.03, y + DOOR_H + 0.75);
         let rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Y.cross(-side.out3()), Vec3::Y, -side.out3()));
         let first = self.catalog.departments[dept].categories.start;
         let dcol = catalog::category_color(&self.catalog.categories[first]);
@@ -455,7 +662,7 @@ impl Library {
             level: l,
         });
         if dept > 0 {
-            let (a, b) = side.rect(-DOOR_HALF, DOOR_HALF, ATRIUM - 0.05, ATRIUM + 0.05);
+            let (a, b) = side.rect(d - DOOR_HALF, d + DOOR_HALF, ATRIUM - 0.05, ATRIUM + 0.05);
             let (lo, hi) = box3(a, b, y, y + DOOR_H);
             self.gates.push(Gate {
                 level: l,
@@ -553,7 +760,9 @@ impl Library {
     /// stairs, doorways, the great heap and the spawn point, and of each other.
     fn pile_spots(&self, rng: &mut StdRng, level: usize, rects: &[(Vec2, Vec2)], r: f32, gap: f32) -> Vec<Vec2> {
         let area: f32 = rects.iter().map(|(a, b)| (b.x - a.x) * (b.y - a.y)).sum();
-        let doors: Vec<Vec2> = SIDES.iter().map(|s| s.at(0.0, ATRIUM)).collect();
+        let doors: Vec<Vec2> = (SIDES.iter().enumerate())
+            .map(|(si, s)| s.at(door_a(level, si), ATRIUM))
+            .collect();
         let mut spots: Vec<Vec2> = Vec::new();
         for _ in 0..(area * 30.0) as usize {
             let mut pick = rng.gen_range(0.0..area);
