@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    strategy:
+      matrix:
+        include:
+          - name: linux-x86_64
+            # Oldest supported image, for broad glibc compatibility.
+            os: ubuntu-22.04
+          - name: windows-x86_64
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - run: cargo build --release --locked
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          dir=hushfold-${GITHUB_REF_NAME}-${{ matrix.name }}
+          mkdir "$dir"
+          cp target/release/hushfold README.md LICENSE-MIT LICENSE-APACHE "$dir"/
+          tar czf "$dir.tar.gz" "$dir"
+          echo "ASSET=$dir.tar.gz" >> "$GITHUB_ENV"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = "hushfold-$env:GITHUB_REF_NAME-${{ matrix.name }}"
+          New-Item -ItemType Directory $dir | Out-Null
+          Copy-Item target/release/hushfold.exe, README.md, LICENSE-MIT, LICENSE-APACHE $dir
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+          "ASSET=$dir.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ASSET }}
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Hushfold $GITHUB_REF_NAME" \
+            --generate-notes

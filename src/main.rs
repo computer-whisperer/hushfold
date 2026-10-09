@@ -1,9 +1,13 @@
+// Release builds on Windows run without a console window.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod audio;
 mod catalog;
 mod game;
 mod gfx;
 mod hud;
 mod library;
+mod platform;
 
 use audio::Audio;
 use game::{Game, Input};
@@ -100,7 +104,7 @@ impl Running {
                     self.hud.menu_open = false;
                     self.set_grab(true);
                 } else if self.hud.show_intro {
-                    if self.game.total_shelved() > 0 || self.game.held.len() > 0 {
+                    if self.game.total_shelved() > 0 || !self.game.held.is_empty() {
                         self.hud.show_intro = false;
                         self.set_grab(true);
                     }
@@ -123,9 +127,12 @@ impl Running {
             KeyCode::KeyQ => self.input.cycle -= 1,
             KeyCode::KeyE => self.input.cycle += 1,
             KeyCode::F12 => {
-                let dir = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join("Pictures");
+                let dir = platform::screenshot_dir();
                 let _ = std::fs::create_dir_all(&dir);
-                let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 self.renderer.capture = Some(dir.join(format!("hushfold-{stamp}.png")));
             }
             KeyCode::F10 => {
@@ -140,7 +147,11 @@ impl Running {
         let now = Instant::now();
         let frame_start = now;
         // Scripted runs step a fixed 60 Hz so `wait N` means N/60 s of game time.
-        let dt = if self.script.is_some() { 1.0 / 60.0 } else { (now - self.last).as_secs_f32().min(0.05) };
+        let dt = if self.script.is_some() {
+            1.0 / 60.0
+        } else {
+            (now - self.last).as_secs_f32().min(0.05)
+        };
         self.last = now;
         self.fps_acc.0 += dt;
         self.fps_acc.1 += 1;
@@ -184,7 +195,8 @@ impl Running {
         let out = self.egui_ctx.run_ui(raw, |ui| {
             actions = hud::draw(ui.ctx(), &self.game, &mut self.hud, aspect, music_on);
         });
-        self.egui_state.handle_platform_output(&self.renderer.window, out.platform_output);
+        self.egui_state
+            .handle_platform_output(&self.renderer.window, out.platform_output);
         for a in actions {
             match a {
                 HudAction::Buy(u) => {
@@ -208,7 +220,12 @@ impl Running {
         self.renderer.sync_gpu = self.hud.show_stats;
         self.renderer.render(FrameInput {
             globals: &globals,
-            post: PostParams { exposure: 1.15, bloom: 0.55, time: self.game.time, vignette: 0.55 },
+            post: PostParams {
+                exposure: 1.15,
+                bloom: 0.55,
+                time: self.game.time,
+                vignette: 0.55,
+            },
             dynamic: &self.game.dyn_insts,
             trans: &self.game.trans_insts,
             held: &self.game.held_insts,
@@ -262,7 +279,10 @@ impl Running {
                 Some("grant") => self.game.lumens += num(1) as u64,
                 Some("buy") => {
                     let name = w.get(1).copied().unwrap_or("");
-                    if let Some(u) = game::UPGRADES.iter().find(|u| format!("{u:?}").eq_ignore_ascii_case(name)) {
+                    if let Some(u) = game::UPGRADES
+                        .iter()
+                        .find(|u| format!("{u:?}").eq_ignore_ascii_case(name))
+                    {
                         self.game.lumens += self.game.next_cost(*u).unwrap_or(0);
                         self.game.buy(*u, &mut self.audio);
                     }
@@ -289,6 +309,21 @@ impl Running {
                     self.game.aim,
                     self.game.player.pos
                 ),
+                Some("printactive") => {
+                    if let Some(b) = self.game.active_book() {
+                        let info = &self.game.lib.books[b as usize];
+                        eprintln!(
+                            "script: active {} face {} row {} slot {:?} size {:?} eye {:?} fwd {:?}",
+                            b,
+                            info.face,
+                            info.row,
+                            info.slot_pos,
+                            info.size,
+                            self.game.player.eye(),
+                            self.game.player.forward()
+                        );
+                    }
+                }
                 Some("quit") => std::process::exit(0),
                 _ => {}
             }
@@ -309,7 +344,11 @@ impl ApplicationHandler for App {
         let t0 = Instant::now();
         let mut game = Game::new();
         let script = std::env::var("HUSHFOLD_SCRIPT").ok().map(|path| Script {
-            lines: std::fs::read_to_string(&path).expect("read script").lines().map(String::from).collect(),
+            lines: std::fs::read_to_string(&path)
+                .expect("read script")
+                .lines()
+                .map(String::from)
+                .collect(),
             idx: 0,
             wait: 10,
             dir: std::env::var("HUSHFOLD_SHOT_DIR").unwrap_or_else(|_| ".".into()).into(),
@@ -342,7 +381,15 @@ impl ApplicationHandler for App {
             egui_state,
             game,
             audio: Audio::new(),
-            hud: Hud { menu_open: false, show_intro: script.is_none(), show_stats: false, fps: 0.0, frame_ms: 0.0, cpu_ms: 0.0, render_ms: 0.0 },
+            hud: Hud {
+                menu_open: false,
+                show_intro: script.is_none(),
+                show_stats: false,
+                fps: 0.0,
+                frame_ms: 0.0,
+                cpu_ms: 0.0,
+                render_ms: 0.0,
+            },
             input: Input::default(),
             keys: HashSet::new(),
             grabbed: false,
@@ -355,7 +402,23 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         let Some(r) = self.run.as_mut() else { return };
-        let consumed = if r.grabbed { false } else { r.egui_state.on_window_event(&r.renderer.window, &event).consumed };
+        // Scripted runs are deterministic: ignore the real keyboard and mouse.
+        if r.script.is_some()
+            && matches!(
+                event,
+                WindowEvent::KeyboardInput { .. }
+                    | WindowEvent::MouseInput { .. }
+                    | WindowEvent::MouseWheel { .. }
+                    | WindowEvent::Focused(_)
+            )
+        {
+            return;
+        }
+        let consumed = if r.grabbed {
+            false
+        } else {
+            r.egui_state.on_window_event(&r.renderer.window, &event).consumed
+        };
         match event {
             WindowEvent::CloseRequested => {
                 r.game.save();
@@ -375,7 +438,11 @@ impl ApplicationHandler for App {
                     r.on_key(code, event.state == ElementState::Pressed, event_loop);
                 }
             }
-            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Left,
+                ..
+            } => {
                 let pressed = state == ElementState::Pressed;
                 if r.grabbed {
                     r.input.primary_down = pressed;
@@ -386,17 +453,15 @@ impl ApplicationHandler for App {
                     r.set_grab(true);
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } => {
-                if r.playing() {
-                    let d = match delta {
-                        MouseScrollDelta::LineDelta(_, y) => y,
-                        MouseScrollDelta::PixelDelta(p) => (p.y / 40.0) as f32,
-                    };
-                    if d > 0.0 {
-                        r.input.cycle -= 1;
-                    } else if d < 0.0 {
-                        r.input.cycle += 1;
-                    }
+            WindowEvent::MouseWheel { delta, .. } if r.playing() => {
+                let d = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => (p.y / 40.0) as f32,
+                };
+                if d > 0.0 {
+                    r.input.cycle -= 1;
+                } else if d < 0.0 {
+                    r.input.cycle += 1;
                 }
             }
             _ => {}
@@ -405,10 +470,11 @@ impl ApplicationHandler for App {
 
     fn device_event(&mut self, _el: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
         let Some(r) = self.run.as_mut() else { return };
-        if let DeviceEvent::MouseMotion { delta } = event {
-            if r.playing() {
-                r.input.look += glam::Vec2::new(delta.0 as f32, delta.1 as f32) * MOUSE_SENS;
-            }
+        if let DeviceEvent::MouseMotion { delta } = event
+            && r.playing()
+            && r.script.is_none()
+        {
+            r.input.look += glam::Vec2::new(delta.0 as f32, delta.1 as f32) * MOUSE_SENS;
         }
     }
 

@@ -35,7 +35,14 @@ pub struct Inst {
 
 impl Inst {
     pub fn new(pos: Vec3, rot: Quat, scale: Vec3, kind: u32, color: [f32; 4], param: u32) -> Self {
-        Self { pos: pos.into(), kind, rot: rot.into(), scale: scale.into(), param, color }
+        Self {
+            pos: pos.into(),
+            kind,
+            rot: rot.into(),
+            scale: scale.into(),
+            param,
+            color,
+        }
     }
 
     /// Axis-aligned box from its centre and full size.
@@ -109,7 +116,10 @@ fn unit_box() -> (Vec<Vertex>, Vec<u16>) {
         let base = v.len() as u16;
         for (sa, sb) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
             let p = (n + a * sa + b * sb) * 0.5;
-            v.push(Vertex { pos: p.into(), normal: n.into() });
+            v.push(Vertex {
+                pos: p.into(),
+                normal: n.into(),
+            });
         }
         // Wind counter-clockwise when viewed from outside.
         let cross = a.cross(b).dot(n);
@@ -137,7 +147,12 @@ impl GrowBuf {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        Self { buf, cap, len: 0, label }
+        Self {
+            buf,
+            cap,
+            len: 0,
+            label,
+        }
     }
 
     fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[Inst]) {
@@ -212,7 +227,7 @@ impl Renderer {
     pub fn new(window: Arc<Window>) -> Self {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
+            backends: wgpu::Backends::PRIMARY | wgpu::Backends::GL,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let surface = instance.create_surface(window.clone()).expect("create surface");
@@ -239,12 +254,17 @@ impl Renderer {
             .find(|f| matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm))
             .unwrap_or(caps.formats[0]);
         let present_mode = match std::env::var("HUSHFOLD_PRESENT").as_deref() {
-            Ok("immediate") if caps.present_modes.contains(&wgpu::PresentMode::Immediate) => wgpu::PresentMode::Immediate,
+            Ok("immediate") if caps.present_modes.contains(&wgpu::PresentMode::Immediate) => {
+                wgpu::PresentMode::Immediate
+            }
             Ok("fifo") => wgpu::PresentMode::Fifo,
             _ if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) => wgpu::PresentMode::Mailbox,
             _ => wgpu::PresentMode::Fifo,
         };
-        eprintln!("hushfold: present mode {present_mode:?} (available {:?})", caps.present_modes);
+        eprintln!(
+            "hushfold: present mode {present_mode:?} (available {:?})",
+            caps.present_modes
+        );
         let can_capture = caps.usages.contains(wgpu::TextureUsages::COPY_SRC);
         let mut usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
         if can_capture {
@@ -289,7 +309,10 @@ impl Renderer {
         let globals_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals"),
             layout: &globals_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals_buf.as_entire_binding() }],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: globals_buf.as_entire_binding(),
+            }],
         });
         let scene_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("scene"),
@@ -331,7 +354,10 @@ impl Renderer {
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: wgpu::MultisampleState { count: MSAA, ..Default::default() },
+                multisample: wgpu::MultisampleState {
+                    count: MSAA,
+                    ..Default::default()
+                },
                 fragment: Some(wgpu::FragmentState {
                     module: &scene_shader,
                     entry_point: Some(fs),
@@ -425,7 +451,11 @@ impl Renderer {
                     module: &post_shader,
                     entry_point: Some(fs),
                     compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })],
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
                 }),
                 multiview_mask: None,
                 cache: None,
@@ -471,18 +501,14 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let targets = Self::make_targets(
-            &device,
-            &config,
-            &chain_layout,
-            &tonemap_layout,
-            &sampler,
-            &post_buf,
-        );
+        let targets = Self::make_targets(&device, &config, &chain_layout, &tonemap_layout, &sampler, &post_buf);
         let egui = egui_wgpu::Renderer::new(
             &device,
             format,
-            egui_wgpu::RendererOptions { msaa_samples: 1, ..Default::default() },
+            egui_wgpu::RendererOptions {
+                msaa_samples: 1,
+                ..Default::default()
+            },
         );
 
         Self {
@@ -531,7 +557,11 @@ impl Renderer {
             device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some(label),
-                    size: wgpu::Extent3d { width: w.max(1), height: h.max(1), depth_or_array_layers: 1 },
+                    size: wgpu::Extent3d {
+                        width: w.max(1),
+                        height: h.max(1),
+                        depth_or_array_layers: 1,
+                    },
                     mip_level_count: 1,
                     sample_count: samples,
                     dimension: wgpu::TextureDimension::D2,
@@ -559,8 +589,14 @@ impl Renderer {
                 label: Some("chain"),
                 layout: chain_layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
                 ],
             })
         };
@@ -572,13 +608,32 @@ impl Renderer {
             label: Some("tonemap"),
             layout: tonemap_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&resolved) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&bloom[0]) },
-                wgpu::BindGroupEntry { binding: 3, resource: post_buf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&resolved),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&bloom[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: post_buf.as_entire_binding(),
+                },
             ],
         });
-        Targets { msaa_color, depth, resolved, bloom, chain_bgs, tonemap_bg }
+        Targets {
+            msaa_color,
+            depth,
+            resolved,
+            bloom,
+            chain_bgs,
+            tonemap_bg,
+        }
     }
 
     pub fn resize(&mut self, w: u32, h: u32) {
@@ -605,9 +660,15 @@ impl Renderer {
     fn save_capture(&self, path: &std::path::Path, buf: &wgpu::Buffer, row: u32) {
         let (w, h) = (self.config.width, self.config.height);
         buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        let _ = self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         let data = buf.slice(..).get_mapped_range();
-        let bgra = matches!(self.config.format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
+        let bgra = matches!(
+            self.config.format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
         let mut pixels = Vec::with_capacity((w * h * 4) as usize);
         for y in 0..h {
             let line = &data[(y * row) as usize..(y * row + w * 4) as usize];
@@ -649,7 +710,8 @@ impl Renderer {
         self.acquire_ms = t_acquire.elapsed().as_secs_f32() * 1000.0;
         let view = frame.texture.create_view(&Default::default());
 
-        self.queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(f.globals));
+        self.queue
+            .write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(f.globals));
         self.queue.write_buffer(&self.post_buf, 0, bytemuck::bytes_of(&f.post));
         self.dyn_buf.upload(&self.device, &self.queue, f.dynamic);
         self.trans_buf.upload(&self.device, &self.queue, f.trans);
@@ -676,7 +738,10 @@ impl Renderer {
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &t.depth,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
                     stencil_ops: None,
                 }),
                 timestamp_writes: None,
@@ -707,11 +772,17 @@ impl Renderer {
                     view: &t.msaa_color,
                     depth_slice: None,
                     resolve_target: Some(&t.resolved),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Discard },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Discard,
+                    },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &t.depth,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
                     stencil_ops: None,
                 }),
                 timestamp_writes: None,
@@ -739,7 +810,10 @@ impl Renderer {
                     view: target,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load,
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -752,11 +826,21 @@ impl Renderer {
         };
         let clear = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
         for lvl in 0..BLOOM_LEVELS {
-            let pipe = if lvl == 0 { &self.down_first_pipe } else { &self.down_pipe };
+            let pipe = if lvl == 0 {
+                &self.down_first_pipe
+            } else {
+                &self.down_pipe
+            };
             simple_pass(&mut enc, &t.bloom[lvl], pipe, &t.chain_bgs[lvl], clear);
         }
         for lvl in (1..BLOOM_LEVELS).rev() {
-            simple_pass(&mut enc, &t.bloom[lvl - 1], &self.up_pipe, &t.chain_bgs[lvl + 1], wgpu::LoadOp::Load);
+            simple_pass(
+                &mut enc,
+                &t.bloom[lvl - 1],
+                &self.up_pipe,
+                &t.chain_bgs[lvl + 1],
+                wgpu::LoadOp::Load,
+            );
         }
         simple_pass(&mut enc, &view, &self.tonemap_pipe, &t.tonemap_bg, clear);
 
@@ -768,7 +852,9 @@ impl Renderer {
         for (id, delta) in &f.egui_textures.set {
             self.egui.update_texture(&self.device, &self.queue, *id, delta);
         }
-        let extra = self.egui.update_buffers(&self.device, &self.queue, &mut enc, f.egui_prims, &sd);
+        let extra = self
+            .egui
+            .update_buffers(&self.device, &self.queue, &mut enc, f.egui_prims, &sd);
         {
             let rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("egui"),
@@ -776,7 +862,10 @@ impl Renderer {
                     view: &view,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -803,16 +892,28 @@ impl Renderer {
                 frame.texture.as_image_copy(),
                 wgpu::TexelCopyBufferInfo {
                     buffer: &buf,
-                    layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: None },
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(row),
+                        rows_per_image: None,
+                    },
                 },
-                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
             );
             (buf, row)
         });
         let t_gpu = std::time::Instant::now();
-        self.queue.submit(extra.into_iter().chain(std::iter::once(enc.finish())));
+        self.queue
+            .submit(extra.into_iter().chain(std::iter::once(enc.finish())));
         if self.sync_gpu {
-            let _ = self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+            let _ = self.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            });
             self.gpu_ms = t_gpu.elapsed().as_secs_f32() * 1000.0;
         }
         if let (Some(path), Some((buf, row))) = (capture, readback) {

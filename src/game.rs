@@ -2,7 +2,7 @@
 
 use crate::audio::{Audio, Sfx};
 use crate::catalog::{self, CATEGORIES};
-use crate::gfx::{kind, GpuLight, Globals, Inst, MAX_LIGHTS};
+use crate::gfx::{Globals, GpuLight, Inst, MAX_LIGHTS, kind};
 use crate::library::*;
 use glam::{Mat4, Quat, Vec2, Vec3};
 use rand::prelude::*;
@@ -170,8 +170,16 @@ pub struct Toast {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Aim {
     None,
-    Heap { heap: u32, dist: f32 },
-    Shelf { face: u32, row: u8, run: Option<Run>, dist: f32 },
+    Heap {
+        heap: u32,
+        dist: f32,
+    },
+    Shelf {
+        face: u32,
+        row: u8,
+        run: Option<Run>,
+        dist: f32,
+    },
 }
 
 #[derive(Default)]
@@ -198,7 +206,11 @@ impl Player {
         self.pos + Vec3::Y * (EYE + (self.bob * 2.0).sin().abs() * 0.025)
     }
     pub fn forward(&self) -> Vec3 {
-        Vec3::new(self.yaw.sin() * self.pitch.cos(), self.pitch.sin(), -self.yaw.cos() * self.pitch.cos())
+        Vec3::new(
+            self.yaw.sin() * self.pitch.cos(),
+            self.pitch.sin(),
+            -self.yaw.cos() * self.pitch.cos(),
+        )
     }
     pub fn right(&self) -> Vec3 {
         Vec3::new(self.yaw.cos(), 0.0, self.yaw.sin())
@@ -281,7 +293,11 @@ impl Game {
         let motes = (0..700)
             .map(|_| {
                 (
-                    Vec3::new(rng.gen_range(-HALL_X..HALL_X), rng.gen_range(0.2..6.0), rng.gen_range(-HALL_Z..HALL_Z)),
+                    Vec3::new(
+                        rng.gen_range(-HALL_X..HALL_X),
+                        rng.gen_range(0.2..6.0),
+                        rng.gen_range(-HALL_Z..HALL_Z),
+                    ),
                     rng.gen_range(0.0..1.0f32) * 100.0,
                 )
             })
@@ -294,7 +310,13 @@ impl Game {
             held: Vec::new(),
             active: 0,
             manual_pick_t: 0.0,
-            player: Player { pos: Vec3::new(0.0, 0.0, 6.5), vel: Vec3::ZERO, yaw: 0.0, pitch: -0.05, bob: 0.0 },
+            player: Player {
+                pos: Vec3::new(0.0, 0.0, 6.5),
+                vel: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: -0.05,
+                bob: 0.0,
+            },
             lumens: 0,
             earned: 0,
             upg: [0; UPGRADES.len()],
@@ -375,11 +397,23 @@ impl Game {
 
     fn spawn_familiar(&mut self) {
         let p = self.player.eye() + self.player.forward() * 1.0 + Vec3::Y * 0.5;
-        self.familiars.push(Familiar { pos: p, vel: Vec3::ZERO, task: FamTask::Idle, carry: Vec::new(), phase: self.rng.gen_range(0.0..1.0f32) * 10.0, rest: 0.5 });
+        self.familiars.push(Familiar {
+            pos: p,
+            vel: Vec3::ZERO,
+            task: FamTask::Idle,
+            carry: Vec::new(),
+            phase: self.rng.gen_range(0.0..1.0f32) * 10.0,
+            rest: 0.5,
+        });
     }
 
     pub fn toast(&mut self, text: String, color: [f32; 3], big: bool) {
-        self.toasts.push(Toast { text, color, age: 0.0, big });
+        self.toasts.push(Toast {
+            text,
+            color,
+            age: 0.0,
+            big,
+        });
     }
 
     pub fn wing_unlocked(&self, wing: usize) -> bool {
@@ -491,7 +525,11 @@ impl Game {
                 let d = Vec2::new(np.x, np.z) - q;
                 let l = d.length();
                 if l < PLAYER_R {
-                    let push = if l > 1e-5 { d / l * (PLAYER_R - l) } else { Vec2::new(PLAYER_R, 0.0) };
+                    let push = if l > 1e-5 {
+                        d / l * (PLAYER_R - l)
+                    } else {
+                        Vec2::new(PLAYER_R, 0.0)
+                    };
                     np.x += push.x;
                     np.z += push.y;
                 }
@@ -512,7 +550,11 @@ impl Game {
         let d = b - a;
         let len = d.length();
         let dir = d / len.max(1e-5);
-        !self.lib.obstacles.iter().any(|o| o.blocks_ray && Self::ray_aabb(a, dir, o.min, o.max).is_some_and(|t| t < len - 0.15))
+        !self
+            .lib
+            .obstacles
+            .iter()
+            .any(|o| o.blocks_ray && Self::ray_aabb(a, dir, o.min, o.max).is_some_and(|t| t < len - 0.15))
     }
 
     fn ray_aabb(o: Vec3, d: Vec3, mn: Vec3, mx: Vec3) -> Option<f32> {
@@ -536,10 +578,10 @@ impl Game {
         let d = self.player.forward();
         let mut block = f32::MAX;
         for ob in &self.lib.obstacles {
-            if ob.blocks_ray {
-                if let Some(t) = Self::ray_aabb(o, d, ob.min, ob.max) {
-                    block = block.min(t);
-                }
+            if ob.blocks_ray
+                && let Some(t) = Self::ray_aabb(o, d, ob.min, ob.max)
+            {
+                block = block.min(t);
             }
         }
         let mut best = Aim::None;
@@ -551,7 +593,10 @@ impl Game {
                 continue;
             }
             let t = (f.center - o).dot(f.normal) / dn;
-            if t < 0.0 || t > SHELF_REACH || t > block + 0.05 || t > best_t {
+            // The bookcase's own blocking box sits a few cm proud of the shelf front;
+            // that gap grows along the ray at grazing angles, so scale the allowance.
+            let allowance = (0.06 / -dn + 0.01).min(0.3);
+            if !(0.0..=SHELF_REACH).contains(&t) || t > block + allowance || t > best_t {
                 continue;
             }
             let p = o + d * t;
@@ -571,8 +616,16 @@ impl Game {
                 }
             }
             let Some(row) = row else { continue };
-            let run = self.lib.runs[fi][row].iter().copied().find(|r| x >= r.x0 - 0.03 && x <= r.x1 + 0.03);
-            best = Aim::Shelf { face: fi as u32, row: row as u8, run, dist: t };
+            let run = self.lib.runs[fi][row]
+                .iter()
+                .copied()
+                .find(|r| x >= r.x0 - 0.03 && x <= r.x1 + 0.03);
+            best = Aim::Shelf {
+                face: fi as u32,
+                row: row as u8,
+                run,
+                dist: t,
+            };
             best_t = t;
         }
         // Heaps (test individual books inside heaps whose bounds the ray crosses).
@@ -582,17 +635,23 @@ impl Game {
                 continue;
             }
             let (mn, mx) = self.heap_bounds[hi];
-            let Some(t0) = Self::ray_aabb(o, d, mn, mx) else { continue };
+            let Some(t0) = Self::ray_aabb(o, d, mn, mx) else {
+                continue;
+            };
             if t0 > reach || t0 > best_t || t0 > block + 0.3 {
                 continue;
             }
             for &b in &h.books {
                 let info = &self.lib.books[b as usize];
-                if let Some(t) = Self::ray_obb(o, d, info.heap_pos, info.heap_rot, info.size * 1.2) {
-                    if t < best_t && t <= reach {
-                        best_t = t;
-                        best = Aim::Heap { heap: hi as u32, dist: t };
-                    }
+                if let Some(t) = Self::ray_obb(o, d, info.heap_pos, info.heap_rot, info.size * 1.2)
+                    && t < best_t
+                    && t <= reach
+                {
+                    best_t = t;
+                    best = Aim::Heap {
+                        heap: hi as u32,
+                        dist: t,
+                    };
                 }
             }
         }
@@ -635,7 +694,9 @@ impl Game {
                     return;
                 }
                 let s = run.series;
-                let matching: Vec<usize> = (0..self.held.len()).filter(|&i| self.lib.books[self.held[i] as usize].series == s).collect();
+                let matching: Vec<usize> = (0..self.held.len())
+                    .filter(|&i| self.lib.books[self.held[i] as usize].series == s)
+                    .collect();
                 if matching.is_empty() {
                     let ser = &self.lib.series[s as usize];
                     let done = self.series_shelved[s as usize] == ser.volumes;
@@ -672,7 +733,15 @@ impl Game {
     fn start_flight(&mut self, book: u32, dest: Dest, dur: f32, delay: f32) {
         self.flights.retain(|f| f.book != book);
         let (from_pos, from_rot) = (self.pos[book as usize], self.rot[book as usize]);
-        self.flights.push(Flight { book, from_pos, from_rot, t: 0.0, dur, delay, dest });
+        self.flights.push(Flight {
+            book,
+            from_pos,
+            from_rot,
+            t: 0.0,
+            dur,
+            delay,
+            dest,
+        });
     }
 
     fn hand_xform(&self, slot: usize) -> (Vec3, Quat) {
@@ -755,7 +824,11 @@ impl Game {
             if ser.volumes > 1 {
                 audio.play_pitched(Sfx::Chime, 0.45, ser.volumes as usize);
                 let title = ser.title.clone();
-                self.toast(format!("Series complete: {title}  (+{bonus} ✦)"), [0.95, 0.85, 0.6], false);
+                self.toast(
+                    format!("Series complete: {title}  (+{bonus} ✦)"),
+                    [0.95, 0.85, 0.6],
+                    false,
+                );
                 for &ob in &self.lib.series_books[s].clone() {
                     let p = self.lib.books[ob as usize].slot_pos;
                     self.burst(p, 6, [1.6, 1.2, 0.5], 0.9);
@@ -767,7 +840,11 @@ impl Game {
             self.earned += 100;
             audio.play(Sfx::Fanfare, 0.7);
             let c = catalog::category_color(cat);
-            self.toast(format!("{} is fully catalogued!  (+100 ✦)", CATEGORIES[cat].name), c, true);
+            self.toast(
+                format!("{} is fully catalogued!  (+100 ✦)", CATEGORIES[cat].name),
+                c,
+                true,
+            );
             let center = self.lib.category_center[cat];
             self.burst(center + Vec3::Y * 1.5, 120, [c[0] * 4.0, c[1] * 4.0, c[2] * 4.0], 2.0);
         }
@@ -777,13 +854,21 @@ impl Game {
             self.toast("The veil over the East Wing lifts…".into(), [0.75, 0.6, 1.0], true);
         }
         if self.total_shelved() == self.total_books() {
-            self.toast("Every book is home. The library sighs, contented.".into(), [1.0, 0.95, 0.8], true);
+            self.toast(
+                "Every book is home. The library sighs, contented.".into(),
+                [1.0, 0.95, 0.8],
+                true,
+            );
         }
     }
 
     fn burst(&mut self, p: Vec3, n: usize, color: [f32; 3], life: f32) {
         for _ in 0..n {
-            let v = Vec3::new(self.rng.gen_range(-1.0..1.0), self.rng.gen_range(0.2..1.5), self.rng.gen_range(-1.0..1.0));
+            let v = Vec3::new(
+                self.rng.gen_range(-1.0..1.0),
+                self.rng.gen_range(0.2..1.5),
+                self.rng.gen_range(-1.0..1.0),
+            );
             self.particles.push(Particle {
                 pos: p + v * 0.05,
                 vel: v * 0.6,
@@ -870,7 +955,7 @@ impl Game {
                             continue;
                         }
                         let d = h.base.distance(fam.pos) + self.rng.gen_range(0.0..4.0);
-                        if best.map_or(true, |(bd, _)| d < bd) {
+                        if best.is_none_or(|(bd, _)| d < bd) {
                             best = Some((d, hi as u32));
                         }
                     }
@@ -886,7 +971,11 @@ impl Game {
             let target = match fam.task {
                 FamTask::ToHeap(h) => {
                     let heap = &self.lib.heaps[h as usize];
-                    let top = heap.books.last().map(|&b| self.lib.books[b as usize].heap_pos).unwrap_or(heap.base);
+                    let top = heap
+                        .books
+                        .last()
+                        .map(|&b| self.lib.books[b as usize].heap_pos)
+                        .unwrap_or(heap.base);
                     top + Vec3::Y * 0.45
                 }
                 FamTask::ToSlot => {
@@ -898,7 +987,11 @@ impl Game {
             };
             let to = target - fam.pos;
             let horiz = Vec2::new(to.x, to.z).length();
-            let goal = if horiz > 1.2 { Vec3::new(target.x, cruise.max(target.y), target.z) } else { target };
+            let goal = if horiz > 1.2 {
+                Vec3::new(target.x, cruise.max(target.y), target.z)
+            } else {
+                target
+            };
             // Climb first when far below cruise altitude and far away.
             let goal = if horiz > 1.2 && fam.pos.y < cruise - 0.6 {
                 Vec3::new(fam.pos.x + to.x * 0.15, cruise, fam.pos.z + to.z * 0.15)
@@ -948,7 +1041,8 @@ impl Game {
             for (k, &b) in fam.carry.iter().enumerate() {
                 let sway = (fam.phase * 0.5 + k as f32).sin() * 0.1;
                 self.pos[b as usize] = fam.pos - Vec3::Y * (0.18 + k as f32 * 0.05);
-                self.rot[b as usize] = Quat::from_rotation_y(fam.phase * 0.05 + k as f32) * Quat::from_rotation_z(PI * 0.5 + sway);
+                self.rot[b as usize] =
+                    Quat::from_rotation_y(fam.phase * 0.05 + k as f32) * Quat::from_rotation_z(PI * 0.5 + sway);
             }
         }
         self.familiars = fams;
@@ -968,7 +1062,12 @@ impl Game {
         let p = self.player.pos;
         let best = (0..self.lib.heaps.len())
             .filter(|&h| !self.lib.heaps[h].books.is_empty() && self.wing_unlocked(self.lib.heaps[h].wing))
-            .min_by(|&a, &b| self.lib.heaps[a].base.distance(p).total_cmp(&self.lib.heaps[b].base.distance(p)));
+            .min_by(|&a, &b| {
+                self.lib.heaps[a]
+                    .base
+                    .distance(p)
+                    .total_cmp(&self.lib.heaps[b].base.distance(p))
+            });
         if let Some(h) = best {
             let heap = &self.lib.heaps[h];
             let top = self.lib.books[*heap.books.last().unwrap() as usize].heap_pos;
@@ -1035,7 +1134,10 @@ impl Game {
         let mut n = 0;
         let mut push = |p: Vec3, r: f32, c: [f32; 3], i: f32| {
             if n < MAX_LIGHTS {
-                lights[n] = GpuLight { pos_radius: [p.x, p.y, p.z, r], color: [c[0], c[1], c[2], i] };
+                lights[n] = GpuLight {
+                    pos_radius: [p.x, p.y, p.z, r],
+                    color: [c[0], c[1], c[2], i],
+                };
                 n += 1;
             }
         };
@@ -1062,7 +1164,12 @@ impl Game {
             }
         }
         // The librarian's own candle: a soft warm glow that keeps nearby spines readable.
-        push(eye - self.player.forward() * 0.6 + Vec3::Y * 0.35, 7.0, [1.0, 0.72, 0.45], 0.6);
+        push(
+            eye - self.player.forward() * 0.6 + Vec3::Y * 0.35,
+            7.0,
+            [1.0, 0.72, 0.45],
+            0.6,
+        );
         for f in &self.familiars {
             push(f.pos, 3.5, [0.75, 0.85, 1.0], 0.8);
         }
@@ -1088,7 +1195,14 @@ impl Game {
         let info = &self.lib.books[b];
         let s = &self.lib.series[info.series as usize];
         let param = s.pattern | (s.trim << 4) | (info.volume << 8) | (flags << 16);
-        Inst::new(pos, rot, info.size, kind::BOOK, [s.color[0], s.color[1], s.color[2], 1.0], param)
+        Inst::new(
+            pos,
+            rot,
+            info.size,
+            kind::BOOK,
+            [s.color[0], s.color[1], s.color[2], 1.0],
+            param,
+        )
     }
 
     /// After `held` changes, point `active` back at the book it was on (`prev`),
@@ -1172,7 +1286,11 @@ impl Game {
         // Held stack in view.
         if !self.held.is_empty() {
             let n = self.held.len();
-            let start = if n <= HAND_VISIBLE { 0 } else { self.active.saturating_sub(HAND_VISIBLE / 2).min(n - HAND_VISIBLE) };
+            let start = if n <= HAND_VISIBLE {
+                0
+            } else {
+                self.active.saturating_sub(HAND_VISIBLE / 2).min(n - HAND_VISIBLE)
+            };
             let end = (start + HAND_VISIBLE).min(n);
             let (base, rot) = self.hand_xform(0);
             let f = self.player.forward();
@@ -1201,32 +1319,82 @@ impl Game {
         for &(c, p) in &self.lib.lanterns {
             let g = self.lantern_glow[c];
             let cc = catalog::category_color(c);
-            let col = [0.9 * (1.0 - g) + cc[0] * g, 0.6 * (1.0 - g) + cc[1] * g, 0.3 * (1.0 - g) + cc[2] * g];
-            dyn_insts.push(Inst::new(p, Quat::IDENTITY, Vec3::new(0.16, 0.28, 0.16), kind::EMISSIVE, [col[0], col[1], col[2], 0.25 + g * 9.0], 0));
+            let col = [
+                0.9 * (1.0 - g) + cc[0] * g,
+                0.6 * (1.0 - g) + cc[1] * g,
+                0.3 * (1.0 - g) + cc[2] * g,
+            ];
+            dyn_insts.push(Inst::new(
+                p,
+                Quat::IDENTITY,
+                Vec3::new(0.16, 0.28, 0.16),
+                kind::EMISSIVE,
+                [col[0], col[1], col[2], 0.25 + g * 9.0],
+                0,
+            ));
         }
 
         // Familiars: folded-paper cranes with a soft inner glow.
         for f in &self.familiars {
-            let heading = if f.vel.length_squared() > 0.01 { f.vel.x.atan2(-f.vel.z) } else { 0.0 };
+            let heading = if f.vel.length_squared() > 0.01 {
+                f.vel.x.atan2(-f.vel.z)
+            } else {
+                0.0
+            };
             let body_rot = Quat::from_rotation_y(-heading);
             let k = 1.6;
             let glow = [0.55, 0.65, 1.0, 0.3];
-            dyn_insts.push(Inst::new(f.pos, body_rot, Vec3::new(0.05, 0.05, 0.3) * k, kind::PAPER, glow, 0));
+            dyn_insts.push(Inst::new(
+                f.pos,
+                body_rot,
+                Vec3::new(0.05, 0.05, 0.3) * k,
+                kind::PAPER,
+                glow,
+                0,
+            ));
             let flap = f.phase.sin() * 0.6;
             for s in [-1.0f32, 1.0] {
                 let wing_rot = body_rot * Quat::from_rotation_z(s * (0.2 + flap));
                 let off = wing_rot * Vec3::new(s * 0.14 * k, 0.0, 0.0);
-                dyn_insts.push(Inst::new(f.pos + off, wing_rot, Vec3::new(0.26, 0.008, 0.14) * k, kind::PAPER, glow, 0));
+                dyn_insts.push(Inst::new(
+                    f.pos + off,
+                    wing_rot,
+                    Vec3::new(0.26, 0.008, 0.14) * k,
+                    kind::PAPER,
+                    glow,
+                    0,
+                ));
             }
             // Neck and tail.
-            dyn_insts.push(Inst::new(f.pos + body_rot * Vec3::new(0.0, 0.06, -0.16) * k, body_rot * Quat::from_rotation_x(0.6), Vec3::new(0.025, 0.12, 0.025) * k, kind::PAPER, glow, 0));
-            dyn_insts.push(Inst::new(f.pos + body_rot * Vec3::new(0.0, 0.05, 0.15) * k, body_rot * Quat::from_rotation_x(-0.7), Vec3::new(0.02, 0.1, 0.02) * k, kind::PAPER, glow, 0));
+            dyn_insts.push(Inst::new(
+                f.pos + body_rot * Vec3::new(0.0, 0.06, -0.16) * k,
+                body_rot * Quat::from_rotation_x(0.6),
+                Vec3::new(0.025, 0.12, 0.025) * k,
+                kind::PAPER,
+                glow,
+                0,
+            ));
+            dyn_insts.push(Inst::new(
+                f.pos + body_rot * Vec3::new(0.0, 0.05, 0.15) * k,
+                body_rot * Quat::from_rotation_x(-0.7),
+                Vec3::new(0.02, 0.1, 0.02) * k,
+                kind::PAPER,
+                glow,
+                0,
+            ));
         }
 
         // Particles and dust motes.
         for p in &self.particles {
             let k = 1.0 - p.life / p.max;
-            dyn_insts.push(Inst::new(p.pos, Quat::IDENTITY, Vec3::splat(p.size * k.max(0.1)), kind::EMISSIVE, [p.color[0], p.color[1], p.color[2], 2.5 * k], 0));
+            dyn_insts.push(Inst::new(
+                p.pos,
+                Quat::IDENTITY,
+                Vec3::splat(p.size * k.max(0.1)),
+                kind::EMISSIVE,
+                [p.color[0], p.color[1], p.color[2], 2.5 * k],
+                0,
+            ));
         }
         let eye = self.player.eye();
         for (i, &(base, ph)) in self.motes.iter().enumerate() {
@@ -1237,7 +1405,14 @@ impl Game {
             p.x = eye.x + (rel.x + 12.0).rem_euclid(24.0) - 12.0;
             p.z = eye.z + (rel.z + 12.0).rem_euclid(24.0) - 12.0;
             let tw = 0.5 + 0.5 * (self.time * 0.8 + i as f32).sin();
-            dyn_insts.push(Inst::new(p, Quat::IDENTITY, Vec3::splat(0.006), kind::EMISSIVE, [1.0, 0.85, 0.6, 0.6 + 1.2 * tw], 0));
+            dyn_insts.push(Inst::new(
+                p,
+                Quat::IDENTITY,
+                Vec3::splat(0.006),
+                kind::EMISSIVE,
+                [1.0, 0.85, 0.6, 0.6 + 1.2 * tw],
+                0,
+            ));
         }
 
         // Moonbeams and veil.
@@ -1246,10 +1421,24 @@ impl Game {
             let start = Vec3::new(x, 4.4, -HALL_Z + 0.1);
             let len = 9.0;
             let rot = Quat::from_rotation_arc(Vec3::Y, beam_dir);
-            trans.push(Inst::new(start + beam_dir * len * 0.5, rot, Vec3::new(1.6, len, 3.4), kind::SHAFT, [0.35, 0.45, 0.9, 0.05], 0));
+            trans.push(Inst::new(
+                start + beam_dir * len * 0.5,
+                rot,
+                Vec3::new(1.6, len, 3.4),
+                kind::SHAFT,
+                [0.35, 0.45, 0.9, 0.05],
+                0,
+            ));
         }
         if self.veil > 0.0 {
-            trans.push(Inst::new(Vec3::new(VEIL_X, HALL_H * 0.5, 0.0), Quat::IDENTITY, Vec3::new(0.05, HALL_H, HALL_Z * 2.0), kind::VEIL, [1.0, 1.0, 1.0, 1.0], 0));
+            trans.push(Inst::new(
+                Vec3::new(VEIL_X, HALL_H * 0.5, 0.0),
+                Quat::IDENTITY,
+                Vec3::new(0.05, HALL_H, HALL_Z * 2.0),
+                kind::VEIL,
+                [1.0, 1.0, 1.0, 1.0],
+                0,
+            ));
         }
 
         self.dyn_insts = dyn_insts;
@@ -1260,11 +1449,7 @@ impl Game {
     // -------------------------------------------------------------- save / load
 
     fn save_path() -> std::path::PathBuf {
-        let base = std::env::var_os("XDG_DATA_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        base.join("hushfold").join("save.json")
+        crate::platform::data_dir().join("save.json")
     }
 
     pub fn save(&mut self) {
@@ -1300,7 +1485,10 @@ impl Game {
         let tmp = path.with_extension("json.tmp");
         match serde_json::to_vec(&data) {
             Ok(bytes) => {
-                if std::fs::write(&tmp, bytes).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+                if std::fs::write(&tmp, bytes)
+                    .and_then(|_| std::fs::rename(&tmp, &path))
+                    .is_err()
+                {
                     eprintln!("hushfold: failed to write save to {}", path.display());
                 }
             }
@@ -1310,7 +1498,9 @@ impl Game {
     }
 
     pub fn load(&mut self) -> bool {
-        let Ok(bytes) = std::fs::read(Self::save_path()) else { return false };
+        let Ok(bytes) = std::fs::read(Self::save_path()) else {
+            return false;
+        };
         let Ok(data) = serde_json::from_slice::<SaveData>(&bytes) else {
             eprintln!("hushfold: save file unreadable, starting fresh");
             return false;
@@ -1417,7 +1607,13 @@ mod tests {
         // Generation is deterministic (saves depend on it).
         let g2 = Game::new();
         assert_eq!(g2.lib.books.len(), lib.books.len());
-        assert!(g2.lib.books.iter().zip(&lib.books).all(|(a, b)| a.heap_pos == b.heap_pos && a.slot_pos == b.slot_pos));
+        assert!(
+            g2.lib
+                .books
+                .iter()
+                .zip(&lib.books)
+                .all(|(a, b)| a.heap_pos == b.heap_pos && a.slot_pos == b.slot_pos)
+        );
     }
 
     /// Pacing estimate: a bot that walks (at real speeds) to the nearest heap, gathers an
@@ -1438,7 +1634,12 @@ mod tests {
             // Gather.
             let Some(h) = (0..g.lib.heaps.len())
                 .filter(|&h| !g.lib.heaps[h].books.is_empty() && g.wing_unlocked(g.lib.heaps[h].wing))
-                .min_by(|&a, &b| g.lib.heaps[a].base.distance(pos).total_cmp(&g.lib.heaps[b].base.distance(pos)))
+                .min_by(|&a, &b| {
+                    g.lib.heaps[a]
+                        .base
+                        .distance(pos)
+                        .total_cmp(&g.lib.heaps[b].base.distance(pos))
+                })
             else {
                 break;
             };
@@ -1454,9 +1655,13 @@ mod tests {
             // File, nearest slot first; a click files one book, or a whole series with Bundle.
             let aura_r: f32 = [0.0, 3.0, 6.0, 11.0][g.level(Upg::Aura) as usize];
             while !g.held.is_empty() {
-                let (i, _) = g.held.iter().enumerate()
+                let (i, _) = g
+                    .held
+                    .iter()
+                    .enumerate()
                     .map(|(i, &b)| (i, g.lib.books[b as usize].slot_pos.distance(pos)))
-                    .min_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .unwrap();
                 let b = g.held[i];
                 let slot = g.lib.books[b as usize].slot_pos;
                 let d = Vec3::new(slot.x - pos.x, 0.0, slot.z - pos.z).length();
@@ -1465,7 +1670,11 @@ mod tests {
                 pos += Vec3::new(slot.x - pos.x, 0.0, slot.z - pos.z).normalize_or_zero() * walk;
                 let s = g.lib.books[b as usize].series;
                 let batch: Vec<u32> = if g.level(Upg::Bundle) > 0 {
-                    g.held.iter().copied().filter(|&x| g.lib.books[x as usize].series == s).collect()
+                    g.held
+                        .iter()
+                        .copied()
+                        .filter(|&x| g.lib.books[x as usize].series == s)
+                        .collect()
                 } else {
                     vec![b]
                 };
@@ -1479,7 +1688,9 @@ mod tests {
             let rate = [0.12, 0.2, 0.32][g.level(Upg::Wings) as usize] * fams;
             let fam_books = (rate * 30.0) as usize;
             for _ in 0..fam_books {
-                if let Some(h) = (0..g.lib.heaps.len()).find(|&h| !g.lib.heaps[h].books.is_empty() && g.wing_unlocked(g.lib.heaps[h].wing)) {
+                if let Some(h) = (0..g.lib.heaps.len())
+                    .find(|&h| !g.lib.heaps[h].books.is_empty() && g.wing_unlocked(g.lib.heaps[h].wing))
+                {
                     let b = g.lib.heaps[h].books.pop().unwrap();
                     let mut thunks = 0;
                     g.on_shelved(b, &mut audio, &mut thunks);
@@ -1487,22 +1698,81 @@ mod tests {
             }
             // Spend.
             loop {
-                let cheapest = UPGRADES.iter().copied().filter_map(|u| g.next_cost(u).map(|c| (c, u))).min_by_key(|x| x.0);
+                let cheapest = UPGRADES
+                    .iter()
+                    .copied()
+                    .filter_map(|u| g.next_cost(u).map(|c| (c, u)))
+                    .min_by_key(|x| x.0);
                 match cheapest {
                     Some((c, u)) if c <= g.lumens => {
                         g.buy(u, &mut audio);
-                        println!("{:6.1} min  bought {:?} -> {}  (shelved {})", t / 60.0, u, g.level(u), g.total_shelved());
+                        println!(
+                            "{:6.1} min  bought {:?} -> {}  (shelved {})",
+                            t / 60.0,
+                            u,
+                            g.level(u),
+                            g.total_shelved()
+                        );
                     }
                     _ => break,
                 }
             }
             if t >= next_report {
-                println!("{:6.1} min  shelved {:5} / {}  west {:.0}%  east {:.0}%", t / 60.0, g.total_shelved(), g.total_books(),
-                    100.0 * g.wing_shelved[0] as f32 / g.wing_total[0] as f32, 100.0 * g.wing_shelved[1] as f32 / g.wing_total[1] as f32);
+                println!(
+                    "{:6.1} min  shelved {:5} / {}  west {:.0}%  east {:.0}%",
+                    t / 60.0,
+                    g.total_shelved(),
+                    g.total_books(),
+                    100.0 * g.wing_shelved[0] as f32 / g.wing_total[0] as f32,
+                    100.0 * g.wing_shelved[1] as f32 / g.wing_total[1] as f32
+                );
                 next_report += 15.0 * 60.0;
             }
         }
         println!("done at {:.1} h, shelved {}", t / 3600.0, g.total_shelved());
+    }
+
+    /// Every slot must be fileable when looked at from a natural oblique standpoint
+    /// (regression: a bookcase's own collision box used to block grazing rays).
+    #[test]
+    fn slots_aimable_at_angles() {
+        let mut g = Game::new();
+        g.east_unlocked = true;
+        for h in &mut g.lib.heaps {
+            h.books.clear();
+        }
+        g.recompute_heap_bounds();
+        let mut failures = 0;
+        let mut tried = 0;
+        for b in (0..g.lib.books.len()).step_by(37) {
+            let (normal, right, face_id, row, series, slot) = {
+                let i = &g.lib.books[b];
+                let f = &g.lib.faces[i.face as usize];
+                // Aim at the middle of the spine, which is what a player sees and clicks.
+                let spine = i.slot_pos + f.normal * (i.size.z * 0.5);
+                (f.normal, f.right, i.face, i.row, i.series, spine)
+            };
+            for side in [-1.0f32, 1.0] {
+                let dir = (normal + right * side * 0.9).normalize();
+                let from = Vec3::new(slot.x, 0.0, slot.z) + dir * 1.6;
+                g.look_at(from, slot);
+                if g.player.pos.distance(from) > 1e-3 {
+                    continue;
+                }
+                tried += 1;
+                match g.compute_aim() {
+                    Aim::Shelf { face, run: Some(r), .. } if face == face_id && r.series == series => {}
+                    other => {
+                        failures += 1;
+                        if failures < 5 {
+                            eprintln!("book {b} face {face_id} row {row}: {other:?}");
+                        }
+                    }
+                }
+            }
+        }
+        assert!(tried > 300);
+        assert_eq!(failures, 0, "{failures}/{tried} oblique aims failed");
     }
 
     #[test]

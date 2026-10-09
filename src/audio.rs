@@ -4,8 +4,8 @@
 use rand::prelude::*;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
 use std::num::NonZero;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 const SR: u32 = 44100;
@@ -118,12 +118,33 @@ impl Audio {
             let gain = music_gain.clone();
             std::thread::spawn(move || {
                 let amb: Arc<[f32]> = ambience().into();
-                mixer.add(Clip { data: amb, pos: 0, gain: 0.35, looping: true, live_gain: None, smoothed: 1.0 });
+                mixer.add(Clip {
+                    data: amb,
+                    pos: 0,
+                    gain: 0.35,
+                    looping: true,
+                    live_gain: None,
+                    smoothed: 1.0,
+                });
                 let music: Arc<[f32]> = music().into();
-                mixer.add(Clip { data: music, pos: 0, gain: 0.5, looping: true, live_gain: Some(gain), smoothed: 0.0 });
+                mixer.add(Clip {
+                    data: music,
+                    pos: 0,
+                    gain: 0.5,
+                    looping: true,
+                    live_gain: Some(gain),
+                    smoothed: 0.0,
+                });
             });
         }
-        Audio { sink, banks, last: [None; SFX_COUNT], rng, music_gain, music_on: true }
+        Audio {
+            sink,
+            banks,
+            last: [None; SFX_COUNT],
+            rng,
+            music_gain,
+            music_on: true,
+        }
     }
 
     /// No output device and no synthesis; every play is a no-op. Used by tests.
@@ -172,14 +193,21 @@ impl Audio {
             _ => 0.03,
         };
         let now = Instant::now();
-        if let Some(t) = self.last[sfx_index(s)] {
-            if now.duration_since(t).as_secs_f32() < min_gap {
-                return;
-            }
+        if let Some(t) = self.last[sfx_index(s)]
+            && now.duration_since(t).as_secs_f32() < min_gap
+        {
+            return;
         }
         self.last[sfx_index(s)] = Some(now);
         let data = self.banks[sfx_index(s)][v].clone();
-        sink.mixer().add(Clip { data, pos: 0, gain: vol, looping: false, live_gain: None, smoothed: 1.0 });
+        sink.mixer().add(Clip {
+            data,
+            pos: 0,
+            gain: vol,
+            looping: false,
+            live_gain: None,
+            smoothed: 1.0,
+        });
     }
 }
 
@@ -241,8 +269,10 @@ fn rustle(rng: &mut StdRng) -> Vec<f32> {
     let mut noise: Vec<f32> = (0..n).map(|_| rng.gen_range(-1.0..1.0)).collect();
     highpass(&mut noise, 1500.0);
     lowpass(&mut noise, 6000.0);
-    let bursts: Vec<(f32, f32)> = (0..7).map(|_| (rng.gen_range(0.0..0.22), rng.gen_range(0.3..1.0))).collect();
-    for i in 0..n {
+    let bursts: Vec<(f32, f32)> = (0..7)
+        .map(|_| (rng.gen_range(0.0..0.22), rng.gen_range(0.3..1.0)))
+        .collect();
+    for (i, x) in noise.iter_mut().enumerate() {
         let t = i as f32 / SR as f32;
         let mut env = 0.0;
         for &(bt, amp) in &bursts {
@@ -250,7 +280,7 @@ fn rustle(rng: &mut StdRng) -> Vec<f32> {
                 env += amp * (-(t - bt) * 40.0).exp();
             }
         }
-        noise[i] *= env * (1.0 - t / 0.32).max(0.0);
+        *x *= env * (1.0 - t / 0.32).max(0.0);
     }
     normalize(&mut noise, 0.6);
     noise
@@ -261,14 +291,14 @@ fn whoosh(rng: &mut StdRng, pitch: f32) -> Vec<f32> {
     let mut out = vec![0.0; n];
     let mut lp = 0.0f32;
     let mut lp2 = 0.0f32;
-    for i in 0..n {
+    for (i, o) in out.iter_mut().enumerate() {
         let t = i as f32 / n as f32;
         let cutoff = (400.0 + 2400.0 * (t * std::f32::consts::PI).sin()) * pitch;
         let a = 1.0 - (-2.0 * std::f32::consts::PI * cutoff / SR as f32).exp();
         let x: f32 = rng.gen_range(-1.0..1.0);
         lp += a * (x - lp);
         lp2 += a * 0.5 * (lp - lp2);
-        out[i] = (lp - lp2) * (t * std::f32::consts::PI).sin().powf(1.5);
+        *o = (lp - lp2) * (t * std::f32::consts::PI).sin().powf(1.5);
     }
     normalize(&mut out, 0.4);
     out
@@ -326,11 +356,11 @@ fn fanfare() -> Vec<f32> {
 fn nope() -> Vec<f32> {
     let n = secs(0.22);
     let mut out = vec![0.0; n];
-    for i in 0..n {
+    for (i, o) in out.iter_mut().enumerate() {
         let t = i as f32 / SR as f32;
         let (f, t0) = if t < 0.09 { (240.0, 0.0) } else { (190.0, 0.09) };
         let tt = t - t0;
-        out[i] = (std::f32::consts::TAU * f * tt).sin() * (-tt * 30.0).exp() * (tt / 0.003).min(1.0);
+        *o = (std::f32::consts::TAU * f * tt).sin() * (-tt * 30.0).exp() * (tt / 0.003).min(1.0);
     }
     normalize(&mut out, 0.35);
     out
@@ -430,7 +460,16 @@ fn music() -> Vec<f32> {
     let tail = secs(6.0);
     let mut out = vec![0.0f32; n + tail];
     // Pad chords, 16 s each.
-    let chords: [[i32; 3]; 8] = [[0, 2, 4], [-2, 0, 3], [1, 3, 5], [-1, 2, 4], [0, 3, 5], [-2, 1, 3], [1, 2, 4], [-1, 0, 3]];
+    let chords: [[i32; 3]; 8] = [
+        [0, 2, 4],
+        [-2, 0, 3],
+        [1, 3, 5],
+        [-1, 2, 4],
+        [0, 3, 5],
+        [-2, 1, 3],
+        [1, 2, 4],
+        [-1, 0, 3],
+    ];
     let pad_base = 146.83; // D3
     for (ci, ch) in chords.iter().enumerate() {
         let start = secs(ci as f32 * 16.0);

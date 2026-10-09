@@ -6,9 +6,15 @@ book's category, series and volume slot, and file it. Lumens earned from filing
 buy abilities that make the work progressively smoother, up to paper-crane
 familiars that shelve on their own.
 
+Prebuilt Linux and Windows binaries are on the
+[releases page](https://github.com/computer-whisperer/hushfold/releases), or build it yourself:
+
 ```
 cargo run --release
 ```
+
+On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
+`alsa-lib` on Arch).
 
 ## Controls
 
@@ -22,10 +28,11 @@ cargo run --release
 | M | music on/off |
 | F3 | performance overlay |
 | F11 | fullscreen |
-| F12 | screenshot to `~/Pictures` |
+| F12 | screenshot to `~/Pictures` (`%USERPROFILE%\Pictures` on Windows) |
 | Esc | pause (progress is saved; autosave every 20 s) |
 
-Save file: `$XDG_DATA_HOME/hushfold/save.json` (delete it to start over).
+Save file: `$XDG_DATA_HOME/hushfold/save.json` on Linux, `%APPDATA%\hushfold\save.json`
+on Windows (delete it to start over).
 
 ## How filing works
 
@@ -73,3 +80,8 @@ Familiar Wings.
   `click`, `cycle n`, `faceheap`, `faceslot`, `facefam i`, `fill category fraction`,
   `unveil`, `grant lumens`, `buy <Upgrade>`, `menu on|off`, `intro on|off`,
   `stats on|off`, `shot name`, `print`, `quit`.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.

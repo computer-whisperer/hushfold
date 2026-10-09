@@ -2,6 +2,11 @@
 name = "hushfold"
 version = "0.1.0"
 edition = "2024"
+description = "A cozy first-person game about re-shelving a magical library"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/computer-whisperer/hushfold"
+readme = "README.md"
+publish = false
 
 [dependencies]
 wgpu = "29"
@@ -23,3 +28,7 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
