@@ -78,8 +78,8 @@ Familiar Wings.
 - All audio is synthesized at startup (`src/audio.rs`): book thunks, page
   rustles, pentatonic chimes, fire crackle and a generative music-box loop.
 - Loose books use semi-physics (`src/loose.rs`): ballistic flight with spin,
-  bounces off furniture, and a 4 cm heightfield that landing books settle onto,
-  sliding downhill while the support is steeper than they rest on.
+  bounces off furniture, and a 4 cm heightfield per floor that landing books
+  settle onto, sliding downhill while the support is steeper than they rest on.
 - The world is deterministic from a seed, so a save is ids, counters and the
   poses of books that have moved from where they started.
 

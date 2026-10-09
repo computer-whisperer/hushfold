@@ -3,15 +3,101 @@
 use rand::prelude::*;
 use std::collections::HashSet;
 
+/// One category: where its books are shelved, and the colours and words its series
+/// are made from.
 pub struct Category {
-    pub name: &'static str,
+    pub name: String,
+    pub dept: usize,
     /// Hue in degrees.
     pub hue: f32,
     pub hue_spread: f32,
     pub sat: (f32, f32),
     pub val: (f32, f32),
-    pub topics: &'static [&'static str],
-    pub things: &'static [&'static str],
+    pub topics: Vec<String>,
+    pub things: Vec<String>,
+    /// Spine pattern shared by every series in the category (the Great Library's
+    /// categories are told apart by spine within a department's colour family);
+    /// `None` picks one per series.
+    pub pattern: Option<u32>,
+}
+
+pub struct Department {
+    pub name: String,
+    pub categories: std::ops::Range<usize>,
+}
+
+/// Departments and their categories, read from a table (`catalog/*.txt`).
+pub struct Catalogue {
+    pub categories: Vec<Category>,
+    pub departments: Vec<Department>,
+}
+
+impl Catalogue {
+    pub fn hall() -> Self {
+        Self::parse(include_str!("catalog/hall.txt"))
+    }
+
+    /// Lines: `dept <name> [| colours]`, `cat <name> [| colours]`, `topics a; b; …`,
+    /// `things a; b; …`, `spines by category`; `#` starts a comment. Colours are
+    /// `<hue> <hue spread> | <sat lo> <sat hi> | <val lo> <val hi>`; a category
+    /// without them takes its department's.
+    fn parse(text: &str) -> Self {
+        type Colours = (f32, f32, (f32, f32), (f32, f32));
+        let colours = |fields: &[&str]| -> Option<Colours> {
+            let nums = |s: &str| -> Vec<f32> { s.split_whitespace().map(|x| x.parse().expect("number")).collect() };
+            let [h, s, v] = fields else { return None };
+            let (h, s, v) = (nums(h), nums(s), nums(v));
+            Some((h[0], h[1], (s[0], s[1]), (v[0], v[1])))
+        };
+        let mut cat = Catalogue {
+            categories: Vec::new(),
+            departments: Vec::new(),
+        };
+        let mut dept_colours: Option<Colours> = None;
+        let mut by_category = false;
+        let words = |rest: &str| rest.split(';').map(|w| w.trim().to_string()).collect::<Vec<_>>();
+        for line in text.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (key, rest) = line.split_once(' ').unwrap_or((line, ""));
+            let fields: Vec<&str> = rest.split('|').map(str::trim).collect();
+            match key {
+                "spines" => by_category = rest == "by category",
+                "dept" => {
+                    dept_colours = colours(&fields[1..]);
+                    let at = cat.categories.len();
+                    cat.departments.push(Department {
+                        name: fields[0].to_string(),
+                        categories: at..at,
+                    });
+                }
+                "cat" => {
+                    let d = cat.departments.len() - 1;
+                    let (hue, hue_spread, sat, val) = colours(&fields[1..])
+                        .or(dept_colours)
+                        .unwrap_or_else(|| panic!("no colours for {}", fields[0]));
+                    let index = cat.departments[d].categories.len() as u32;
+                    cat.categories.push(Category {
+                        name: fields[0].to_string(),
+                        dept: d,
+                        hue,
+                        hue_spread,
+                        sat,
+                        val,
+                        topics: Vec::new(),
+                        things: Vec::new(),
+                        pattern: by_category.then_some(index % 8),
+                    });
+                    cat.departments[d].categories.end += 1;
+                }
+                "topics" => cat.categories.last_mut().expect("topics before cat").topics = words(rest),
+                "things" => cat.categories.last_mut().expect("things before cat").things = words(rest),
+                _ => panic!("catalogue: unknown line {line:?}"),
+            }
+        }
+        cat
+    }
 }
 
 pub struct Series {
@@ -124,470 +210,6 @@ const ADJ: &[&str] = &[
     "Nocturnal",
 ];
 
-pub static CATEGORIES: &[Category] = &[
-    // ---- West wing ----
-    Category {
-        name: "Astronomy",
-        hue: 225.0,
-        hue_spread: 18.0,
-        sat: (0.45, 0.8),
-        val: (0.2, 0.5),
-        topics: &[
-            "Comets",
-            "the Night Sky",
-            "Wandering Stars",
-            "Eclipses",
-            "the Seventh Moon",
-            "Nebulae",
-            "Starlight",
-            "Orbits",
-            "the Zodiac",
-            "Meteors",
-        ],
-        things: &[
-            "Orrery",
-            "Star Chart",
-            "Telescope",
-            "Lodestar",
-            "Firmament",
-            "Constellation",
-            "Aurora",
-            "Equinox",
-        ],
-    },
-    Category {
-        name: "Alchemy",
-        hue: 12.0,
-        hue_spread: 16.0,
-        sat: (0.55, 0.85),
-        val: (0.3, 0.6),
-        topics: &[
-            "Salts",
-            "Quicksilver",
-            "Transmutation",
-            "the Red Tincture",
-            "Distillation",
-            "Calcination",
-            "Sulphur",
-            "the Athanor",
-            "Elixirs",
-            "Vitriol",
-        ],
-        things: &[
-            "Crucible",
-            "Alembic",
-            "Retort",
-            "Philosopher's Egg",
-            "Cinnabar",
-            "Aqua Regia",
-            "Ouroboros",
-            "Furnace",
-        ],
-    },
-    Category {
-        name: "Botany",
-        hue: 115.0,
-        hue_spread: 25.0,
-        sat: (0.35, 0.7),
-        val: (0.22, 0.5),
-        topics: &[
-            "Mosses",
-            "Night-blooming Flowers",
-            "Ferns",
-            "Mandrakes",
-            "Hedgerows",
-            "Seeds",
-            "Fungi",
-            "Orchards",
-            "Bark",
-            "Vines",
-        ],
-        things: &[
-            "Herbarium",
-            "Greenhouse",
-            "Thornwood",
-            "Mandrake",
-            "Lichen",
-            "Rootcellar",
-            "Willow",
-            "Seedvault",
-        ],
-    },
-    Category {
-        name: "Bestiary",
-        hue: 175.0,
-        hue_spread: 15.0,
-        sat: (0.4, 0.7),
-        val: (0.22, 0.48),
-        topics: &[
-            "Griffins",
-            "River Serpents",
-            "Moths",
-            "Owls",
-            "Small Dragons",
-            "Hedge Wyrms",
-            "Basilisks",
-            "Kelpies",
-            "Familiars",
-            "Salamanders",
-        ],
-        things: &[
-            "Wyvern",
-            "Hippogriff",
-            "Cockatrice",
-            "Selkie",
-            "Manticore",
-            "Barghest",
-            "Phoenix",
-            "Leviathan",
-        ],
-    },
-    Category {
-        name: "Cartography",
-        hue: 40.0,
-        hue_spread: 10.0,
-        sat: (0.45, 0.75),
-        val: (0.4, 0.7),
-        topics: &[
-            "Coastlines",
-            "the Northern Marches",
-            "Lost Roads",
-            "Islands",
-            "Mountain Passes",
-            "Underground Rivers",
-            "the Borderlands",
-            "Trade Winds",
-            "Harbours",
-            "Deserts",
-        ],
-        things: &[
-            "Atlas",
-            "Compass Rose",
-            "Sea Chart",
-            "Gazetteer",
-            "Waymark",
-            "Meridian",
-            "Portolan",
-            "Itinerary",
-        ],
-    },
-    Category {
-        name: "History",
-        hue: 25.0,
-        hue_spread: 10.0,
-        sat: (0.3, 0.55),
-        val: (0.15, 0.35),
-        topics: &[
-            "the Old Kingdoms",
-            "the Glass War",
-            "Fallen Houses",
-            "the Long Winter",
-            "Guilds",
-            "Coronations",
-            "Sieges",
-            "the Salt Empire",
-            "Treaties",
-            "Pilgrims",
-        ],
-        things: &[
-            "Chronicle",
-            "Dynasty",
-            "Regency",
-            "Crown",
-            "Citadel",
-            "Rebellion",
-            "Archive",
-            "Heirloom",
-        ],
-    },
-    Category {
-        name: "Poetry",
-        hue: 285.0,
-        hue_spread: 20.0,
-        sat: (0.3, 0.6),
-        val: (0.3, 0.6),
-        topics: &[
-            "Small Hours",
-            "Rain",
-            "Lanterns",
-            "the Sea",
-            "Absent Friends",
-            "Snowfall",
-            "Candle Smoke",
-            "Gardens",
-            "Bells",
-            "Thresholds",
-        ],
-        things: &[
-            "Sonnets",
-            "Ballads",
-            "Elegies",
-            "Odes",
-            "Nocturnes",
-            "Villanelles",
-            "Hymns",
-            "Lullabies",
-        ],
-    },
-    Category {
-        name: "Arcana",
-        hue: 320.0,
-        hue_spread: 15.0,
-        sat: (0.5, 0.85),
-        val: (0.18, 0.42),
-        topics: &[
-            "Wards",
-            "Sigils",
-            "Binding",
-            "Glamours",
-            "Counterspells",
-            "Circles",
-            "Illusions",
-            "Summoning",
-            "Runes",
-            "Enchantment",
-        ],
-        things: &[
-            "Grimoire",
-            "Pentacle",
-            "Cantrip",
-            "Hex",
-            "Talisman",
-            "Incantation",
-            "Spellbook",
-            "Athame",
-        ],
-    },
-    // ---- East wing ----
-    Category {
-        name: "Mathematics",
-        hue: 205.0,
-        hue_spread: 8.0,
-        sat: (0.1, 0.3),
-        val: (0.35, 0.65),
-        topics: &[
-            "Prime Numbers",
-            "Curves",
-            "Infinite Series",
-            "Knots",
-            "Tilings",
-            "Proportion",
-            "Spirals",
-            "Symmetry",
-            "Polyhedra",
-            "Lattices",
-        ],
-        things: &[
-            "Abacus",
-            "Theorem",
-            "Conjecture",
-            "Geometry",
-            "Calculus",
-            "Algebra",
-            "Axiom",
-            "Quadrature",
-        ],
-    },
-    Category {
-        name: "Music",
-        hue: 350.0,
-        hue_spread: 12.0,
-        sat: (0.5, 0.8),
-        val: (0.25, 0.5),
-        topics: &[
-            "Harmony",
-            "the Lute",
-            "Bellringing",
-            "Counterpoint",
-            "Lullabies",
-            "Wind Instruments",
-            "Cadence",
-            "Choirs",
-            "Drums",
-            "Tuning",
-        ],
-        things: &[
-            "Fugue", "Canticle", "Sonata", "Madrigal", "Overture", "Rondo", "Carillon", "Requiem",
-        ],
-    },
-    Category {
-        name: "Divination",
-        hue: 265.0,
-        hue_spread: 15.0,
-        sat: (0.4, 0.75),
-        val: (0.2, 0.45),
-        topics: &[
-            "Tea Leaves",
-            "Dreams",
-            "Mirrors",
-            "Omens",
-            "Cards",
-            "Flight of Birds",
-            "Bones",
-            "Candle Flames",
-            "Tides",
-            "Smoke",
-        ],
-        things: &[
-            "Oracle",
-            "Augury",
-            "Scrying Glass",
-            "Tarot",
-            "Horoscope",
-            "Portent",
-            "Pendulum",
-            "Crystal",
-        ],
-    },
-    Category {
-        name: "Mythology",
-        hue: 50.0,
-        hue_spread: 12.0,
-        sat: (0.6, 0.9),
-        val: (0.35, 0.6),
-        topics: &[
-            "Tricksters",
-            "Sky Gods",
-            "the Underworld",
-            "Heroes",
-            "Giants",
-            "Sea Kings",
-            "Fae Courts",
-            "the First Fire",
-            "Floods",
-            "Twins",
-        ],
-        things: &[
-            "Saga",
-            "Epic",
-            "Legend",
-            "Eddas",
-            "Pantheon",
-            "Odyssey",
-            "Fable",
-            "Myth-cycle",
-        ],
-    },
-    Category {
-        name: "Linguistics",
-        hue: 150.0,
-        hue_spread: 12.0,
-        sat: (0.25, 0.5),
-        val: (0.3, 0.55),
-        topics: &[
-            "Dead Tongues",
-            "Ciphers",
-            "Dialects",
-            "Etymology",
-            "Scripts",
-            "Silent Letters",
-            "Riddles",
-            "Phonetics",
-            "Translation",
-            "Glyphs",
-        ],
-        things: &[
-            "Rosetta",
-            "Glossary",
-            "Thesaurus",
-            "Phrasebook",
-            "Concordance",
-            "Palimpsest",
-            "Alphabet",
-            "Cipher-wheel",
-        ],
-    },
-    Category {
-        name: "Clockwork",
-        hue: 30.0,
-        hue_spread: 8.0,
-        sat: (0.6, 0.9),
-        val: (0.45, 0.7),
-        topics: &[
-            "Escapements",
-            "Springs",
-            "Automata",
-            "Gears",
-            "Pendulums",
-            "Orreries",
-            "Music Boxes",
-            "Locks",
-            "Balance Wheels",
-            "Cogs",
-        ],
-        things: &[
-            "Mechanism",
-            "Automaton",
-            "Chronometer",
-            "Gearwork",
-            "Ratchet",
-            "Mainspring",
-            "Tourbillon",
-            "Engine",
-        ],
-    },
-    Category {
-        name: "Tempestry",
-        hue: 195.0,
-        hue_spread: 15.0,
-        sat: (0.4, 0.7),
-        val: (0.3, 0.55),
-        topics: &[
-            "Fog",
-            "Thunder",
-            "Gentle Rain",
-            "Hail",
-            "Monsoons",
-            "Weathervanes",
-            "Clouds",
-            "Frost",
-            "Rainbows",
-            "Gales",
-        ],
-        things: &[
-            "Barometer",
-            "Stormglass",
-            "Windrose",
-            "Squall",
-            "Cloudbank",
-            "Thunderhead",
-            "Drizzle",
-            "Zephyr",
-        ],
-    },
-    Category {
-        name: "Hearthcraft",
-        hue: 70.0,
-        hue_spread: 15.0,
-        sat: (0.35, 0.6),
-        val: (0.3, 0.55),
-        topics: &[
-            "Bread",
-            "Preserves",
-            "Teas",
-            "Soups",
-            "Candles",
-            "Honey",
-            "Cheeses",
-            "Pies",
-            "Spices",
-            "Feast Days",
-        ],
-        things: &[
-            "Larder",
-            "Cookbook",
-            "Kettle",
-            "Pantry",
-            "Hearth",
-            "Stillroom",
-            "Bakehouse",
-            "Cauldron",
-        ],
-    },
-];
-
-pub const WEST_CATEGORIES: usize = 8;
-
 fn hsv(h: f32, s: f32, v: f32) -> [f32; 3] {
     let h = h.rem_euclid(360.0) / 60.0;
     let c = v * s;
@@ -606,8 +228,7 @@ fn hsv(h: f32, s: f32, v: f32) -> [f32; 3] {
     [lin(r), lin(g), lin(b)]
 }
 
-pub fn category_color(c: usize) -> [f32; 3] {
-    let cat = &CATEGORIES[c];
+pub fn category_color(cat: &Category) -> [f32; 3] {
     hsv(cat.hue, 0.75, 0.85)
 }
 
@@ -622,8 +243,8 @@ fn sort_key(title: &str) -> String {
 }
 
 fn make_title(rng: &mut StdRng, cat: &Category) -> String {
-    let topic = *cat.topics.choose(rng).unwrap();
-    let thing = *cat.things.choose(rng).unwrap();
+    let topic = cat.topics.choose(rng).unwrap();
+    let thing = cat.things.choose(rng).unwrap();
     let adj = *ADJ.choose(rng).unwrap();
     let person = *PEOPLE.choose(rng).unwrap();
     let form = *FORMS.choose(rng).unwrap();
@@ -650,11 +271,11 @@ fn make_title(rng: &mut StdRng, cat: &Category) -> String {
 /// Generate series for a category until their total width reaches `target_width`.
 pub fn generate_series(
     rng: &mut StdRng,
+    cat: &Category,
     category: usize,
     target_width: f32,
     titles: &mut HashSet<String>,
 ) -> Vec<Series> {
-    let cat = &CATEGORIES[category];
     let mut out = Vec::new();
     let mut width = 0.0;
     let mut attempts = 0;
@@ -688,7 +309,7 @@ pub fn generate_series(
             title,
             volumes,
             color,
-            pattern: rng.gen_range(0..8),
+            pattern: cat.pattern.unwrap_or_else(|| rng.gen_range(0..8)),
             trim: rng.gen_range(0..4),
             height,
             depth,

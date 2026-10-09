@@ -73,7 +73,6 @@ pub struct Globals {
     pub fog: [f32; 4],
     pub ambient_top: [f32; 4],
     pub ambient_bottom: [f32; 4],
-    pub misc: [f32; 4],
     pub lights: [GpuLight; MAX_LIGHTS],
 }
 

@@ -1,8 +1,8 @@
 //! egui HUD: crosshair, armful, active-book card, world labels, toasts, Grimoire.
 
-use crate::catalog::{self, CATEGORIES};
+use crate::catalog;
 use crate::game::{Aim, Game, UPGRADES, Upg, upg_def};
-use crate::library::{ROWS, wing_of_category};
+use crate::library::ROWS;
 use crate::settings::Settings;
 use egui::{Align2, Color32, FontFamily, FontId, Pos2, Rect, RichText, Stroke, Vec2};
 use glam::{Mat4, Vec3, Vec4};
@@ -103,9 +103,9 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
     let eye = g.player.eye();
 
     // ---- World labels.
-    let mut carrying = [false; CATEGORIES.len()];
+    let mut carrying = vec![false; g.lib.catalog.categories.len()];
     for &b in &g.held {
-        carrying[g.lib.series[g.lib.books[b as usize].series as usize].category] = true;
+        carrying[g.lib.category_of_book(b)] = true;
     }
     // Gather first so guide signs can be drawn last and clear the space under them.
     let mut plain: Vec<(Pos2, &str, FontId, Color32, Align2)> = Vec::new();
@@ -276,7 +276,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             } else {
                 "click gather".to_string()
             };
-            tip = Some((format!("{} · {what}", CATEGORIES[cat].name), INK));
+            tip = Some((format!("{} · {what}", g.lib.catalog.categories[cat].name), INK));
         }
         Aim::Shelf { face, row, run, .. } => {
             let f = &g.lib.faces[face as usize];
@@ -303,7 +303,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                     tip = Some((
                         format!(
                             "{} · case {} · shelf {}",
-                            CATEGORIES[f.category].name,
+                            g.lib.catalog.categories[f.category].name,
                             f.case_idx + 1,
                             row as usize + 1
                         ),
@@ -337,9 +337,10 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                         .font(serif(14.0))
                         .color(INK),
                 );
-                for (w, name) in ["West Wing", "East Wing"].iter().enumerate() {
-                    let frac = g.wing_shelved[w] as f32 / g.wing_total[w].max(1) as f32;
-                    let label = if g.wing_unlocked(w) {
+                for (d, dept) in g.lib.catalog.departments.iter().enumerate() {
+                    let name = &dept.name;
+                    let frac = g.dept_shelved[d] as f32 / g.dept_total[d].max(1) as f32;
+                    let label = if g.dept_open(d) {
                         format!("{name}  {:.0}%", frac * 100.0)
                     } else {
                         format!("{name}  (veiled)")
@@ -358,10 +359,11 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                         INK,
                     );
                 }
-                if !g.east_unlocked {
-                    let left = g.veil_books_left();
+                if let Some(gate) = g.next_gate() {
+                    let left = g.gate_books_left(gate);
+                    let name = &g.lib.catalog.departments[g.lib.gates[gate].opens].name;
                     ui.label(
-                        RichText::new(format!("{left} more to lift the veil"))
+                        RichText::new(format!("{left} more to open the {name}"))
                             .font(serif(12.0))
                             .color(DIM),
                     );
@@ -392,28 +394,24 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                         "Single volume".into()
                     };
                     ui.label(RichText::new(vol).font(serif(14.0)).color(INK));
-                    let cat = &CATEGORIES[s.category];
-                    let wing = if wing_of_category(s.category) == 0 {
-                        "West"
-                    } else {
-                        "East"
-                    };
+                    let cat = &g.lib.catalog.categories[s.category];
+                    let dept = &g.lib.catalog.departments[cat.dept].name;
                     let place = if g.level(Upg::SortSense) > 0 {
                         format!(
-                            "{} · {} Wing · case {}, shelf {} of {}",
+                            "{} · {} · case {}, shelf {} of {}",
                             cat.name,
-                            wing,
+                            dept,
                             f.case_idx + 1,
                             info.row as usize + 1,
                             ROWS
                         )
                     } else {
-                        format!("{} · {} Wing · under {}", cat.name, wing, s.shelf_key())
+                        format!("{} · {} · under {}", cat.name, dept, s.shelf_key())
                     };
                     ui.label(
                         RichText::new(place)
                             .font(serif(14.0))
-                            .color(bright(catalog::category_color(s.category))),
+                            .color(bright(catalog::category_color(cat))),
                     );
                     // Strip of held spines.
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(360.0, 26.0), egui::Sense::hover());

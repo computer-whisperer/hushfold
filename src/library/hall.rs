@@ -1,184 +1,60 @@
-//! The library's layout: bookcase faces, slot assignment, where the loose books start,
-//! static geometry and lights.
+//! The Hall: one storey, two wings of freestanding bookcases either side of a reading
+//! room, the East Wing veiled until the West is mostly sorted. Its generation must
+//! not change (saves name books by index; see `hall_generates_as_before`).
 
-use crate::catalog::{self, CATEGORIES, Series, WEST_CATEGORIES};
-use crate::gfx::{Inst, kind};
-use glam::{Mat3, Quat, Vec2, Vec3};
-use rand::prelude::*;
-use std::collections::HashSet;
-use std::f32::consts::TAU;
+use super::*;
 
-pub const ROWS: usize = 6;
-pub const CASES_PER_CATEGORY: usize = 3;
-pub const UNIT_W: f32 = 2.6;
-pub const UNIT_PITCH: f32 = 2.7;
-pub const SIDE_T: f32 = 0.08;
-pub const USABLE_W: f32 = 2.36;
-pub const FACE_DEPTH: f32 = 0.43;
-pub const UNIT_DEPTH: f32 = 0.9;
-pub const UNIT_H: f32 = 3.1;
-pub const SHELF_BASE: f32 = 0.14;
-pub const SHELF_STEP: f32 = 0.48;
-pub const BOARD_T: f32 = 0.03;
 pub const HALL_X: f32 = 24.0;
 pub const HALL_Z: f32 = 18.0;
 pub const HALL_H: f32 = 8.0;
 pub const VEIL_X: f32 = 11.6;
-pub const TABLE_H: f32 = 0.78;
+const CASES_PER_CATEGORY: usize = 3;
+const WINDOWS_X: [f32; 8] = [-20.0, -15.5, -7.0, -2.3, 2.3, 7.0, 15.5, 20.0];
 
-const WALNUT: [f32; 3] = [0.16, 0.08, 0.035];
-const DARK_WOOD: [f32; 3] = [0.07, 0.035, 0.018];
-const STONE: [f32; 3] = [0.36, 0.33, 0.29];
-const BRASS: [f32; 3] = [0.55, 0.36, 0.12];
-
-/// Height of the shelf surface for reading-order row (0 = top).
-pub fn row_floor_y(row: usize) -> f32 {
-    SHELF_BASE + (ROWS - 1 - row) as f32 * SHELF_STEP
-}
-
-pub struct Face {
-    /// Centre of the front plane, at floor level.
-    pub center: Vec3,
-    pub normal: Vec3,
-    pub right: Vec3,
-    pub category: usize,
-    pub case_idx: usize,
-}
-
-impl Face {
-    pub fn rot(&self) -> Quat {
-        Quat::from_mat3(&Mat3::from_cols(self.right, Vec3::Y, self.normal))
+pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
+    lib.levels.push(Level {
+        y: 0.0,
+        roof: HALL_H,
+        min: Vec2::new(-HALL_X, -HALL_Z),
+        max: Vec2::new(HALL_X, HALL_Z),
+    });
+    lib.slabs.push(Slab {
+        level: 0,
+        min: Vec2::new(-HALL_X, -HALL_Z),
+        max: Vec2::new(HALL_X, HALL_Z),
+    });
+    lib.spawn = (Vec3::new(0.0, 0.0, 6.5), 0.0);
+    lib.build_hall();
+    lib.build_stacks(rng);
+    lib.build_center();
+    lib.build_piles(rng);
+    // The veil hangs between the east columns until 60% of the West Wing is home.
+    lib.gates.push(Gate {
+        level: 0,
+        min: Vec3::new(VEIL_X - 0.05, 0.0, -HALL_Z),
+        max: Vec3::new(VEIL_X + 0.05, HALL_H, HALL_Z),
+        opens: 1,
+        counts: vec![0],
+        need: 0.6,
+    });
+    // Moonbeams through the north windows.
+    let beam_dir = Vec3::new(0.0, -0.62, 1.0).normalize();
+    for x in WINDOWS_X {
+        let start = Vec3::new(x, 4.4, -HALL_Z + 0.1);
+        let len = 9.0;
+        let rot = Quat::from_rotation_arc(Vec3::Y, beam_dir);
+        lib.static_trans.push(Inst::new(
+            start + beam_dir * len * 0.5,
+            rot,
+            Vec3::new(1.6, len, 3.4),
+            kind::SHAFT,
+            [0.35, 0.45, 0.9, 0.05],
+            0,
+        ));
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct Run {
-    pub series: u32,
-    pub x0: f32,
-    pub x1: f32,
-}
-
-pub struct BookInfo {
-    pub series: u32,
-    pub volume: u32,
-    /// (thickness, height, depth)
-    pub size: Vec3,
-    pub face: u32,
-    pub row: u8,
-    pub slot_pos: Vec3,
-    pub slot_rot: Quat,
-}
-
-/// A solid piece of furniture, a column from the floor to `max.y`.
-#[derive(Clone, Copy)]
-pub struct Obstacle {
-    pub min: Vec3,
-    pub max: Vec3,
-    pub blocks_ray: bool,
-    /// How high it blocks sight lines (bookcases block aiming over their tops too).
-    pub sight_top: f32,
-}
-
-impl Obstacle {
-    /// The far corner of the box that blocks sight.
-    pub fn sight_max(&self) -> Vec3 {
-        Vec3::new(self.max.x, self.sight_top, self.max.z)
-    }
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum LightKind {
-    Static,
-    Flicker,
-    Lantern(usize),
-}
-
-pub struct LightDef {
-    pub pos: Vec3,
-    pub radius: f32,
-    pub color: [f32; 3],
-    pub intensity: f32,
-    pub kind: LightKind,
-}
-
-pub struct Label {
-    pub pos: Vec3,
-    pub normal: Vec3,
-    pub text: String,
-    pub category: usize,
-    pub is_sign: bool,
-}
-
-pub struct Library {
-    pub series: Vec<Series>,
-    pub series_books: Vec<Vec<u32>>,
-    pub books: Vec<BookInfo>,
-    pub faces: Vec<Face>,
-    pub runs: Vec<[Vec<Run>; ROWS]>,
-    /// Where each book is first dropped, in order: (book, point, direction of its length).
-    pub drops: Vec<(u32, Vec2, Vec2)>,
-    pub obstacles: Vec<Obstacle>,
-    pub static_insts: Vec<Inst>,
-    pub lights: Vec<LightDef>,
-    pub labels: Vec<Label>,
-    pub category_books: Vec<u32>,
-    pub category_center: Vec<Vec3>,
-    /// (category, position) of each category lantern; drawn per frame since they change.
-    pub lanterns: Vec<(usize, Vec3)>,
-}
-
-pub fn wing_of_category(c: usize) -> usize {
-    c / WEST_CATEGORIES
 }
 
 impl Library {
-    pub fn generate(seed: u64) -> Self {
-        let mut rng = StdRng::seed_from_u64(seed);
-        let mut lib = Library {
-            series: Vec::new(),
-            series_books: Vec::new(),
-            books: Vec::new(),
-            faces: Vec::new(),
-            runs: Vec::new(),
-            drops: Vec::new(),
-            obstacles: Vec::new(),
-            static_insts: Vec::new(),
-            lights: Vec::new(),
-            labels: Vec::new(),
-            category_books: vec![0; CATEGORIES.len()],
-            category_center: vec![Vec3::ZERO; CATEGORIES.len()],
-            lanterns: Vec::new(),
-        };
-        lib.build_hall();
-        lib.build_stacks(&mut rng);
-        lib.build_center();
-        lib.build_piles(&mut rng);
-        lib
-    }
-
-    fn push(&mut self, i: Inst) {
-        self.static_insts.push(i);
-    }
-
-    fn obstacle(&mut self, min: Vec3, max: Vec3, blocks_ray: bool) {
-        self.obstacles.push(Obstacle {
-            min,
-            max,
-            blocks_ray,
-            sight_top: max.y,
-        });
-    }
-
-    fn light(&mut self, pos: Vec3, radius: f32, color: [f32; 3], intensity: f32, kind: LightKind) {
-        self.lights.push(LightDef {
-            pos,
-            radius,
-            color,
-            intensity,
-            kind,
-        });
-    }
-
     fn build_hall(&mut self) {
         let (hx, hz, hh) = (HALL_X, HALL_Z, HALL_H);
         let floor_col = [0.30, 0.16, 0.075];
@@ -294,7 +170,7 @@ impl Library {
         }
 
         // Moonlit windows on the north wall.
-        for x in [-20.0, -15.5, -7.0, -2.3, 2.3, 7.0, 15.5, 20.0] {
+        for x in WINDOWS_X {
             let c = Vec3::new(x, 4.4, -hz + 0.02);
             let glass = Inst::new(
                 c,
@@ -336,37 +212,12 @@ impl Library {
         }
 
         // Sconces.
-        let sconce = |lib: &mut Self, p: Vec3, n: Vec3| {
-            lib.push(Inst::aabox(p - n * 0.08, Vec3::new(0.12, 0.3, 0.12), kind::WOOD, BRASS));
-            lib.push(Inst::aabox(
-                p + Vec3::Y * 0.12,
-                Vec3::new(0.06, 0.12, 0.06),
-                kind::EMISSIVE,
-                [0.9, 0.85, 0.7],
-            ));
-            let mut flame = Inst::aabox(
-                p + Vec3::Y * 0.24,
-                Vec3::new(0.05, 0.1, 0.05),
-                kind::EMISSIVE,
-                [1.0, 0.55, 0.18],
-            );
-            flame.color[3] = 12.0;
-            flame.param = 1;
-            lib.push(flame);
-            lib.light(
-                p + n * 0.4 + Vec3::Y * 0.3,
-                8.0,
-                [1.0, 0.62, 0.3],
-                1.3,
-                LightKind::Flicker,
-            );
-        };
         for z in [-14.0, -6.0, 6.0, 14.0] {
-            sconce(self, Vec3::new(-hx + 0.15, 2.6, z), Vec3::X);
-            sconce(self, Vec3::new(hx - 0.15, 2.6, z), -Vec3::X);
+            self.sconce(Vec3::new(-hx + 0.15, 2.6, z), Vec3::X);
+            self.sconce(Vec3::new(hx - 0.15, 2.6, z), -Vec3::X);
         }
         for x in [-17.0, 17.0] {
-            sconce(self, Vec3::new(x, 2.6, hz - 0.15), -Vec3::Z);
+            self.sconce(Vec3::new(x, 2.6, hz - 0.15), -Vec3::Z);
         }
     }
 
@@ -385,242 +236,21 @@ impl Library {
                     self.build_unit(Vec3::new(cx, 0.0, rz));
                 }
             }
-            let mut cat = wing * WEST_CATEGORIES;
+            let mut cat = self.catalog.departments[wing].categories.start;
             for &rz in &rows_z {
                 for nz in [-1.0f32, 1.0] {
                     let normal = Vec3::new(0.0, 0.0, nz);
                     let right = Vec3::Y.cross(normal);
                     let mut order: Vec<f32> = xs.to_vec();
                     order.sort_by(|a, b| (a * right.x).partial_cmp(&(b * right.x)).unwrap());
-                    let first_face = self.faces.len();
-                    for (ci, &cx) in order.iter().enumerate() {
-                        self.faces.push(Face {
-                            center: Vec3::new(cx, 0.0, rz + nz * UNIT_DEPTH * 0.5),
-                            normal,
-                            right,
-                            category: cat,
-                            case_idx: ci,
-                        });
-                        self.runs.push(Default::default());
-                    }
-                    self.fill_category(rng, cat, first_face, &mut titles);
-                    // Sign + lantern above the middle case.
-                    let (mid_center, mid_rot) = (self.faces[first_face + 1].center, self.faces[first_face + 1].rot());
-                    let sign_pos = mid_center + Vec3::Y * (UNIT_H + 0.38) + normal * 0.02;
-                    let ccol = catalog::category_color(cat);
-                    let plaque = Inst::new(
-                        sign_pos,
-                        mid_rot,
-                        Vec3::new(1.5, 0.34, 0.05),
-                        kind::PLAQUE,
-                        [ccol[0], ccol[1], ccol[2], 0.08],
-                        0,
-                    );
-                    self.push(plaque);
-                    self.push(Inst::aabox(
-                        sign_pos - Vec3::Y * 0.21 - normal * 0.02,
-                        Vec3::new(0.06, 0.12, 0.06),
-                        kind::WOOD,
-                        BRASS,
-                    ));
-                    self.labels.push(Label {
-                        pos: sign_pos + normal * 0.04,
-                        normal,
-                        text: CATEGORIES[cat].name.to_string(),
-                        category: cat,
-                        is_sign: true,
-                    });
-                    let lantern = mid_center + Vec3::Y * (UNIT_H + 0.95) + normal * 0.05;
-                    self.push(Inst::aabox(
-                        lantern + Vec3::Y * 0.16,
-                        Vec3::new(0.22, 0.04, 0.22),
-                        kind::WOOD,
-                        BRASS,
-                    ));
-                    self.push(Inst::aabox(
-                        lantern - Vec3::Y * 0.16,
-                        Vec3::new(0.2, 0.04, 0.2),
-                        kind::WOOD,
-                        BRASS,
-                    ));
-                    self.push(Inst::aabox(
-                        lantern + Vec3::Y * 0.5,
-                        Vec3::new(0.02, 0.6, 0.02),
-                        kind::WOOD,
-                        BRASS,
-                    ));
-                    self.lanterns.push((cat, lantern));
-                    self.light(
-                        lantern + normal * 0.5,
-                        7.5,
-                        [1.0, 0.7, 0.4],
-                        0.35,
-                        LightKind::Lantern(cat),
-                    );
-                    self.category_center[cat] = mid_center + normal * 1.5 + Vec3::Y * 1.0;
+                    let cases: Vec<Vec3> = order
+                        .iter()
+                        .map(|&cx| Vec3::new(cx, 0.0, rz + nz * UNIT_DEPTH * 0.5))
+                        .collect();
+                    debug_assert_eq!(cases.len(), CASES_PER_CATEGORY);
+                    self.add_category(rng, cat, &cases, normal, &mut titles);
                     cat += 1;
                 }
-            }
-        }
-    }
-
-    fn build_unit(&mut self, c: Vec3) {
-        let hw = UNIT_W * 0.5;
-        let hd = UNIT_DEPTH * 0.5;
-        for s in [-1.0, 1.0] {
-            self.push(Inst::aabox(
-                c + Vec3::new(s * (hw - SIDE_T * 0.5), UNIT_H * 0.5, 0.0),
-                Vec3::new(SIDE_T, UNIT_H, UNIT_DEPTH),
-                kind::WOOD,
-                WALNUT,
-            ));
-        }
-        self.push(Inst::aabox(
-            c + Vec3::Y * (UNIT_H + 0.04),
-            Vec3::new(UNIT_W + 0.08, 0.08, UNIT_DEPTH + 0.08),
-            kind::WOOD,
-            WALNUT,
-        ));
-        self.push(Inst::aabox(
-            c + Vec3::Y * (UNIT_H + 0.105),
-            Vec3::new(UNIT_W + 0.16, 0.05, UNIT_DEPTH + 0.16),
-            kind::WOOD,
-            [0.12, 0.06, 0.028],
-        ));
-        self.push(Inst::aabox(
-            c + Vec3::Y * (SHELF_BASE * 0.5),
-            Vec3::new(UNIT_W - 0.02, SHELF_BASE, UNIT_DEPTH - 0.04),
-            kind::WOOD,
-            [0.1, 0.05, 0.022],
-        ));
-        self.push(Inst::aabox(
-            c + Vec3::Y * (UNIT_H * 0.5),
-            Vec3::new(UNIT_W - 2.0 * SIDE_T, UNIT_H, 0.04),
-            kind::WOOD,
-            DARK_WOOD,
-        ));
-        for nz in [-1.0f32, 1.0] {
-            for i in 1..ROWS {
-                let y = SHELF_BASE + i as f32 * SHELF_STEP;
-                self.push(Inst::aabox(
-                    c + Vec3::new(0.0, y - BOARD_T * 0.5, nz * (0.02 + FACE_DEPTH * 0.5)),
-                    Vec3::new(UNIT_W - 2.0 * SIDE_T, BOARD_T, FACE_DEPTH),
-                    kind::WOOD,
-                    WALNUT,
-                ));
-            }
-        }
-        // Solid to the cornice; blocks sight a good way above it.
-        self.obstacle(
-            c - Vec3::new(hw + 0.04, 0.0, hd + 0.04),
-            c + Vec3::new(hw + 0.04, UNIT_H + 0.13, hd + 0.04),
-            true,
-        );
-        self.obstacles.last_mut().unwrap().sight_top = UNIT_H + 1.2;
-    }
-
-    /// Generate this category's series and lay them out across its three faces.
-    fn fill_category(&mut self, rng: &mut StdRng, cat: usize, first_face: usize, titles: &mut HashSet<String>) {
-        let shelves = CASES_PER_CATEGORY * ROWS;
-        let capacity = shelves as f32 * USABLE_W;
-        let fill = rng.gen_range(0.74..0.84);
-        let series = catalog::generate_series(rng, cat, capacity * fill, titles);
-        let gap_min = 0.015;
-        let total: f32 = series.iter().map(|s| s.width() + gap_min).sum();
-        let per_shelf = total / shelves as f32;
-
-        // Assign each series to the shelf containing its midpoint, then repair overflow.
-        let mut assign: Vec<Vec<usize>> = vec![Vec::new(); shelves];
-        let mut cum = 0.0;
-        for (i, s) in series.iter().enumerate() {
-            let w = s.width() + gap_min;
-            let shelf = (((cum + w * 0.5) / per_shelf) as usize).min(shelves - 1);
-            assign[shelf].push(i);
-            cum += w;
-        }
-        for k in 0..shelves {
-            loop {
-                let used: f32 = assign[k].iter().map(|&i| series[i].width() + gap_min).sum();
-                if used <= USABLE_W || assign[k].len() <= 1 {
-                    break;
-                }
-                let last = assign[k].pop().unwrap();
-                if k + 1 < shelves {
-                    assign[k + 1].insert(0, last);
-                }
-            }
-        }
-        let mut keep = vec![false; series.len()];
-        for &i in assign.iter().flatten() {
-            keep[i] = true;
-        }
-
-        let mut remap = vec![u32::MAX; series.len()];
-        for (i, s) in series.into_iter().enumerate() {
-            if keep[i] {
-                remap[i] = self.series.len() as u32;
-                self.series.push(s);
-                self.series_books.push(Vec::new());
-            }
-        }
-
-        for (k, shelf) in assign.iter().enumerate() {
-            let face_i = first_face + k / ROWS;
-            let row = k % ROWS;
-            let ids: Vec<u32> = shelf.iter().map(|&i| remap[i]).collect();
-            if ids.is_empty() {
-                continue;
-            }
-            let used: f32 = ids.iter().map(|&s| self.series[s as usize].width()).sum();
-            let gap = ((USABLE_W - used) / ids.len() as f32).min(0.35);
-            let span = used + gap * ids.len() as f32;
-            let mut x = -span * 0.5 + gap * 0.5;
-            let (fc, fr) = (self.faces[face_i].center, self.faces[face_i].rot());
-            let (fright, fnormal) = (self.faces[face_i].right, self.faces[face_i].normal);
-            for sid in ids {
-                let x0 = x;
-                let s = &self.series[sid as usize];
-                let (h, d) = (s.height, s.depth);
-                let thick = s.thickness.clone();
-                for (v, &t) in thick.iter().enumerate() {
-                    let cx = x + t * 0.5;
-                    let pos = fc + fright * cx + Vec3::Y * (row_floor_y(row) + h * 0.5) - fnormal * (d * 0.5 + 0.015);
-                    let id = self.books.len() as u32;
-                    self.books.push(BookInfo {
-                        series: sid,
-                        volume: v as u32 + 1,
-                        size: Vec3::new(t * 0.985, h, d),
-                        face: face_i as u32,
-                        row: row as u8,
-                        slot_pos: pos,
-                        slot_rot: fr,
-                    });
-                    self.series_books[sid as usize].push(id);
-                    self.category_books[cat] += 1;
-                    x += t;
-                }
-                self.runs[face_i][row].push(Run { series: sid, x0, x1: x });
-                x += gap;
-            }
-        }
-        // Shelf range labels.
-        for f in first_face..first_face + CASES_PER_CATEGORY {
-            for row in 0..ROWS {
-                let runs = &self.runs[f][row];
-                if runs.is_empty() {
-                    continue;
-                }
-                let key = |s: u32| self.series[s as usize].shelf_key();
-                let text = format!("{} – {}", key(runs[0].series), key(runs[runs.len() - 1].series));
-                let face = &self.faces[f];
-                let pos = face.center + Vec3::Y * (row_floor_y(row) - BOARD_T * 0.5) + face.normal * 0.02;
-                self.labels.push(Label {
-                    pos,
-                    normal: face.normal,
-                    text,
-                    category: face.category,
-                    is_sign: false,
-                });
             }
         }
     }
@@ -841,14 +471,14 @@ impl Library {
     fn build_piles(&mut self, rng: &mut StdRng) {
         for wing in 0..2 {
             let mut pool: Vec<u32> = (0..self.books.len() as u32)
-                .filter(|&b| wing_of_category(self.series[self.books[b as usize].series as usize].category) == wing)
+                .filter(|&b| self.dept_of(self.category_of_book(b)) == wing)
                 .collect();
             pool.shuffle(rng);
             if wing == 0 {
                 for (tx, tz) in [(-4.5f32, -2.6f32), (4.5, -2.6), (-4.5, 2.6), (4.5, 2.6)] {
                     let n = rng.gen_range(14..28).min(pool.len());
                     let books: Vec<u32> = pool.drain(..n).collect();
-                    self.add_pile(rng, Vec2::new(tx - 0.35, tz), 0.32, books);
+                    self.add_pile(rng, 0, Vec2::new(tx - 0.35, tz), 0.32, books);
                 }
             }
             let (x0, x1) = if wing == 0 {
@@ -882,7 +512,7 @@ impl Library {
                 }
                 let radius = 0.4 + 0.06 * (n as f32).sqrt();
                 let books: Vec<u32> = pool.drain(..n).collect();
-                self.add_pile(rng, p, radius, books);
+                self.add_pile(rng, 0, p, radius, books);
             }
         }
     }
@@ -904,21 +534,5 @@ impl Library {
             return false;
         }
         !spots.iter().any(|q| q.distance(p) < r * 2.0 + 1.1)
-    }
-
-    /// Drop points for a pile: denser toward the middle as it grows, so it heaps up.
-    fn add_pile(&mut self, rng: &mut StdRng, center: Vec2, radius: f32, books: Vec<u32>) {
-        let count = books.len().max(1) as f32;
-        for (i, b) in books.into_iter().enumerate() {
-            let frac = i as f32 / count;
-            let r = radius * (1.0 - 0.5 * frac) * rng.gen_range(0.0..1.0f32).sqrt();
-            let a = rng.gen_range(0.0..1.0f32) * TAU;
-            let yaw = rng.gen_range(0.0..1.0f32) * TAU;
-            self.drops.push((
-                b,
-                center + Vec2::new(a.cos(), a.sin()) * r,
-                Vec2::new(yaw.cos(), yaw.sin()),
-            ));
-        }
     }
 }

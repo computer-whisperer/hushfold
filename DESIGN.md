@@ -26,18 +26,24 @@ so the hall gets visibly brighter and more colourful as you sort.
 ## Loose books
 Every book not shelved or carried is loose (`src/loose.rs`), simulated with
 semi-physics rather than rigid bodies (see SCALING.md for why):
-- A 4 cm heightfield holds the floor, furniture tops (furniture is a solid
-  column) and every resting book's top; a 0.5 m bucket grid indexes resting books
-  for picking and gathering.
+- Each level has a 4 cm heightfield holding the floor (or a hole where it has
+  none), stairs, furniture tops (furniture is a solid column from its floor) and
+  every resting book's top, stored in 32×32-cell tiles allocated where books lie;
+  a 0.5 m bucket grid indexes resting books for picking and gathering.
 - A resting book is a footprint with a planar underside. Dropping one fits it
   to the cells under it and, while the support is steeper than the angle of
   repose (0.6), steps it downhill, so piles spread into natural mounds.
 - Removing books lifts out everything above them (on any heightfield cell both
   cover), rebuilds the heightfield there and re-drops the lot, each after the
   books below it. A book whose whole underside still fits keeps its exact pose.
-- Thrown books fly with gravity and spin, bounce off walls, ceiling, the
-  closed veil and furniture; furniture taller than 0.9 m sheds books off its top
-  (tables hold them). They land on the heightfield and skid a little.
+- Thrown books fly with gravity and spin, bounce off walls, ceilings, furniture
+  and closed gates; furniture taller than 0.9 m sheds books off its top (tables
+  hold them). They land on the heightfield and skid a little, never through a
+  wall, case or gate. A flight rises into the level above through a hole in its
+  floor and falls through holes to the level below; a book that slides off an
+  edge falls too.
+- Gathering takes only books with no wall, case or closed gate between them and
+  the aim point.
 - Generation picks drop points per pile; dropping them through the same code
   makes the starting piles.
 
@@ -63,14 +69,20 @@ Shelving Aura I–III (books float to nearby slots on their own),
 Paper Familiars ×5 (autonomous helpers), Familiar Wings I–II.
 
 "Nearest" means nearest on foot: `nav.rs` keeps a Dijkstra distance field from
-the player over a 0.5 m grid (furniture inflated by the player's radius),
+the player over a 0.5 m grid per level (furniture inflated by the player's
+radius; neighbouring cells more than a step apart in height are not linked;
+the top of a flight of stairs links to the floor above),
 recomputed when the player changes cell (~0.2 ms). A slot's cost is the walk to
 the aisle in front of it, so the far side of a double-sided case costs the walk
 round the end of the row. Tidy Arms switches the active book only when another
 is 0.6 m nearer, and leaves a book you picked by cycling active until it is
 filed or you gather again. Sort Sense's marker sits on the slot when the walk is a straight
 line, and otherwise on the farthest visible point along the route.
-East wing is veiled until 60% of the West wing is sorted.
+Books belong to departments (the Hall's are its two wings). A gate (drawn as the
+veil) closes the way into a department until the departments it counts are
+shelved to a fraction: the East Wing opens at 60% of the West. A closed gate is
+a solid to walking, throwing, gathering, aiming and routes; gate states follow
+from what is shelved, so saves don't store them.
 
 Pacing is tuned with two ignored tests (`--ignored --nocapture`): `familiar_throughput`
 runs the real familiar code headless to measure books/s per Wings level, and

@@ -1,0 +1,56 @@
+# The Hall: two wings of eight categories. Each category has its own hue.
+# dept <name>
+# cat <name> | <hue> <hue spread> | <sat lo> <sat hi> | <val lo> <val hi>
+# topics / things: semicolon-separated title vocabulary.
+
+dept West Wing
+cat Astronomy | 225.0 18.0 | 0.45 0.8 | 0.2 0.5
+topics Comets; the Night Sky; Wandering Stars; Eclipses; the Seventh Moon; Nebulae; Starlight; Orbits; the Zodiac; Meteors
+things Orrery; Star Chart; Telescope; Lodestar; Firmament; Constellation; Aurora; Equinox
+cat Alchemy | 12.0 16.0 | 0.55 0.85 | 0.3 0.6
+topics Salts; Quicksilver; Transmutation; the Red Tincture; Distillation; Calcination; Sulphur; the Athanor; Elixirs; Vitriol
+things Crucible; Alembic; Retort; Philosopher's Egg; Cinnabar; Aqua Regia; Ouroboros; Furnace
+cat Botany | 115.0 25.0 | 0.35 0.7 | 0.22 0.5
+topics Mosses; Night-blooming Flowers; Ferns; Mandrakes; Hedgerows; Seeds; Fungi; Orchards; Bark; Vines
+things Herbarium; Greenhouse; Thornwood; Mandrake; Lichen; Rootcellar; Willow; Seedvault
+cat Bestiary | 175.0 15.0 | 0.4 0.7 | 0.22 0.48
+topics Griffins; River Serpents; Moths; Owls; Small Dragons; Hedge Wyrms; Basilisks; Kelpies; Familiars; Salamanders
+things Wyvern; Hippogriff; Cockatrice; Selkie; Manticore; Barghest; Phoenix; Leviathan
+cat Cartography | 40.0 10.0 | 0.45 0.75 | 0.4 0.7
+topics Coastlines; the Northern Marches; Lost Roads; Islands; Mountain Passes; Underground Rivers; the Borderlands; Trade Winds; Harbours; Deserts
+things Atlas; Compass Rose; Sea Chart; Gazetteer; Waymark; Meridian; Portolan; Itinerary
+cat History | 25.0 10.0 | 0.3 0.55 | 0.15 0.35
+topics the Old Kingdoms; the Glass War; Fallen Houses; the Long Winter; Guilds; Coronations; Sieges; the Salt Empire; Treaties; Pilgrims
+things Chronicle; Dynasty; Regency; Crown; Citadel; Rebellion; Archive; Heirloom
+cat Poetry | 285.0 20.0 | 0.3 0.6 | 0.3 0.6
+topics Small Hours; Rain; Lanterns; the Sea; Absent Friends; Snowfall; Candle Smoke; Gardens; Bells; Thresholds
+things Sonnets; Ballads; Elegies; Odes; Nocturnes; Villanelles; Hymns; Lullabies
+cat Arcana | 320.0 15.0 | 0.5 0.85 | 0.18 0.42
+topics Wards; Sigils; Binding; Glamours; Counterspells; Circles; Illusions; Summoning; Runes; Enchantment
+things Grimoire; Pentacle; Cantrip; Hex; Talisman; Incantation; Spellbook; Athame
+
+dept East Wing
+cat Mathematics | 205.0 8.0 | 0.1 0.3 | 0.35 0.65
+topics Prime Numbers; Curves; Infinite Series; Knots; Tilings; Proportion; Spirals; Symmetry; Polyhedra; Lattices
+things Abacus; Theorem; Conjecture; Geometry; Calculus; Algebra; Axiom; Quadrature
+cat Music | 350.0 12.0 | 0.5 0.8 | 0.25 0.5
+topics Harmony; the Lute; Bellringing; Counterpoint; Lullabies; Wind Instruments; Cadence; Choirs; Drums; Tuning
+things Fugue; Canticle; Sonata; Madrigal; Overture; Rondo; Carillon; Requiem
+cat Divination | 265.0 15.0 | 0.4 0.75 | 0.2 0.45
+topics Tea Leaves; Dreams; Mirrors; Omens; Cards; Flight of Birds; Bones; Candle Flames; Tides; Smoke
+things Oracle; Augury; Scrying Glass; Tarot; Horoscope; Portent; Pendulum; Crystal
+cat Mythology | 50.0 12.0 | 0.6 0.9 | 0.35 0.6
+topics Tricksters; Sky Gods; the Underworld; Heroes; Giants; Sea Kings; Fae Courts; the First Fire; Floods; Twins
+things Saga; Epic; Legend; Eddas; Pantheon; Odyssey; Fable; Myth-cycle
+cat Linguistics | 150.0 12.0 | 0.25 0.5 | 0.3 0.55
+topics Dead Tongues; Ciphers; Dialects; Etymology; Scripts; Silent Letters; Riddles; Phonetics; Translation; Glyphs
+things Rosetta; Glossary; Thesaurus; Phrasebook; Concordance; Palimpsest; Alphabet; Cipher-wheel
+cat Clockwork | 30.0 8.0 | 0.6 0.9 | 0.45 0.7
+topics Escapements; Springs; Automata; Gears; Pendulums; Orreries; Music Boxes; Locks; Balance Wheels; Cogs
+things Mechanism; Automaton; Chronometer; Gearwork; Ratchet; Mainspring; Tourbillon; Engine
+cat Tempestry | 195.0 15.0 | 0.4 0.7 | 0.3 0.55
+topics Fog; Thunder; Gentle Rain; Hail; Monsoons; Weathervanes; Clouds; Frost; Rainbows; Gales
+things Barometer; Stormglass; Windrose; Squall; Cloudbank; Thunderhead; Drizzle; Zephyr
+cat Hearthcraft | 70.0 15.0 | 0.35 0.6 | 0.3 0.55
+topics Bread; Preserves; Teas; Soups; Candles; Honey; Cheeses; Pies; Spices; Feast Days
+things Larder; Cookbook; Kettle; Pantry; Hearth; Stillroom; Bakehouse; Cauldron

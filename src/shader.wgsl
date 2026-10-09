@@ -11,7 +11,6 @@ struct Globals {
     fog: vec4<f32>,            // rgb fog colour, w density
     ambient_top: vec4<f32>,
     ambient_bottom: vec4<f32>, // w = light count
-    misc: vec4<f32>,           // x = veil fade
     lights: array<Light, 64>,
 };
 
@@ -505,10 +504,13 @@ fn fs_trans(i: VOut) -> @location(0) vec4<f32> {
 
     let t = g.cam_pos.w;
     if (i.kind == K_VEIL) {
-        let w = i.world;
-        let n1 = fbm(vec3<f32>(w.z * 0.6, w.y * 0.4 - t * 0.15, t * 0.1));
-        let n2 = fbm(vec3<f32>(w.z * 2.0 + t * 0.2, w.y * 1.5, 3.0));
-        let a = (0.12 + 0.3 * n1 * n2) * g.misc.x;
+        // Noise along the veil's long side and up it; color.w fades it out.
+        let m = i.local * i.scale;
+        let along = select(m.z, m.x, i.scale.x > i.scale.z);
+        let w = vec2<f32>(along, i.world.y);
+        let n1 = fbm(vec3<f32>(w.x * 0.6, w.y * 0.4 - t * 0.15, t * 0.1));
+        let n2 = fbm(vec3<f32>(w.x * 2.0 + t * 0.2, w.y * 1.5, 3.0));
+        let a = (0.12 + 0.3 * n1 * n2) * i.color.w;
         let c = mix(vec3<f32>(0.2, 0.25, 0.7), vec3<f32>(0.55, 0.3, 0.8), n2) * (0.3 + 0.7 * n1);
         return vec4<f32>(c * a, a * 0.7);
     }

@@ -1,7 +1,7 @@
 //! Game state: player, books in motion, upgrades, familiars, progression, save/load.
 
 use crate::audio::{Audio, Sfx};
-use crate::catalog::{self, CATEGORIES};
+use crate::catalog;
 use crate::gfx::{Globals, GpuLight, Inst, MAX_LIGHTS, kind};
 use crate::library::*;
 use crate::loose::{Loose, Rest};
@@ -16,6 +16,10 @@ pub const SEED: u64 = 0x4855_5348_464f_4c44;
 const EYE: f32 = 1.62;
 const SHELF_REACH: f32 = 4.2;
 const PLAYER_R: f32 = 0.3;
+/// Highest rise the player walks up (a stair); anything higher is a wall.
+const STEP_UP: f32 = 0.45;
+/// The player's height, for what they bump into.
+const BODY_H: f32 = 1.8;
 const HAND_VISIBLE: usize = 8;
 /// Shelving Aura by level: (radius in metres, books per second).
 const AURA_LEVELS: [(f32, f32); 4] = [(0.0, 0.0), (3.0, 2.0), (4.5, 4.0), (6.0, 8.0)];
@@ -160,8 +164,8 @@ struct Flight {
 #[derive(Clone, Copy, PartialEq)]
 enum FamTask {
     Idle,
-    /// To the top of a pile.
-    ToPile(Vec3),
+    /// To the top of a pile (on a level).
+    ToPile(usize, Vec3),
     ToSlot,
 }
 
@@ -225,7 +229,9 @@ pub struct Input {
 }
 
 pub struct Player {
+    /// Feet.
     pub pos: Vec3,
+    /// Walking velocity (horizontal) and falling speed.
     pub vel: Vec3,
     pub yaw: f32,
     pub pitch: f32,
@@ -266,12 +272,14 @@ struct SaveData {
     pending: Vec<u32>,
     held: Vec<u32>,
     player: [f32; 5],
-    east_unlocked: bool,
     play_time: f64,
     /// Loose books that left their generated pose: (book, [x, y, z, ux, uz, su, sv]).
     /// Absent in 0.1.x saves, whose piles re-settle around the books taken from them.
     #[serde(default)]
     loose: Option<Vec<(u32, [f32; 7])>>,
+    /// The level of each book in `loose` that lies above the ground floor.
+    #[serde(default)]
+    loose_levels: Vec<(u32, u8)>,
     /// Books in the air: (book, position). They fall from there on load.
     #[serde(default)]
     airborne: Vec<(u32, [f32; 3])>,
@@ -307,10 +315,11 @@ pub struct Game {
     pub upg: [u32; UPGRADES.len()],
     pub series_shelved: Vec<u32>,
     pub category_shelved: Vec<u32>,
-    pub wing_total: [u32; 2],
-    pub wing_shelved: [u32; 2],
-    pub east_unlocked: bool,
-    veil: f32,
+    pub dept_total: Vec<u32>,
+    pub dept_shelved: Vec<u32>,
+    pub gate_open: Vec<bool>,
+    /// How much of each gate's veil is still drawn (1 closed, 0 gone).
+    gate_fade: Vec<f32>,
     familiars: Vec<Familiar>,
     particles: Vec<Particle>,
     motes: Vec<(Vec3, f32)>,
@@ -364,21 +373,22 @@ impl Game {
     pub fn new() -> Self {
         let lib = Library::generate(SEED);
         let n = lib.books.len();
-        let mut wing_total = [0u32; 2];
-        for b in &lib.books {
-            wing_total[wing_of_category(lib.series[b.series as usize].category)] += 1;
+        let mut dept_total = vec![0u32; lib.catalog.departments.len()];
+        for b in 0..n as u32 {
+            dept_total[lib.dept_of(lib.category_of_book(b))] += 1;
         }
         let loose = Loose::new(&lib);
         let pos = (0..n as u32).map(|b| loose.pose(b).0).collect();
         let rot = (0..n as u32).map(|b| loose.pose(b).1).collect();
         let mut rng = StdRng::seed_from_u64(0x5eed);
+        let ground = &lib.levels[0];
         let motes = (0..700)
             .map(|_| {
                 (
                     Vec3::new(
-                        rng.gen_range(-HALL_X..HALL_X),
+                        rng.gen_range(ground.min.x..ground.max.x),
                         rng.gen_range(0.2..6.0),
-                        rng.gen_range(-HALL_Z..HALL_Z),
+                        rng.gen_range(ground.min.y..ground.max.y),
                     ),
                     rng.gen_range(0.0..1.0f32) * 100.0,
                 )
@@ -393,9 +403,9 @@ impl Game {
             active: 0,
             manual_pick: None,
             player: Player {
-                pos: Vec3::new(0.0, 0.0, 6.5),
+                pos: lib.spawn.0,
                 vel: Vec3::ZERO,
-                yaw: 0.0,
+                yaw: lib.spawn.1,
                 pitch: -0.05,
                 bob: 0.0,
             },
@@ -403,11 +413,11 @@ impl Game {
             earned: 0,
             upg: [0; UPGRADES.len()],
             series_shelved: vec![0; lib.series.len()],
-            category_shelved: vec![0; CATEGORIES.len()],
-            wing_total,
-            wing_shelved: [0; 2],
-            east_unlocked: false,
-            veil: 1.0,
+            category_shelved: vec![0; lib.catalog.categories.len()],
+            dept_shelved: vec![0; dept_total.len()],
+            dept_total,
+            gate_open: vec![false; lib.gates.len()],
+            gate_fade: vec![1.0; lib.gates.len()],
             familiars: Vec::new(),
             particles: Vec::new(),
             motes,
@@ -422,14 +432,14 @@ impl Game {
             toss_arc: Vec::new(),
             toss_land: None,
             aura_budget: 0.0,
-            lantern_glow: vec![0.0; CATEGORIES.len()],
+            lantern_glow: vec![0.0; lib.catalog.categories.len()],
             rng,
             hint: None,
             dyn_insts: Vec::with_capacity(n + 2048),
             trans_insts: Vec::with_capacity(n + 64),
             held_insts: Vec::new(),
             loose,
-            nav: Nav::new(&lib.obstacles),
+            nav: Nav::new(&lib),
             sense_route: None,
             fov: 70.0,
             dirty_save: false,
@@ -455,7 +465,7 @@ impl Game {
     }
 
     pub fn total_shelved(&self) -> u32 {
-        self.wing_shelved[0] + self.wing_shelved[1]
+        self.dept_shelved.iter().sum()
     }
 
     pub fn next_cost(&self, u: Upg) -> Option<u64> {
@@ -515,14 +525,48 @@ impl Game {
         });
     }
 
-    /// West Wing books still to shelve before the veil lifts (at 60%).
-    pub fn veil_books_left(&self) -> u32 {
-        let need = (self.wing_total[0] as f32 * 0.6).ceil() as u32;
-        need.saturating_sub(self.wing_shelved[0])
+    /// Books of the departments gate `g` counts still to shelve before it lifts.
+    pub fn gate_books_left(&self, g: usize) -> u32 {
+        let gate = &self.lib.gates[g];
+        let total: u32 = gate.counts.iter().map(|&d| self.dept_total[d]).sum();
+        let done: u32 = gate.counts.iter().map(|&d| self.dept_shelved[d]).sum();
+        let need = (total as f32 * gate.need).ceil() as u32;
+        need.saturating_sub(done)
     }
 
-    pub fn wing_unlocked(&self, wing: usize) -> bool {
-        wing == 0 || self.east_unlocked
+    /// The first gate still closed.
+    pub fn next_gate(&self) -> Option<usize> {
+        self.gate_open.iter().position(|&o| !o)
+    }
+
+    /// A department is open once the gate before it has lifted.
+    pub fn dept_open(&self, d: usize) -> bool {
+        (self.lib.gates.iter().zip(&self.gate_open)).all(|(g, &open)| open || g.opens != d)
+    }
+
+    fn open_gate(&mut self, g: usize) {
+        self.gate_open[g] = true;
+        self.loose.set_gate(g, false);
+        self.nav.set_gate(g, false);
+    }
+
+    /// Lift every gate whose departments are shelved far enough.
+    fn check_gates(&mut self, audio: &mut Audio) {
+        for g in 0..self.lib.gates.len() {
+            if !self.gate_open[g] && self.gate_books_left(g) == 0 {
+                self.open_gate(g);
+                audio.play(Sfx::Fanfare, 0.8);
+                let name = &self.lib.catalog.departments[self.lib.gates[g].opens].name;
+                self.toast(format!("The veil over the {name} lifts…"), [0.75, 0.6, 1.0], true);
+            }
+        }
+    }
+
+    /// Script aid: lift every gate.
+    pub fn open_all_gates(&mut self) {
+        for g in 0..self.lib.gates.len() {
+            self.open_gate(g);
+        }
     }
 
     // -------------------------------------------------------------- update
@@ -570,7 +614,7 @@ impl Game {
         let tidy = self.level(Upg::Tidy) > 0;
         let sense = self.level(Upg::SortSense) > 0;
         if (tidy || sense) && !self.held.is_empty() {
-            self.nav.update(self.player.pos, self.east_unlocked);
+            self.nav.update(self.player.pos);
         }
         if tidy && self.manual_pick.is_none() {
             self.pick_nearest_active();
@@ -582,7 +626,6 @@ impl Game {
             _ => None,
         };
         self.update_flights(dt, audio);
-        self.loose.east_open = self.east_unlocked;
         let landings = self.loose.update(dt, &mut self.pos, &mut self.rot);
         self.dirty_save |= !landings.is_empty();
         let eye = self.player.eye();
@@ -597,7 +640,7 @@ impl Game {
         self.update_particles(dt);
 
         // Lanterns ease toward their category completion.
-        for c in 0..CATEGORIES.len() {
+        for c in 0..self.lib.catalog.categories.len() {
             let target = if self.category_shelved[c] == self.lib.category_books[c] {
                 1.0
             } else {
@@ -605,8 +648,10 @@ impl Game {
             };
             self.lantern_glow[c] += (target - self.lantern_glow[c]) * (1.0 - (-dt * 1.5).exp());
         }
-        if self.east_unlocked {
-            self.veil = (self.veil - dt * 0.25).max(0.0);
+        for (f, &open) in self.gate_fade.iter_mut().zip(&self.gate_open) {
+            if open {
+                *f = (*f - dt * 0.25).max(0.0);
+            }
         }
         for t in &mut self.toasts {
             t.age += dt;
@@ -620,12 +665,26 @@ impl Game {
         }
     }
 
+    /// Boxes the player bumps into standing with their feet at `feet`: furniture and
+    /// walls overlapping the body (not what they can step over or walk under), and
+    /// closed gates (with the gate's index).
+    fn solids_in_way(&self, feet: f32) -> impl Iterator<Item = (Vec3, Vec3, Option<usize>)> + '_ {
+        let body = move |mn: Vec3, mx: Vec3| mx.y > feet + STEP_UP && mn.y < feet + BODY_H;
+        let furniture = (self.lib.obstacles.iter())
+            .filter(move |o| body(o.min, o.max))
+            .map(|o| (o.min, o.max, None));
+        let gates = (self.lib.gates.iter().enumerate())
+            .filter(move |&(g, gate)| !self.gate_open[g] && body(gate.min, gate.max))
+            .map(|(g, gate)| (gate.min, gate.max, Some(g)));
+        furniture.chain(gates)
+    }
+
     fn update_player(&mut self, dt: f32, input: &Input) {
-        let p = &mut self.player;
-        p.yaw += input.look.x;
-        p.pitch = (p.pitch - input.look.y).clamp(-1.45, 1.45);
-        let fwd = Vec3::new(p.yaw.sin(), 0.0, -p.yaw.cos());
-        let right = p.right();
+        let (yaw, pitch) = (self.player.yaw + input.look.x, self.player.pitch - input.look.y);
+        self.player.yaw = yaw;
+        self.player.pitch = pitch.clamp(-1.45, 1.45);
+        let fwd = Vec3::new(yaw.sin(), 0.0, -yaw.cos());
+        let right = self.player.right();
         let mut wish = fwd * input.forward + right * input.strafe;
         if wish.length_squared() > 1.0 {
             wish = wish.normalize();
@@ -633,12 +692,15 @@ impl Game {
         let base = [4.0, 5.5, 7.0][self.upg[upg_index(Upg::Slippers)] as usize];
         let speed = if input.sprint { base * 1.6 } else { base };
         let k = 1.0 - (-dt * 10.0).exp();
-        p.vel = p.vel.lerp(wish * speed, k);
-        let mut np = p.pos + p.vel * dt;
-        // Collide with obstacles (circle vs AABB in xz).
+        let walk = Vec3::new(self.player.vel.x, 0.0, self.player.vel.z).lerp(wish * speed, k);
+        let pos = self.player.pos;
+        let feet = pos.y;
+        let mut np = pos + walk * dt;
+        // Collide with what stands in the way (circle vs box in xz).
+        let mut pressed_gate = None;
         for _ in 0..2 {
-            for o in &self.lib.obstacles {
-                let q = Vec2::new(np.x.clamp(o.min.x, o.max.x), np.z.clamp(o.min.z, o.max.z));
+            for (mn, mx, gate) in self.solids_in_way(feet) {
+                let q = Vec2::new(np.x.clamp(mn.x, mx.x), np.z.clamp(mn.z, mx.z));
                 let d = Vec2::new(np.x, np.z) - q;
                 let l = d.length();
                 if l < PLAYER_R {
@@ -649,26 +711,79 @@ impl Game {
                     };
                     np.x += push.x;
                     np.z += push.y;
+                    if gate.is_some() && Vec2::new(wish.x, wish.z).dot(-push.normalize_or_zero()) > 0.3 {
+                        pressed_gate = gate;
+                    }
                 }
             }
         }
-        np.x = np.x.clamp(-HALL_X + PLAYER_R + 0.1, HALL_X - PLAYER_R - 0.1);
-        np.z = np.z.clamp(-HALL_Z + PLAYER_R + 0.1, HALL_Z - PLAYER_R - 0.1);
-        let veil_x = VEIL_X - PLAYER_R - 0.2;
-        let at_veil = !self.east_unlocked && np.x > veil_x && wish.x > 0.3;
-        if !self.east_unlocked {
-            np.x = np.x.min(veil_x);
+        let lv = &self.lib.levels[self.lib.level_at(pos)];
+        np.x = np.x.clamp(lv.min.x + PLAYER_R + 0.1, lv.max.x - PLAYER_R - 0.1);
+        np.z = np.z.clamp(lv.min.y + PLAYER_R + 0.1, lv.max.y - PLAYER_R - 0.1);
+        // A rise too high to step onto (the side of a flight of stairs) is a wall: slide
+        // along it if one axis is clear, else stay.
+        let walled =
+            |x: f32, z: f32| (self.lib.surfaces(Vec2::new(x, z))).any(|s| s > feet + STEP_UP && s < feet + BODY_H);
+        if walled(np.x, np.z) {
+            if !walled(np.x, pos.z) {
+                np.z = pos.z;
+            } else if !walled(pos.x, np.z) {
+                np.x = pos.x;
+            } else {
+                np = pos;
+            }
         }
+        // Stand on the floor or stair underfoot; step down stairs, fall off edges.
+        let mut vy = self.player.vel.y;
+        match self.lib.ground_at(Vec2::new(np.x, np.z), feet + STEP_UP) {
+            Some(g) if g >= feet - 0.6 && vy <= 0.0 => {
+                np.y = g;
+                vy = 0.0;
+            }
+            ground => {
+                vy -= crate::loose::GRAVITY * dt;
+                np.y = feet + vy * dt;
+                if let Some(g) = ground
+                    && np.y <= g
+                {
+                    np.y = g;
+                    vy = 0.0;
+                }
+            }
+        }
+        let p = &mut self.player;
+        p.vel = Vec3::new(walk.x, vy, walk.z);
         let moved = Vec2::new(np.x - p.pos.x, np.z - p.pos.z).length();
         p.bob += moved * 1.4;
         p.pos = np;
-        if at_veil && self.hint.is_none() {
-            let left = self.veil_books_left();
+        if let Some(g) = pressed_gate
+            && self.hint.is_none()
+        {
+            let left = self.gate_books_left(g);
+            let names = self.lib.gate_counts_names(g);
             self.hint = Some((
-                format!("The veil holds. Shelve {left} more West Wing books to lift it."),
+                format!("The veil holds. Shelve {left} more {names} books to lift it."),
                 2.5,
             ));
         }
+    }
+
+    /// The first thing that blocks sight along a ray (furniture, closed gates, floors),
+    /// within `max_t`.
+    fn ray_block(&self, o: Vec3, d: Vec3, max_t: f32) -> f32 {
+        let furniture = (self.lib.obstacles.iter())
+            .filter(|ob| ob.blocks_ray)
+            .map(|ob| (ob.min, ob.sight_max()));
+        let gates = (self.lib.gates.iter().zip(&self.gate_open))
+            .filter(|&(_, &open)| !open)
+            .map(|(g, _)| (g.min, g.max));
+        let floors = self.lib.slabs.iter().map(|s| {
+            let y = self.lib.levels[s.level].y;
+            (Vec3::new(s.min.x, y - SLAB, s.min.y), Vec3::new(s.max.x, y, s.max.y))
+        });
+        (furniture.chain(gates).chain(floors))
+            .filter_map(|(mn, mx)| Self::ray_aabb(o, d, mn, mx))
+            .fold(max_t, f32::min)
     }
 
     /// True if nothing that blocks rays lies between `a` and `b`.
@@ -676,11 +791,7 @@ impl Game {
         let d = b - a;
         let len = d.length();
         let dir = d / len.max(1e-5);
-        !self
-            .lib
-            .obstacles
-            .iter()
-            .any(|o| o.blocks_ray && Self::ray_aabb(a, dir, o.min, o.sight_max()).is_some_and(|t| t < len - 0.15))
+        self.ray_block(a, dir, f32::MAX) >= len - 0.15
     }
 
     fn ray_aabb(o: Vec3, d: Vec3, mn: Vec3, mx: Vec3) -> Option<f32> {
@@ -695,14 +806,7 @@ impl Game {
     fn compute_aim(&self) -> Aim {
         let o = self.player.eye();
         let d = self.player.forward();
-        let mut block = f32::MAX;
-        for ob in &self.lib.obstacles {
-            if ob.blocks_ray
-                && let Some(t) = Self::ray_aabb(o, d, ob.min, ob.sight_max())
-            {
-                block = block.min(t);
-            }
-        }
+        let block = self.ray_block(o, d, f32::MAX);
         let mut best = Aim::None;
         let mut best_t = f32::MAX;
         // Shelves.
@@ -723,13 +827,12 @@ impl Game {
             if x.abs() > USABLE_W * 0.5 + 0.02 {
                 continue;
             }
-            let wing = wing_of_category(f.category);
-            if !self.wing_unlocked(wing) {
+            if !self.dept_open(self.lib.dept_of(f.category)) {
                 continue;
             }
             let mut row = None;
             for r in 0..ROWS {
-                let y0 = row_floor_y(r);
+                let y0 = f.center.y + row_floor_y(r);
                 if p.y >= y0 - 0.02 && p.y < y0 + SHELF_STEP - BOARD_T {
                     row = Some(r);
                 }
@@ -747,11 +850,8 @@ impl Game {
             };
             best_t = t;
         }
-        // Loose books, short of the closed veil.
-        let mut max_t = self.gather_reach().min(block + 0.3).min(best_t);
-        if !self.east_unlocked && d.x > 1e-6 {
-            max_t = max_t.min((VEIL_X - o.x) / d.x);
-        }
+        // Loose books, short of whatever blocks the view.
+        let max_t = self.gather_reach().min(block + 0.3).min(best_t);
         if let Some((book, t)) = self.loose.pick(o, d, max_t) {
             best = Aim::Loose {
                 book,
@@ -764,7 +864,7 @@ impl Game {
 
     fn interact(&mut self, audio: &mut Audio, fresh_press: bool) {
         match self.aim {
-            Aim::Loose { point, .. } => {
+            Aim::Loose { book, point, .. } => {
                 let room = self.capacity().saturating_sub(self.held.len());
                 if room == 0 {
                     if fresh_press {
@@ -775,7 +875,10 @@ impl Game {
                     return;
                 }
                 let radius = 0.35 + 0.05 * (room as f32).sqrt();
-                let books = self.loose.gather(Vec2::new(point.x, point.z), radius, room, |_| true);
+                let lv = self.loose.level_of(book);
+                let books = self
+                    .loose
+                    .gather(lv, Vec2::new(point.x, point.z), radius, room, |_| true);
                 self.take_into_arms(&books, audio);
                 self.grab_cooldown = 0.35;
             }
@@ -870,10 +973,11 @@ impl Game {
         }
         let cat = self.category_of(book);
         let lib = &self.lib;
-        let same = |b: u32| lib.series[lib.books[b as usize].series as usize].category == cat;
+        let same = |b: u32| lib.category_of_book(b) == cat;
+        let lv = self.loose.level_of(book);
         let books = self
             .loose
-            .gather(Vec2::new(point.x, point.z), SIFT_RADIUS[lvl], room, same);
+            .gather(lv, Vec2::new(point.x, point.z), SIFT_RADIUS[lvl], room, same);
         self.take_into_arms(&books, audio);
         self.sift_cooldown = 0.4;
     }
@@ -881,16 +985,17 @@ impl Game {
     /// Where a toss at the current charge leaves the hand, and how fast.
     fn toss_launch(&self) -> (Vec3, Vec3) {
         let (mut hand, _) = self.hand_xform(0);
-        if !self.east_unlocked {
-            // At the veil the hand reaches past it; books leave from this side.
-            hand.x = hand.x.min(VEIL_X - 0.1);
-        }
-        // Flush against furniture the hand is inside it; leave from just short of it.
+        // Flush against furniture or a closed gate the hand is inside it; leave from
+        // just short of it.
         let eye = self.player.eye();
         let reach = hand - eye;
         let dir = reach.normalize();
-        let hit = (self.lib.obstacles.iter())
-            .filter_map(|o| Self::ray_aabb(eye, dir, o.min, o.max))
+        let gates = (self.lib.gates.iter().zip(&self.gate_open))
+            .filter(|&(_, &open)| !open)
+            .map(|(g, _)| (g.min, g.max));
+        let hit = (self.lib.obstacles.iter().map(|o| (o.min, o.max)))
+            .chain(gates)
+            .filter_map(|(mn, mx)| Self::ray_aabb(eye, dir, mn, mx))
             .fold(f32::MAX, f32::min);
         if hit < reach.length() {
             hand = eye + dir * (hit - 0.08).max(0.0);
@@ -1078,10 +1183,9 @@ impl Game {
         self.rot[bi] = self.lib.books[bi].slot_rot;
         let s = self.lib.books[bi].series as usize;
         let cat = self.lib.series[s].category;
-        let wing = wing_of_category(cat);
         self.series_shelved[s] += 1;
         self.category_shelved[cat] += 1;
-        self.wing_shelved[wing] += 1;
+        self.dept_shelved[self.lib.dept_of(cat)] += 1;
         self.lumens += 1;
         self.earned += 1;
         self.dirty_save = true;
@@ -1116,20 +1220,19 @@ impl Game {
             self.lumens += 100;
             self.earned += 100;
             audio.play(Sfx::Fanfare, 0.7);
-            let c = catalog::category_color(cat);
+            let c = catalog::category_color(&self.lib.catalog.categories[cat]);
             self.toast(
-                format!("{} is fully catalogued!  (+100 ✦)", CATEGORIES[cat].name),
+                format!(
+                    "{} is fully catalogued!  (+100 ✦)",
+                    self.lib.catalog.categories[cat].name
+                ),
                 c,
                 true,
             );
             let center = self.lib.category_center[cat];
             self.burst(center + Vec3::Y * 1.5, 120, [c[0] * 4.0, c[1] * 4.0, c[2] * 4.0], 2.0);
         }
-        if !self.east_unlocked && self.veil_books_left() == 0 {
-            self.east_unlocked = true;
-            audio.play(Sfx::Fanfare, 0.8);
-            self.toast("The veil over the East Wing lifts…".into(), [0.75, 0.6, 1.0], true);
-        }
+        self.check_gates(audio);
         if self.total_shelved() == self.total_books() {
             self.toast(
                 "Every book is home. The library sighs, contented.".into(),
@@ -1240,14 +1343,14 @@ impl Game {
                 if !fam.carry.is_empty() {
                     fam.task = FamTask::ToSlot;
                 } else {
-                    let east = self.east_unlocked;
-                    let rng = &mut self.rng;
-                    let at = Vec2::new(fam.pos.x, fam.pos.z);
-                    let pile = self
-                        .loose
-                        .best_pile(|c, _| (east || c.x < VEIL_X).then(|| c.distance(at) + rng.gen_range(0.0..4.0)));
+                    let (nav, rng) = (&self.nav, &mut self.rng);
+                    let at = fam.pos;
+                    let pile = (self.loose).best_pile(|_, c, _| {
+                        nav.open_at(c)
+                            .then(|| (c + Vec3::Y * 1.5).distance(at) + rng.gen_range(0.0..4.0))
+                    });
                     match pile {
-                        Some(top) => fam.task = FamTask::ToPile(top),
+                        Some((lv, top)) => fam.task = FamTask::ToPile(lv, top),
                         None => {
                             fam.rest = 1.0;
                             continue;
@@ -1256,7 +1359,7 @@ impl Game {
                 }
             }
             let target = match fam.task {
-                FamTask::ToPile(top) => top + Vec3::Y * 0.45,
+                FamTask::ToPile(_, top) => top + Vec3::Y * 0.45,
                 FamTask::ToSlot => {
                     let b = fam.carry[0] as usize;
                     let f = &self.lib.faces[self.lib.books[b].face as usize];
@@ -1283,9 +1386,9 @@ impl Game {
             fam.pos += fam.vel * dt;
             if fam.pos.distance(target) < 0.25 {
                 match fam.task {
-                    FamTask::ToPile(top) => {
+                    FamTask::ToPile(lv, top) => {
                         // Someone may have cleared it meanwhile; then this comes back empty.
-                        for b in self.loose.gather(Vec2::new(top.x, top.z), 0.45, cap, |_| true) {
+                        for b in self.loose.gather(lv, Vec2::new(top.x, top.z), 0.45, cap, |_| true) {
                             self.state[b as usize] = BookState::Carried(fi as u8);
                             fam.carry.push(b);
                         }
@@ -1336,12 +1439,9 @@ impl Game {
     /// Stand beside the nearest reachable pile and look at its top.
     pub fn script_face_pile(&mut self) {
         let p = self.player.pos;
-        let east = self.east_unlocked;
+        let nav = &self.nav;
         // Nearby and substantial: the cell with the most books for the walk.
-        let at = Vec2::new(p.x, p.z);
-        let Some(top) = self
-            .loose
-            .best_pile(|c, n| (east || c.x < VEIL_X).then(|| (c.distance(at) + 3.0) / n as f32))
+        let Some((_, top)) = (self.loose).best_pile(|_, c, n| nav.open_at(c).then(|| (c.distance(p) + 3.0) / n as f32))
         else {
             return;
         };
@@ -1349,7 +1449,8 @@ impl Game {
         if dir == Vec3::ZERO {
             dir = Vec3::Z;
         }
-        let from = Vec3::new(top.x, 0.0, top.z) + dir * 1.6;
+        let floor = self.lib.ground_at(Vec2::new(top.x, top.z), top.y).unwrap_or(0.0);
+        let from = Vec3::new(top.x, floor, top.z) + dir * 1.6;
         self.look_at(from, top);
     }
 
@@ -1360,7 +1461,9 @@ impl Game {
         if dir == Vec3::ZERO {
             dir = Vec3::Z;
         }
-        self.look_at(Vec3::new(target.x, 0.0, target.z) + dir * dist, target);
+        let at = Vec3::new(target.x, 0.0, target.z) + dir * dist;
+        let floor = self.lib.ground_at(Vec2::new(at.x, at.z), target.y + 0.5).unwrap_or(0.0);
+        self.look_at(Vec3::new(at.x, floor, at.z), target);
     }
 
     /// Instantly shelve a fraction of a category (debug/screenshot aid; no rewards).
@@ -1383,7 +1486,7 @@ impl Game {
             let s = self.lib.books[bi].series as usize;
             self.series_shelved[s] += 1;
             self.category_shelved[cat] += 1;
-            self.wing_shelved[wing_of_category(cat)] += 1;
+            self.dept_shelved[self.lib.dept_of(cat)] += 1;
         }
     }
 
@@ -1406,7 +1509,8 @@ impl Game {
     pub fn script_face_familiar(&mut self, i: usize) {
         if let Some(f) = self.familiars.get(i) {
             let p = f.pos;
-            let from = Vec3::new(p.x + 1.2, 0.0, p.z + 1.2);
+            let floor = self.lib.ground_at(Vec2::new(p.x + 1.2, p.z + 1.2), p.y).unwrap_or(0.0);
+            let from = Vec3::new(p.x + 1.2, floor, p.z + 1.2);
             self.look_at(from, p);
         }
     }
@@ -1416,7 +1520,7 @@ impl Game {
         if let Some(b) = self.active_book() {
             let info = &self.lib.books[b as usize];
             let f = &self.lib.faces[info.face as usize];
-            let from = Vec3::new(info.slot_pos.x, 0.0, info.slot_pos.z) + f.normal * 1.8;
+            let from = Vec3::new(info.slot_pos.x, f.center.y, info.slot_pos.z) + f.normal * 1.8;
             self.look_at(from, info.slot_pos);
         }
     }
@@ -1446,7 +1550,7 @@ impl Game {
                 }
                 LightKind::Lantern(c) => {
                     let g = self.lantern_glow[c];
-                    let cc = catalog::category_color(c);
+                    let cc = catalog::category_color(&self.lib.catalog.categories[c]);
                     // Completed categories glow in their colour, softened toward warm white.
                     let k = g * 0.6;
                     let col = [
@@ -1475,7 +1579,6 @@ impl Game {
             fog: [0.035, 0.03, 0.04, 0.022],
             ambient_top: [0.19, 0.18, 0.24, 0.0],
             ambient_bottom: [0.09, 0.065, 0.05, n],
-            misc: [self.veil, 0.0, 0.0, 0.0],
             lights,
         }
     }
@@ -1547,8 +1650,7 @@ impl Game {
             }
             // Ghost slot for anything not yet home.
             if st != BookState::Shelved {
-                let wing = wing_of_category(self.lib.series[info.series as usize].category);
-                if !self.wing_unlocked(wing) {
+                if !self.dept_open(self.lib.dept_of(self.lib.series[info.series as usize].category)) {
                     continue;
                 }
                 let c = self.lib.series[info.series as usize].color;
@@ -1594,7 +1696,7 @@ impl Game {
         // Lanterns.
         for &(c, p) in &self.lib.lanterns {
             let g = self.lantern_glow[c];
-            let cc = catalog::category_color(c);
+            let cc = catalog::category_color(&self.lib.catalog.categories[c]);
             let col = [
                 0.9 * (1.0 - g) + cc[0] * g,
                 0.6 * (1.0 - g) + cc[1] * g,
@@ -1722,30 +1824,26 @@ impl Game {
             ));
         }
 
-        // Moonbeams and veil.
-        let beam_dir = Vec3::new(0.0, -0.62, 1.0).normalize();
-        for x in [-20.0f32, -15.5, -7.0, -2.3, 2.3, 7.0, 15.5, 20.0] {
-            let start = Vec3::new(x, 4.4, -HALL_Z + 0.1);
-            let len = 9.0;
-            let rot = Quat::from_rotation_arc(Vec3::Y, beam_dir);
-            trans.push(Inst::new(
-                start + beam_dir * len * 0.5,
-                rot,
-                Vec3::new(1.6, len, 3.4),
-                kind::SHAFT,
-                [0.35, 0.45, 0.9, 0.05],
-                0,
-            ));
-        }
-        if self.veil > 0.0 {
-            trans.push(Inst::new(
-                Vec3::new(VEIL_X, HALL_H * 0.5, 0.0),
-                Quat::IDENTITY,
-                Vec3::new(0.05, HALL_H, HALL_Z * 2.0),
-                kind::VEIL,
-                [1.0, 1.0, 1.0, 1.0],
-                0,
-            ));
+        // Moonbeams and veils.
+        trans.extend_from_slice(&self.lib.static_trans);
+        for (gate, &fade) in self.lib.gates.iter().zip(&self.gate_fade) {
+            if fade > 0.0 {
+                let size = gate.max - gate.min;
+                // Drawn thinner than the solid it is.
+                let thin = if size.x < size.z {
+                    Vec3::new(0.05, size.y, size.z)
+                } else {
+                    Vec3::new(size.x, size.y, 0.05)
+                };
+                trans.push(Inst::new(
+                    (gate.min + gate.max) * 0.5,
+                    Quat::IDENTITY,
+                    thin,
+                    kind::VEIL,
+                    [1.0, 1.0, 1.0, fade],
+                    0,
+                ));
+            }
         }
 
         self.dyn_insts = dyn_insts;
@@ -1787,14 +1885,17 @@ impl Game {
             pending,
             held: self.held.clone(),
             player: [p.pos.x, p.pos.y, p.pos.z, p.yaw, p.pitch],
-            east_unlocked: self.east_unlocked,
             play_time: self.play_time,
             loose: Some(
                 self.loose
                     .moved()
-                    .map(|(b, r)| (b, [r.c.x, r.c.y, r.c.z, r.u.x, r.u.y, r.su, r.sv]))
+                    .map(|(b, _, r)| (b, [r.c.x, r.c.y, r.c.z, r.u.x, r.u.y, r.su, r.sv]))
                     .collect(),
             ),
+            loose_levels: (self.loose.moved())
+                .filter(|&(_, l, _)| l > 0)
+                .map(|(b, l, _)| (b, l as u8))
+                .collect(),
             airborne: self.loose.airborne().map(|(b, p)| (b, p.to_array())).collect(),
         };
         let path = Self::save_path();
@@ -1828,7 +1929,6 @@ impl Game {
             return false;
         }
         let n = self.lib.books.len() as u32;
-        self.loose.east_open = data.east_unlocked;
         // Books no longer loose leave their piles; nothing is re-settled until all are placed.
         let mut lifted = Vec::new();
         for &b in &data.shelved {
@@ -1841,7 +1941,14 @@ impl Game {
                 let c = self.lib.series[s].category;
                 self.series_shelved[s] += 1;
                 self.category_shelved[c] += 1;
-                self.wing_shelved[wing_of_category(c)] += 1;
+                self.dept_shelved[self.lib.dept_of(c)] += 1;
+            }
+        }
+        // Gates follow from what is shelved; lift them before anything is laid down.
+        for g in 0..self.lib.gates.len() {
+            if self.gate_books_left(g) == 0 {
+                self.open_gate(g);
+                self.gate_fade[g] = 0.0;
             }
         }
         for &b in &data.held {
@@ -1876,6 +1983,7 @@ impl Game {
         }
         match &data.loose {
             Some(rests) => {
+                let levels: std::collections::HashMap<u32, u8> = data.loose_levels.iter().copied().collect();
                 for &(b, [x, y, z, ux, uz, su, sv]) in rests {
                     if loose_ok(b) {
                         let r = Rest {
@@ -1884,7 +1992,7 @@ impl Game {
                             su,
                             sv,
                         };
-                        self.loose.restore(b, r);
+                        self.loose.restore(b, levels.get(&b).map_or(0, |&l| l as usize), r);
                     }
                 }
                 self.loose.rebuild_all();
@@ -1918,10 +2026,6 @@ impl Game {
         }
         self.lumens = data.lumens;
         self.earned = data.earned;
-        self.east_unlocked = data.east_unlocked;
-        if self.east_unlocked {
-            self.veil = 0.0;
-        }
         self.play_time = data.play_time;
         let [x, y, z, yaw, pitch] = data.player;
         self.player.pos = Vec3::new(x, y, z);
@@ -1930,7 +2034,7 @@ impl Game {
         for _ in 0..self.level(Upg::Familiar) {
             self.spawn_familiar();
         }
-        for c in 0..CATEGORIES.len() {
+        for c in 0..self.lib.catalog.categories.len() {
             if self.category_shelved[c] == self.lib.category_books[c] {
                 self.lantern_glow[c] = 1.0;
             }
@@ -1951,7 +2055,7 @@ mod tests {
         for b in 0..lib.books.len() as u32 {
             assert!(g.loose.is_resting(b));
             let east = g.loose.rest(b).c.x > VEIL_X;
-            assert_eq!(east, wing_of_category(g.category_of(b)) == 1, "book {b}");
+            assert_eq!(east, lib.dept_of(g.category_of(b)) == 1, "book {b}");
         }
         // Volumes run left to right along each shelf run.
         for runs in &lib.runs {
@@ -2033,15 +2137,14 @@ mod tests {
             let fams = g.level(Upg::Familiar) as f32;
             let trip_start = t;
             // Gather, as a click does: the top of the nearest pile.
-            let east = g.east_unlocked;
-            g.loose.east_open = east;
             // Where a player would go: the fewest seconds of walking per book gathered.
-            let (at, cap) = (Vec2::new(pos.x, pos.z), g.capacity());
+            let cap = g.capacity();
             let walk = speed(&g);
-            let Some(top) = g
-                .loose
-                .best_pile(|c, n| (east || c.x < VEIL_X).then(|| (c.distance(at) / walk + 1.0) / n.min(cap) as f32))
-            else {
+            let Some((lv, top)) = g.loose.best_pile(|_, c, n| {
+                g.nav
+                    .open_at(c)
+                    .then(|| (c.distance(pos) / walk + 1.0) / n.min(cap) as f32)
+            }) else {
                 break;
             };
             let top = Vec3::new(top.x, 0.0, top.z);
@@ -2053,17 +2156,17 @@ mod tests {
             while let Some(p) = target {
                 let room = g.capacity() - g.held.len();
                 let radius = 0.35 + 0.05 * (room as f32).sqrt();
-                for b in g.loose.gather(Vec2::new(p.x, p.z), radius, room, |_| true) {
+                for b in g.loose.gather(lv, Vec2::new(p.x, p.z), radius, room, |_| true) {
                     g.state[b as usize] = BookState::Held;
                     g.held.push(b);
                 }
                 if g.held.len() == g.capacity() {
                     break;
                 }
-                let at = Vec2::new(pos.x, pos.z);
                 target = g
                     .loose
-                    .best_pile(|c, n| (c.distance(at) < reach && (east || c.x < VEIL_X)).then(|| -(n as f32)));
+                    .best_pile(|l, c, n| (l == lv && c.distance(pos) < reach && g.nav.open_at(c)).then(|| -(n as f32)))
+                    .map(|(_, top)| top);
                 t += 0.4;
             }
             // File, nearest slot first; a click files one book, or a whole series with Bundle.
@@ -2108,13 +2211,12 @@ mod tests {
             // Familiars over the elapsed trip, at measured rates per Wings level.
             let rate = [0.095, 0.17, 0.25][g.level(Upg::Wings) as usize] * fams;
             let fam_books = (rate * (t - trip_start)) as usize;
-            let east = g.east_unlocked;
             let mut left = fam_books;
             while left > 0 {
-                let Some(top) = g.loose.best_pile(|c, _| (east || c.x < VEIL_X).then(|| c.length())) else {
+                let Some((lv, top)) = g.loose.best_pile(|_, c, _| g.nav.open_at(c).then(|| c.length())) else {
                     break;
                 };
-                let books = g.loose.gather(Vec2::new(top.x, top.z), 0.45, left, |_| true);
+                let books = g.loose.gather(lv, Vec2::new(top.x, top.z), 0.45, left, |_| true);
                 left -= books.len();
                 for b in books {
                     let mut thunks = 0;
@@ -2145,13 +2247,15 @@ mod tests {
                 }
             }
             if t >= next_report {
+                let depts: Vec<String> = (g.dept_shelved.iter().zip(&g.dept_total))
+                    .map(|(&s, &n)| format!("{:.0}%", 100.0 * s as f32 / n as f32))
+                    .collect();
                 println!(
-                    "{:6.1} min  shelved {:5} / {}  west {:.0}%  east {:.0}%",
+                    "{:6.1} min  shelved {:5} / {}  departments {}",
                     t / 60.0,
                     g.total_shelved(),
                     g.total_books(),
-                    100.0 * g.wing_shelved[0] as f32 / g.wing_total[0] as f32,
-                    100.0 * g.wing_shelved[1] as f32 / g.wing_total[1] as f32
+                    depts.join(" ")
                 );
                 next_report += 15.0 * 60.0;
             }
@@ -2187,7 +2291,7 @@ mod tests {
     #[test]
     fn slots_aimable_at_angles() {
         let mut g = Game::new();
-        g.east_unlocked = true;
+        g.open_all_gates();
         for b in 0..g.lib.books.len() as u32 {
             g.loose.forget(b);
         }
@@ -2335,25 +2439,26 @@ mod tests {
         let mut g = Game::new();
         let mut audio = crate::audio::Audio::silent();
         let pile = |g: &Game| {
-            let from = Vec2::new(-16.0, 0.0);
+            let from = Vec3::new(-16.0, 0.0, 0.0);
             g.loose
-                .best_pile(|c, _| (c.x < VEIL_X).then(|| c.distance(from)))
+                .best_pile(|_, c, _| (c.x < VEIL_X).then(|| c.distance(from)))
                 .unwrap()
+                .1
         };
         // Shelve the tops of a few piles (as play does), leave one book mid-flight.
         let mut thunks = 0;
         for _ in 0..5 {
             let top = pile(&g);
-            for b in g.loose.gather(Vec2::new(top.x, top.z), 0.6, 20, |_| true) {
+            for b in g.loose.gather(0, Vec2::new(top.x, top.z), 0.6, 20, |_| true) {
                 g.on_shelved(b, &mut audio, &mut thunks);
             }
         }
         let top = pile(&g);
-        let filing = g.loose.gather(Vec2::new(top.x, top.z), 0.5, 1, |_| true)[0];
+        let filing = g.loose.gather(0, Vec2::new(top.x, top.z), 0.5, 1, |_| true)[0];
         g.state[filing as usize] = BookState::Filing;
         // Three books in the arms, two tossed: one has landed, one is in the air at save time.
         let top = pile(&g);
-        let books = g.loose.gather(Vec2::new(top.x, top.z), 0.6, 5, |_| true);
+        let books = g.loose.gather(0, Vec2::new(top.x, top.z), 0.6, 5, |_| true);
         g.take_into_arms(&books, &mut audio);
         let (landed, flying) = (books[3], books[4]);
         g.held.retain(|&b| b != landed && b != flying);

@@ -331,7 +331,7 @@ impl Running {
                 Some("charge") => self.input.toss_down = true,
                 Some("throw") => self.input.toss_down = false,
                 Some("sift") => self.input.sift_pressed = true,
-                Some("unveil") => self.game.east_unlocked = true,
+                Some("unveil") => self.game.open_all_gates(),
                 Some("facefam") => self.game.script_face_familiar(num(1) as usize),
                 Some("fill") => self.game.script_fill_category(num(1) as usize, num(2)),
                 Some("take") => self.game.script_take(num(1) as usize, num(2) as usize),
