@@ -98,15 +98,23 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
 1 per book, +volumes on series completion, +100 per category.
 Skills are grouped in the Grimoire by what they work on; each library offers
 those that fit it, at its own costs (`upg_costs`), and a skill does the same in
-both. Reading: Sort Sense I–II (compass and exact-slot pulse: in the book's
-room, then anywhere), Wayfinding (the compass points to the book's room), the
-Seeker's Lens. Moving: Sifting Touch I–IV (0.9–3.6 m), Broad Strokes and Fine
+both. Reading: Signposts (signs of carried categories show through the stacks),
+Kindred Glow I–III (runs of carried series glow: within ~3 m, ~12 m, everywhere
+with a glint; done in the shader from a reach and strength in the globals), Sort
+Sense I–II (compass and exact-slot pulse: in the book's room, then anywhere),
+Wayfinding (the compass points to the book's room), the Seeker's Lens. With none
+of these, a player reads: the signs in view, the letter ranges on shelf edges,
+the title the crosshair tip gives a run. Saves from before reading was earned
+keep the guide signs and the full glow they had free. Moving: Sifting Touch I–IV (0.9–3.6 m), Broad Strokes and Fine
 Fingers (sort by department, by series), Long Toss I–II (harder, tighter
 throws), Lodestone Grasp (long reach, hold to pull). Filing: Deeper Arms I–IV,
 Swift Slippers I–II, Tidy Arms (stack sorted by slot, active = nearest target),
 Series Bundle (place whole series at once), Shelving Aura I–III (books float to
 nearby slots on their own). Familiars: shelvers and couriers, bought one at a time,
-and Familiar Wings I–II (faster, carry more, reach further). Each department has a room (the Hall's are its wings) with
+and Familiar Wings I–II (faster, carry more, reach further). Spells, cast with the
+number keys from a hotbar that shows each one's recharge: Glimpse I–II (for 10–15
+s every carried series glows everywhere and a marker shows each run through the
+walls; recharge 45–30 s). Each department has a room (the Hall's are its wings) with
 a doorway, which Sort Sense I and Wayfinding use.
 
 Familiars (`game/familiar.rs`) are paper cranes that ride on the player's

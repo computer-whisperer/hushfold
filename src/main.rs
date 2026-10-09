@@ -205,6 +205,11 @@ impl Running {
             KeyCode::KeyF => self.input.seek = true,
             KeyCode::KeyR => self.input.regroup = true,
             KeyCode::KeyG => self.input.post = true,
+            KeyCode::Digit1 => self.input.cast = Some(0),
+            KeyCode::Digit2 => self.input.cast = Some(1),
+            KeyCode::Digit3 => self.input.cast = Some(2),
+            KeyCode::Digit4 => self.input.cast = Some(3),
+            KeyCode::Digit5 => self.input.cast = Some(4),
             KeyCode::KeyQ => self.input.cycle -= 1,
             KeyCode::KeyE => self.input.cycle += 1,
             KeyCode::F12 => {
@@ -269,6 +274,7 @@ impl Running {
         self.input.cycle = 0;
         self.input.regroup = false;
         self.input.post = false;
+        self.input.cast = None;
 
         self.save_timer += dt;
         if self.save_timer > AUTOSAVE_SECS && self.game.dirty_save {
@@ -387,6 +393,8 @@ impl Running {
                 Some("seek") => self.input.seek = true,
                 Some("regroup") => self.input.regroup = true,
                 Some("post") => self.input.post = true,
+                // cast <n>: the spell on key n.
+                Some("cast") => self.input.cast = Some((num(1) as usize).saturating_sub(1)),
                 Some("unveil") => self.game.open_all_gates(),
                 Some("facefam") => self.game.script_face_familiar(num(1) as usize),
                 Some("fill") => self.game.script_fill_category(num(1) as usize, num(2)),

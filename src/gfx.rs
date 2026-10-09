@@ -85,6 +85,9 @@ pub struct Globals {
     /// The Seeker's Lens: x = the group sought (0 off, 1 department, 2 category,
     /// 3 series), y = which one.
     pub lens: [f32; 4],
+    /// Kindred Glow on the runs of carried series: x = reach in metres, y =
+    /// strength, z = glint (0 or 1).
+    pub glow: [f32; 4],
     pub lights: [GpuLight; MAX_LIGHTS],
 }
 

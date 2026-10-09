@@ -12,6 +12,7 @@ struct Globals {
     ambient_top: vec4<f32>,
     ambient_bottom: vec4<f32>, // w = light count
     lens: vec4<f32>,           // x = group sought (0 off, 1 dept, 2 category, 3 series), y = which
+    glow: vec4<f32>,           // Kindred Glow: x = reach (m), y = strength, z = glint
     lights: array<Light, 64>,
 };
 
@@ -558,11 +559,15 @@ fn fs_trans(i: VOut) -> @location(0) vec4<f32> {
     let outline = 1.0 - smoothstep(max(0.003, px * 1.5), max(0.006, px * 2.5), edge);
     let k = i.color.w;
     if (level == 1u) {
-        // A slow glint sweeps through the hall across every run you can file.
+        // Kindred Glow: fading out toward its reach to about a waiting outline (a
+        // little brighter when aimed at: k is 1.3 then); at full strength a slow
+        // glint sweeps through every run you can file.
+        let near = 1.0 - smoothstep(g.glow.x * 0.7, g.glow.x, distance(i.world, g.cam_pos.xyz));
+        let kg = k * max(g.glow.y * near, select(0.015, 0.1, k > 1.1));
         let ph = (i.world.x + i.world.z) * 1.7 + i.world.y * 2.3 - t * 2.2;
-        let glint = pow(0.5 + 0.5 * sin(ph), 12.0);
-        let c = i.color.rgb * k * (outline * (0.55 + 0.8 * glint) + 0.05);
-        return vec4<f32>(c, k * (0.1 + 0.3 * outline));
+        let glint = g.glow.z * pow(0.5 + 0.5 * sin(ph), 12.0);
+        let c = i.color.rgb * kg * (outline * (0.55 + 0.8 * glint) + 0.05);
+        return vec4<f32>(c, kg * (0.1 + 0.3 * outline));
     }
     let pulse = 0.5 + 0.5 * sin(t * 5.0);
     let c = i.color.rgb * k * (outline * (1.4 + 0.8 * pulse) + 0.3 + 0.3 * pulse);

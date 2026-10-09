@@ -31,6 +31,7 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | Right mouse (hold) | charge a toss, with an arc showing where it lands; release to throw every book you carry of the group you seek, or else of the active book's group |
 | F | seek the aimed book's kind: scoops take only those books, from any depth (Sifting Touch); F again stops |
 | R | the level you seek and toss at: category, or with upgrades department or series |
+| 1–5 | cast a spell you have learned (the hotbar shows each one's recharge) |
 | G | post a familiar riding with you at the floor you aim at, or take a posted one back |
 | Scroll, Q / E | cycle the active book |
 | Tab | the Grimoire (upgrades) |
@@ -50,14 +51,17 @@ pause screen replaces the current library's save with a fresh one (settings, in
 ## How filing works
 
 - Each category owns three bookcases (five in the Great Library) on one side of
-  an aisle; the sign and lantern above the middle case name it. Signs of categories you carry show
-  through the stacks, marked "other side" when their shelves face away from you. Lanterns brighten with progress and
-  burn in the category's colour once it is complete.
+  an aisle; the sign and lantern above the middle case name it. With Signposts, signs of
+  categories you carry show through the stacks, marked "other side" when their shelves face
+  away from you. Lanterns brighten with progress and burn in the category's colour once it is
+  complete.
 - Within a category, series are alphabetical (ignoring leading articles), top
   shelf to bottom, left to right. Shelf edges carry their letter ranges.
-- Empty slots show as faint outlines in the series' colour; outlines of series
-  you are carrying glow, with a glint sweeping through them. Click anywhere on a
-  series' run to file a volume you carry; it flies to its exact slot.
+- Empty slots show as faint outlines in the series' colour; with Kindred Glow,
+  outlines of series you are carrying glow (at its last level with a glint
+  sweeping through them). The active book's card names the start of its shelf's
+  letter range ("under Al"). Click anywhere on a series' run to file a volume you
+  carry; it flies to its exact slot.
 - The Hall's East Wing is veiled until 60% of the West Wing is home. In the
   Great Library each room is veiled until half the books of the rooms opened
   before it are home; a department's books start in its own room, the atrium or
@@ -73,9 +77,12 @@ pause screen replaces the current library's save with a fresh one (settings, in
 The Grimoire groups them by what they help with; each library offers the ones
 that fit it.
 
-- **Reading**: Sort Sense (the exact slot pulses and a compass points the way:
-  in the book's room, then anywhere), Wayfinding (the way to the book's room),
-  the Seeker's Lens (what you seek glows).
+- **Reading**: Signposts (signs of the categories you carry show through the
+  stacks), Kindred Glow (the runs of series you carry glow: on the case in front
+  of you, across the room, everywhere), Sort Sense (the exact slot pulses and a
+  compass points the way: in the book's room, then anywhere), Wayfinding (the
+  way to the book's room), the Seeker's Lens (what you seek glows). Before them,
+  read the signs, the letter ranges on the shelf edges and the titles.
 - **Moving**: Sifting Touch (seek a kind of book and scoop only it, wider with
   each level), Broad Strokes and Fine Fingers (seek by department, by series),
   Long Toss, Lodestone Grasp (long reach).
@@ -86,6 +93,8 @@ that fit it.
   files the books lying near its post whose shelves are close by; a courier
   carries books lying near its post to a shelver that can file them, or to
   their room. Familiar Wings makes them faster and stronger.
+- **Spells**, each on its own recharge: Glimpse (for a few seconds every series
+  you carry glows, and a marker shows each through the walls).
 
 ## Technical notes
 

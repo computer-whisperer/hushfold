@@ -397,9 +397,15 @@ What the playtest found:
 - **Sort Sense** and **Wayfinding** as before, dearer, after Glow II.
 - **Glimpse** (the first spell): for 10 s the slots of every carried book light
   up; recharge 45 s. Spell first, passive (Sort Sense) later.
-- The bot gets a search time per series it files, by reading level (first guess:
-  8 s with nothing, 3 s at Glow I, 1 s at Glow II, none at Glow III or with Sort
-  Sense or Glimpse ready), to be calibrated against play.
+- The bot gets a search time per series it files, by reading level, to be
+  calibrated against play. A first guess (8 s a series with nothing, 3 s at Glow
+  I, 1 s at II, and 6 s a category without Signposts) made the Hall 2.6 h and the
+  Great Library 14.7 h; for a player who has learned the layout (4 / 2 / 0.8 / 0
+  s a series, 3 s a category, nothing while Sort Sense or Glimpse shows it), with
+  Signposts and Glow I priced below Deeper Arms so they come in the first minutes:
+  the Hall ~2.3 h (Signposts at 1.7 min, Glow I at 2.9), the Great Library
+  ~13.8 h, reading about half of each trip until Glow III (~5.5 h). Re-costing
+  (step 4) brings these back to target.
 
 ### Step 3: spells and the hub
 

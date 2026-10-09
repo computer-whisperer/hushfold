@@ -10,9 +10,12 @@
 //! familiars (couriers at heaps of books far from home, shelvers at the cases with
 //! books piling up near them; one idle two minutes is walked to, taken back and
 //! posted again), running their real code over each trip. It buys the cheapest
-//! skill it can afford. It never tosses toward a destination and reads nothing
-//! (it knows every slot), so tossing and the reading skills are upside it doesn't
-//! count.
+//! skill it can afford. It knows every slot, so reading is charged as time: finding
+//! each series' run by its letters and titles, and each category's cases by their
+//! signs, less with Signposts and Kindred Glow, nothing while Sort Sense or Glimpse
+//! shows the way (first guesses, to be calibrated against play). It casts Glimpse
+//! as it starts filing whenever it is ready. It never tosses toward a destination,
+//! so tossing is upside it doesn't count.
 //!
 //! Run with `cargo test --release pacing -- --ignored --nocapture`.
 
@@ -25,6 +28,16 @@ const DT: f32 = 0.05;
 const SCOOP: f32 = 0.2 + TAP + SCOOP_GROW;
 /// Seconds to aim at a book of another group and press F to seek it.
 const SEEK: f32 = 0.5;
+/// Seconds to find a series' run by reading, by Kindred Glow level, for a player who
+/// has learned the layout: the letters on the shelf edges and the titles; the case
+/// by its letters, then a faint glow on it; a glow across the room; the glow
+/// everywhere.
+const FIND_RUN: [f32; 4] = [4.0, 2.0, 0.8, 0.0];
+/// Seconds to find a category's cases by looking for its sign, without Signposts
+/// or a glow that reaches across the room.
+const FIND_CASES: f32 = 3.0;
+/// Seconds to cast a spell.
+const CAST: f32 = 0.3;
 const FILE_CLICK: f32 = 0.9;
 /// Cells ranked by walking per book before the bot looks closer at what to sift.
 const SHORTLIST: usize = 10;
@@ -50,8 +63,8 @@ struct Bot {
     climbing: f32,
     by_familiars: u32,
     /// Where the time goes: [walking to piles, scooping, walking to slots, filing
-    /// clicks], seconds; trips and books gathered.
-    spent: [f32; 4],
+    /// clicks, reading], seconds; trips and books gathered.
+    spent: [f32; 5],
     trips: u32,
     gathered: u32,
     /// Scoops that took nothing (the books lay past a case from the aim).
@@ -60,6 +73,9 @@ struct Bot {
     reposts: u32,
     /// The group it seeks.
     seeking: Sift,
+    /// When Glimpse's effect ends, and when it can be cast again.
+    glimpse_until: f32,
+    glimpse_ready: f32,
 }
 
 impl Bot {
@@ -236,6 +252,15 @@ impl Bot {
     /// File the armful, nearest slot first; a click files one book, or a whole series
     /// with Bundle, and the aura files at its rate where that is quicker.
     fn file(&mut self) {
+        let glimpse = self.g.level(Upg::Glimpse);
+        if glimpse > 0 && self.t >= self.glimpse_ready {
+            let (lasts, recharge) = spell_times(Upg::Glimpse, glimpse);
+            self.t += CAST;
+            self.spent[4] += CAST;
+            (self.glimpse_until, self.glimpse_ready) = (self.t + lasts, self.t + recharge);
+        }
+        let mut found_series = std::collections::HashSet::new();
+        let mut found_cases = std::collections::HashSet::new();
         let g = &mut self.g;
         let speed = [4.0, 5.5, 7.0][g.level(Upg::Slippers) as usize] * 1.3;
         g.nav.fill(&mut g.walk, self.pos);
@@ -272,8 +297,25 @@ impl Bot {
             }
             let hop = hop((here, here_d), (to, d));
             let walk_m = (hop - aura_r.max(1.8)).max(0.0);
-            (here, here_d) = (to, d);
+            // Reading where it goes, unless Sort Sense (in the book's room at I) or
+            // Glimpse shows it: the run, and the cases the first time this trip.
             let s = g.lib.books[b as usize].series;
+            let cat = g.lib.category_of_book(b);
+            let sense = g.level(Upg::SortSense);
+            let shown = sense >= 2
+                || (sense == 1 && g.lib.room_at(here) == Some(g.lib.dept_of(cat)))
+                || self.t < self.glimpse_until;
+            let glow = g.level(Upg::Glow) as usize;
+            let mut read = 0.0;
+            if !shown && found_series.insert(s) {
+                read += FIND_RUN[glow];
+                if g.level(Upg::Signposts) == 0 && glow < 2 && found_cases.insert(cat) {
+                    read += FIND_CASES;
+                }
+            }
+            self.t += read;
+            self.spent[4] += read;
+            (here, here_d) = (to, d);
             let batch: Vec<u32> = if g.level(Upg::Bundle) > 0 {
                 (g.held.iter().copied())
                     .filter(|&x| g.lib.books[x as usize].series == s)
@@ -424,11 +466,13 @@ pub(super) fn simulate(layout: Layout) -> f32 {
         pos,
         climbing: 0.0,
         by_familiars: 0,
-        spent: [0.0; 4],
+        spent: [0.0; 5],
         trips: 0,
         gathered: 0,
         empty_scoops: 0,
         seeking: None,
+        glimpse_until: 0.0,
+        glimpse_ready: 0.0,
         reposts: 0,
     };
     let mut next_report = 0.0;
@@ -471,14 +515,15 @@ pub(super) fn simulate(layout: Layout) -> f32 {
             );
             let sp = bot.spent.map(|x| x / bot.trips.max(1) as f32);
             println!(
-                "            per trip: {:.0} books, {:.0} s to the pile, {:.0} s gathering, {:.0} s to slots, {:.0} s filing",
+                "            per trip: {:.0} books, {:.0} s to the pile, {:.0} s gathering, {:.0} s to slots, {:.0} s filing, {:.0} s reading",
                 bot.gathered as f32 / bot.trips.max(1) as f32,
                 sp[0],
                 sp[1],
                 sp[2],
-                sp[3]
+                sp[3],
+                sp[4]
             );
-            (bot.spent, bot.trips, bot.gathered) = ([0.0; 4], 0, 0);
+            (bot.spent, bot.trips, bot.gathered) = ([0.0; 5], 0, 0);
             next_report += 15.0 * 60.0;
         }
     }

@@ -1,7 +1,7 @@
 //! egui HUD: crosshair, armful, active-book card, world labels, toasts, Grimoire.
 
 use crate::catalog;
-use crate::game::{Aim, Cheat, Game, Group, Tier, UPGRADES, Upg, upg_costs, upg_def};
+use crate::game::{Aim, Cheat, Game, Group, SPELLS, Tier, UPGRADES, Upg, spell_times, upg_costs, upg_def};
 use crate::library::{LabelKind, Layout, ROWS};
 use crate::settings::Settings;
 use egui::{Align2, Color32, FontFamily, FontId, Pos2, Rect, RichText, Stroke, Vec2};
@@ -133,14 +133,14 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
     for l in &g.lib.labels {
         let to_eye = eye - l.pos;
         let d = to_eye.length();
-        // Signs for the categories (and departments) you carry show from anywhere on
-        // your floor (dimmed when hidden).
+        // With Signposts, signs for the categories (and departments) you carry show
+        // from anywhere on your floor (dimmed when hidden).
         let (is_sign, guide, done) = match l.kind {
             LabelKind::Shelf => (false, false, false),
             LabelKind::Category(c) => (true, carrying[c], g.category_shelved[c] == g.lib.category_books[c]),
             LabelKind::Department(d) => (true, carrying_dept[d], g.dept_shelved[d] == g.dept_total[d]),
         };
-        let guide = guide && l.level == here;
+        let guide = guide && l.level == here && g.level(Upg::Signposts) > 0;
         let facing = to_eye.dot(l.normal) > 0.0;
         if !facing && !guide {
             continue;
@@ -283,6 +283,29 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 ));
                 painter.text(edge - dir * 16.0, Align2::CENTER_CENTER, label, serif(13.0), col);
             }
+        }
+    }
+
+    // ---- Glimpse: a marker on each carried series' run, through the walls (dimmer
+    // on other floors).
+    if g.spell_on(Upg::Glimpse) {
+        let mut marked = std::collections::HashSet::new();
+        for &b in &g.held {
+            let info = &g.lib.books[b as usize];
+            if !marked.insert(info.series) {
+                continue;
+            }
+            let Some(p) = project(&vp, info.slot_pos, screen) else { continue };
+            let other_floor = g.lib.world.level_at(info.slot_pos) != here;
+            let col = bright(g.lib.series[info.series as usize].color).gamma_multiply(if other_floor { 0.45 } else { 1.0 });
+            let r = 6.0;
+            let pts = vec![
+                p + Vec2::new(0.0, -r),
+                p + Vec2::new(r, 0.0),
+                p + Vec2::new(0.0, r),
+                p + Vec2::new(-r, 0.0),
+            ];
+            painter.add(egui::Shape::convex_polygon(pts, col, Stroke::new(1.0_f32, Color32::from_black_alpha(170))));
         }
     }
 
@@ -506,6 +529,41 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             });
         });
 
+    // ---- Bottom middle: the spells learned, by key, with what is left of their
+    // effect (gold) or how far they have recharged.
+    let learned: Vec<(usize, Upg)> = (SPELLS.iter().copied().enumerate())
+        .filter(|&(_, u)| g.level(u) > 0)
+        .collect();
+    if !learned.is_empty() {
+        egui::Area::new("spells".into())
+            .anchor(Align2::CENTER_BOTTOM, [0.0, -64.0])
+            .interactable(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    for (i, u) in learned {
+                        let (lasts, recharge) = spell_times(u, g.level(u));
+                        let (left, wait) = (g.spell_left[i], g.spell_wait[i]);
+                        panel_frame().show(ui, |ui| {
+                            let ready = wait <= 0.0 || left > 0.0;
+                            let name = format!("{}  {}", i + 1, upg_def(u).name);
+                            ui.label(RichText::new(name).font(serif(14.0)).color(if ready { INK } else { DIM }));
+                            let (rect, _) = ui.allocate_exact_size(Vec2::new(96.0, 4.0), egui::Sense::hover());
+                            let (frac, col) = if left > 0.0 {
+                                (left / lasts, GOLD)
+                            } else {
+                                (1.0 - wait / recharge, if wait > 0.0 { DIM } else { GOLD })
+                            };
+                            let p = ui.painter();
+                            p.rect_filled(rect, 2.0, Color32::from_black_alpha(120));
+                            let mut fill = rect;
+                            fill.set_width(rect.width() * frac.clamp(0.0, 1.0));
+                            p.rect_filled(fill, 2.0, col);
+                        });
+                    }
+                });
+            });
+    }
+
     // ---- Bottom-right: controls reminder.
     egui::Area::new("keys".into())
         .anchor(Align2::RIGHT_BOTTOM, [-16.0, -16.0])
@@ -514,7 +572,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             let m = if hud.settings.music { "on" } else { "off" };
             ui.label(
                 RichText::new(format!(
-                    "Tap take · Hold scoop · Click a run file · Hold right toss · F seek · R sort by · Scroll cycle · Tab Grimoire · M music ({m}) · Esc pause"
+                    "Tap take · Hold scoop · Click a run file · Hold right toss · F seek · R sort by · 1–5 spells · Scroll cycle · Tab Grimoire · M music ({m}) · Esc pause"
                 ))
                 .font(serif(12.0))
                 .color(DIM.gamma_multiply(0.8)),
@@ -650,8 +708,8 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                     let body = "The night librarian has gone missing, and the library has come undone. \
                         Thousands of books lie in piles across the floor.\n\n\
                         Tap a book to take it, or hold on a pile to scoop an armful. Then find each book's home: \
-                        its category's bookcases (look for the signs), its series (the glowing outlines in its colour), \
-                        and its place in the series. Click anywhere on a series' run of outlines to file a volume.\n\n\
+                        its category's bookcases (look for the signs), the shelf whose letters take its title, \
+                        and its series' run of outlines in its colour. Click anywhere on the run to file a volume.\n\n\
                         Every book you file earns a lumen ✦. Spend them in the Grimoire to make the work lighter.";
                     ui.label(RichText::new(body).font(serif(15.0)).color(INK));
                 } else {
@@ -686,6 +744,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                          Tap a book to take it · Hold on a pile to scoop · Click a run to file\n\
                          Hold right mouse to toss a group, release to throw\n\
                          F seek a book's kind · R sort by department, category or series\n\
+                         1–5 cast the spells you have learned\n\
                          G post a familiar where you aim, or take one back\n\
                          Scroll or Q/E cycle the active book · Tab Grimoire\n\
                          M music · F11 fullscreen · Esc pause",

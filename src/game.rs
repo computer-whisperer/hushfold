@@ -61,10 +61,11 @@ pub enum Tier {
     Moving,
     Filing,
     Familiars,
+    Spells,
 }
 
 impl Tier {
-    pub const ALL: [Tier; 4] = [Tier::Reading, Tier::Moving, Tier::Filing, Tier::Familiars];
+    pub const ALL: [Tier; 5] = [Tier::Reading, Tier::Moving, Tier::Filing, Tier::Familiars, Tier::Spells];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -72,6 +73,7 @@ impl Tier {
             Tier::Moving => "Moving",
             Tier::Filing => "Filing",
             Tier::Familiars => "Familiars",
+            Tier::Spells => "Spells",
         }
     }
 
@@ -81,12 +83,15 @@ impl Tier {
             Tier::Moving => "Moving many books a long way, roughly.",
             Tier::Filing => "Putting books exactly in their place.",
             Tier::Familiars => "Paper helpers that work where you post them.",
+            Tier::Spells => "Bursts of help, each with its own recharge; cast with the number keys.",
         }
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Upg {
+    Signposts,
+    Glow,
     SortSense,
     Wayfinding,
     Lens,
@@ -103,10 +108,13 @@ pub enum Upg {
     Shelver,
     Courier,
     Wings,
+    Glimpse,
 }
 
 /// Every skill, in the Grimoire's order within its tier.
-pub const UPGRADES: [Upg; 16] = [
+pub const UPGRADES: [Upg; 19] = [
+    Upg::Signposts,
+    Upg::Glow,
     Upg::SortSense,
     Upg::Wayfinding,
     Upg::Lens,
@@ -123,7 +131,23 @@ pub const UPGRADES: [Upg; 16] = [
     Upg::Shelver,
     Upg::Courier,
     Upg::Wings,
+    Upg::Glimpse,
 ];
+
+/// The spells, in hotbar order: key 1 casts the first.
+pub const SPELLS: [Upg; 1] = [Upg::Glimpse];
+
+/// A spell at a level: (seconds its effect lasts, seconds until it can be cast again).
+pub fn spell_times(u: Upg, level: u32) -> (f32, f32) {
+    match (u, level) {
+        (Upg::Glimpse, 1) => (10.0, 45.0),
+        (Upg::Glimpse, _) => (15.0, 30.0),
+        _ => (0.0, 0.0),
+    }
+}
+
+/// Kindred Glow by level: (reach in metres, strength, glint).
+const GLOW_LEVELS: [[f32; 3]; 4] = [[0.0, 0.0, 0.0], [3.0, 0.45, 0.0], [12.0, 0.8, 0.0], [1.0e4, 1.0, 1.0]];
 
 pub struct UpgDef {
     pub name: &'static str,
@@ -133,6 +157,16 @@ pub struct UpgDef {
 
 pub fn upg_def(u: Upg) -> UpgDef {
     let (name, blurb, tier) = match u {
+        Upg::Signposts => (
+            "Signposts",
+            "The signs of the categories you carry show through the stacks, and say when their shelves face away.",
+            Tier::Reading,
+        ),
+        Upg::Glow => (
+            "Kindred Glow",
+            "The runs of the series you carry glow: faintly on the case in front of you, then across the room, then everywhere.",
+            Tier::Reading,
+        ),
         Upg::SortSense => (
             "Sort Sense",
             "The active book's slot pulses and a compass points the way: while you are in its room, then anywhere.",
@@ -197,6 +231,11 @@ pub fn upg_def(u: Upg) -> UpgDef {
             "Familiars fly faster, carry more, and reach further from their posts.",
             Tier::Familiars,
         ),
+        Upg::Glimpse => (
+            "Glimpse",
+            "For a few seconds, every series you carry glows wherever it is, and a marker shows each through the walls.",
+            Tier::Spells,
+        ),
     };
     UpgDef { name, blurb, tier }
 }
@@ -206,7 +245,10 @@ pub fn upg_def(u: Upg) -> UpgDef {
 pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
     match layout {
         Layout::Hall => match u {
-            Upg::SortSense => &[60, 300],
+            Upg::Signposts => &[10],
+            Upg::Glow => &[12, 150, 500],
+            Upg::Glimpse => &[80, 400],
+            Upg::SortSense => &[250, 900],
             Upg::Wayfinding | Upg::Broad => &[],
             Upg::Lens => &[150],
             Upg::Sift => &[40, 400],
@@ -223,7 +265,10 @@ pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
             Upg::Wings => &[800, 2000],
         },
         Layout::Great => match u {
-            Upg::SortSense => &[60, 7000],
+            Upg::Signposts => &[15],
+            Upg::Glow => &[25, 700, 3000],
+            Upg::Glimpse => &[200, 2500],
+            Upg::SortSense => &[1500, 9000],
             Upg::Wayfinding => &[400],
             Upg::Lens => &[900],
             Upg::Sift => &[80, 1800, 7000, 14000],
@@ -380,6 +425,8 @@ pub struct Input {
     pub regroup: bool,
     /// G: post a familiar, or take one back.
     pub post: bool,
+    /// 1–5: cast the spell in that hotbar slot.
+    pub cast: Option<usize>,
 }
 
 pub struct Player {
@@ -408,8 +455,9 @@ impl Player {
     }
 }
 
-/// Saves before phase 3's skills are version 0 (the field is absent).
-const SAVE_VERSION: u32 = 1;
+/// Saves before phase 3's skills are version 0 (the field is absent); version 1
+/// had the guide signs and the glow of carried series free.
+const SAVE_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct SaveData {
@@ -520,6 +568,10 @@ pub struct Game {
     /// While seeking: a book of the group sought (at `group`'s level, so R changes
     /// what is sought).
     pub seek: Option<u32>,
+    /// Each spell's seconds until it can be cast again, and seconds its effect has
+    /// left, by hotbar slot.
+    pub spell_wait: [f32; SPELLS.len()],
+    pub spell_left: [f32; SPELLS.len()],
     /// Vertical field of view on wide windows, in degrees (a setting).
     pub fov: f32,
     pub dirty_save: bool,
@@ -631,6 +683,8 @@ impl Game {
             sense: None,
             group: Group::Category,
             seek: None,
+            spell_wait: [0.0; SPELLS.len()],
+            spell_left: [0.0; SPELLS.len()],
             fov: 70.0,
             dirty_save: false,
             persist: true,
@@ -791,6 +845,12 @@ impl Game {
             }
             if input.post {
                 self.post_or_recall(audio);
+            }
+            if let Some(slot) = input.cast {
+                self.cast(slot, audio);
+            }
+            for t in self.spell_wait.iter_mut().chain(&mut self.spell_left) {
+                *t = (*t - dt).max(0.0);
             }
             if input.cycle != 0 && !self.held.is_empty() {
                 let n = self.held.len() as i32;
@@ -1104,6 +1164,38 @@ impl Game {
         }
         audio.play(Sfx::Rustle, 0.6);
         self.dirty_save = true;
+    }
+
+    /// Cast the spell in hotbar slot `slot`, if it is learned and has recharged.
+    fn cast(&mut self, slot: usize, audio: &mut Audio) {
+        let Some(&u) = SPELLS.get(slot) else { return };
+        let (lvl, name) = (self.level(u), upg_def(u).name);
+        if lvl == 0 {
+            self.hint = Some((format!("{name} is learned in the Grimoire (Tab)."), 2.0));
+            return;
+        }
+        let wait = self.spell_wait[slot];
+        if wait > 0.0 {
+            audio.play(Sfx::Nope, 0.3);
+            self.hint = Some((format!("{name} returns in {:.0} s.", wait.ceil()), 1.5));
+            return;
+        }
+        let (lasts, recharge) = spell_times(u, lvl);
+        self.spell_left[slot] = lasts;
+        self.spell_wait[slot] = recharge;
+        audio.play(Sfx::Chime, 0.5);
+    }
+
+    /// Spell `u`'s effect is running.
+    pub fn spell_on(&self, u: Upg) -> bool {
+        SPELLS.iter().position(|&x| x == u).is_some_and(|i| self.spell_left[i] > 0.0)
+    }
+
+    /// Kindred Glow as drawn (see `Globals::glow`): Glimpse lights at full.
+    fn glow(&self) -> [f32; 4] {
+        let lvl = if self.spell_on(Upg::Glimpse) { 3 } else { self.level(Upg::Glow) as usize };
+        let [reach, strength, glint] = GLOW_LEVELS[lvl];
+        [reach, strength, glint, 0.0]
     }
 
     /// Which department, category or series (by the sorting group) book `b` is in.
@@ -1761,6 +1853,7 @@ impl Game {
             ambient_top: [0.19, 0.18, 0.24, 0.0],
             ambient_bottom: [0.09, 0.065, 0.05, n],
             lens: self.lens_sought(),
+            glow: self.glow(),
             lights,
         }
     }
@@ -1851,11 +1944,13 @@ impl Game {
                 dyn_insts.push(self.book_inst(b, self.pos[b], self.rot[b], false));
             }
         }
-        // Ghosts: the series you carry glow, the one you aim at brightens, and with
-        // Sort Sense the active book's slot pulses.
+        // Ghosts: with Kindred Glow (or Glimpse) the series you carry glow, the one
+        // you aim at brightens, and with Sort Sense the active book's slot pulses.
         let mut lit = std::collections::HashMap::new();
-        for &b in &self.held {
-            lit.insert(self.lib.books[b as usize].series, (1, false));
+        if self.level(Upg::Glow) > 0 || self.spell_on(Upg::Glimpse) {
+            for &b in &self.held {
+                lit.insert(self.lib.books[b as usize].series, (1, false));
+            }
         }
         if let Aim::Shelf { run: Some(r), .. } = self.aim {
             lit.entry(r.series).or_insert((0, false)).1 = true;
@@ -2271,6 +2366,12 @@ impl Game {
             if let Some(&n) = data.levels.get("Familiar") {
                 self.upg[upg_index(Upg::Shelver)] = n;
             }
+        }
+        if data.version < 2 {
+            // Guide signs and the glow of carried series were free before they were
+            // skills; a game begun then keeps them.
+            self.upg[upg_index(Upg::Signposts)] = 1;
+            self.upg[upg_index(Upg::Glow)] = 3;
         }
         for (i, &u) in UPGRADES.iter().enumerate() {
             self.upg[i] = self.upg[i].min(upg_costs(self.layout, u).len() as u32);
@@ -3003,6 +3104,9 @@ mod tests {
         assert_eq!(old.level(Upg::Arms), 2);
         let riding = old.familiars().filter(|&(r, posted)| r == Role::Shelver && !posted);
         assert_eq!(riding.count(), 3);
+        // Saves before reading was earned keep the guide signs and the full glow.
+        assert_eq!((old.level(Upg::Signposts), old.level(Upg::Glow)), (1, 3));
+        assert_eq!((hall.level(Upg::Signposts), hall.level(Upg::Glow)), (0, 0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3194,4 +3298,53 @@ mod tests {
         assert!(g.scoop.is_none());
         assert_eq!(g.loose.heightfield_errors(), 0);
     }
+
+    /// The runs of carried series glow only with Kindred Glow, at its level's reach,
+    /// or at full while Glimpse lasts; Glimpse then waits out its recharge.
+    #[test]
+    fn reading_is_earned() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = crate::audio::Audio::silent();
+        let b = (0..g.lib.books.len() as u32).find(|&b| g.loose.is_resting(b)).unwrap();
+        g.loose.take(&[b]);
+        g.state[b as usize] = BookState::Held;
+        g.held.push(b);
+        let series = g.lib.books[b as usize].series;
+        let tick = |g: &mut Game, cast: Option<usize>, audio: &mut crate::audio::Audio| {
+            let input = Input {
+                cast,
+                ..Input::default()
+            };
+            g.update(0.5, &input, audio, true);
+            g.build_instances();
+        };
+        tick(&mut g, None, &mut audio);
+        assert_eq!(g.scene.lit(series).0, 0, "no glow before it is learned");
+        g.upg[upg_index(Upg::Glow)] = 1;
+        tick(&mut g, None, &mut audio);
+        assert_eq!(g.scene.lit(series).0, 1);
+        assert_eq!(g.glow()[0], GLOW_LEVELS[1][0]);
+        // Glimpse lights at full while it lasts, and can't be cast again until it
+        // has recharged.
+        g.upg[upg_index(Upg::Glimpse)] = 1;
+        let (lasts, recharge) = spell_times(Upg::Glimpse, 1);
+        tick(&mut g, Some(0), &mut audio);
+        assert!(g.spell_on(Upg::Glimpse));
+        assert_eq!(g.glow()[0], GLOW_LEVELS[3][0]);
+        let mut t = 0.5;
+        while t < lasts + 0.5 {
+            tick(&mut g, None, &mut audio);
+            t += 0.5;
+        }
+        assert!(!g.spell_on(Upg::Glimpse));
+        tick(&mut g, Some(0), &mut audio);
+        assert!(!g.spell_on(Upg::Glimpse), "still recharging");
+        while t < recharge + 0.5 {
+            tick(&mut g, None, &mut audio);
+            t += 0.5;
+        }
+        tick(&mut g, Some(0), &mut audio);
+        assert!(g.spell_on(Upg::Glimpse));
+    }
+
 }
