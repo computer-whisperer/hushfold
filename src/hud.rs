@@ -3,10 +3,12 @@
 use crate::catalog::{self, CATEGORIES};
 use crate::game::{Aim, Game, UPGRADES, Upg, upg_def};
 use crate::library::{ROWS, wing_of_category};
+use crate::settings::Settings;
 use egui::{Align2, Color32, FontFamily, FontId, Pos2, Rect, RichText, Stroke, Vec2};
 use glam::{Mat4, Vec3, Vec4};
 
 pub struct Hud {
+    pub settings: Settings,
     pub menu_open: bool,
     pub show_intro: bool,
     pub show_stats: bool,
@@ -20,6 +22,8 @@ pub enum HudAction {
     Buy(Upg),
     Begin,
     CloseMenu,
+    SettingsChanged,
+    Quit,
 }
 
 const INK: Color32 = Color32::from_rgb(236, 224, 200);
@@ -568,6 +572,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
 
     // ---- Intro / pause.
     if hud.show_intro {
+        let fresh = g.total_shelved() == 0 && g.held.is_empty() && g.lumens == 0;
         egui::Window::new(RichText::new("Hushfold Library").font(serif(30.0)).color(GOLD))
             .collapsible(false)
             .resizable(false)
@@ -576,20 +581,101 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
             .frame(panel_frame().fill(Color32::from_rgba_unmultiplied(24, 16, 12, 240)))
             .show(ctx, |ui| {
                 ui.set_width(520.0);
-                let body = "The night librarian has gone missing, and the library has come undone. \
-                    Thousands of books lie in heaps across the floor.\n\n\
-                    Gather an armful from any heap, then find each book's home: its category's \
-                    bookcases (look for the signs), its series (the glowing outlines in its colour), \
-                    and its place in the series. Click anywhere on a series' run of outlines to file a volume.\n\n\
-                    Every book you file earns a lumen ✦. Spend them in the Grimoire to make the work lighter.";
-                ui.label(RichText::new(body).font(serif(15.0)).color(INK));
+                for style in [egui::TextStyle::Body, egui::TextStyle::Button] {
+                    ui.style_mut().text_styles.insert(style, serif(15.0));
+                }
+                if fresh {
+                    let body = "The night librarian has gone missing, and the library has come undone. \
+                        Thousands of books lie in heaps across the floor.\n\n\
+                        Gather an armful from any heap, then find each book's home: its category's \
+                        bookcases (look for the signs), its series (the glowing outlines in its colour), \
+                        and its place in the series. Click anywhere on a series' run of outlines to file a volume.\n\n\
+                        Every book you file earns a lumen ✦. Spend them in the Grimoire to make the work lighter.";
+                    ui.label(RichText::new(body).font(serif(15.0)).color(INK));
+                } else {
+                    let mins = (g.play_time / 60.0) as u64;
+                    let time = if mins >= 60 {
+                        format!("{} h {} min", mins / 60, mins % 60)
+                    } else {
+                        format!("{mins} min")
+                    };
+                    ui.label(
+                        RichText::new(format!(
+                            "{} of {} books are home · {} in the stacks",
+                            g.total_shelved(),
+                            g.total_books(),
+                            time
+                        ))
+                        .font(serif(16.0))
+                        .color(INK),
+                    );
+                    ui.label(
+                        RichText::new("Your place is kept; progress saves as you go.")
+                            .font(serif(13.0))
+                            .color(DIM),
+                    );
+                }
                 ui.add_space(8.0);
-                ui.label(RichText::new("WASD walk · Shift hurry · Mouse look · Click gather/file\nScroll or Q/E cycle the active book · Tab Grimoire · M music · F3 stats · Esc pause").font(serif(13.0)).color(DIM));
+                ui.label(
+                    RichText::new(
+                        "WASD walk · Shift hurry · Mouse look · Click gather/file\n\
+                         Scroll or Q/E cycle the active book · Tab Grimoire\n\
+                         M music · F11 fullscreen · Esc pause",
+                    )
+                    .font(serif(13.0))
+                    .color(DIM),
+                );
+                ui.add_space(6.0);
+                egui::CollapsingHeader::new(RichText::new("Settings").font(serif(15.0)).color(INK))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        let st = &mut hud.settings;
+                        let before = *st;
+                        ui.add(
+                            egui::Slider::new(&mut st.look_speed, 0.2..=4.0)
+                                .logarithmic(true)
+                                .fixed_decimals(2)
+                                .text("Look speed"),
+                        );
+                        ui.checkbox(&mut st.invert_look, "Invert vertical look");
+                        ui.add(
+                            egui::Slider::new(&mut st.fov, 55.0..=90.0)
+                                .suffix("°")
+                                .integer()
+                                .text("Field of view"),
+                        );
+                        fn pct(v: &mut f32) -> egui::Slider<'_> {
+                            egui::Slider::new(v, 0.0..=1.0).custom_formatter(|x, _| format!("{:.0}%", x * 100.0))
+                        }
+                        ui.add(pct(&mut st.music_volume).text("Music"));
+                        ui.add(pct(&mut st.effects_volume).text("Effects and ambience"));
+                        if *st != before {
+                            actions.push(HudAction::SettingsChanged);
+                        }
+                    });
                 ui.add_space(10.0);
-                ui.vertical_centered(|ui| {
-                    let label = if g.total_shelved() > 0 || g.lumens > 0 { "Return to the stacks" } else { "Begin" };
-                    if ui.add(egui::Button::new(RichText::new(label).font(serif(20.0)).color(GOLD)).min_size(Vec2::new(220.0, 40.0))).clicked() {
+                ui.horizontal(|ui| {
+                    let label = if fresh { "Begin" } else { "Return to the stacks" };
+                    let w = ui.available_width();
+                    ui.add_space((w - 220.0 - 160.0 - 12.0).max(0.0) * 0.5);
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new(label).font(serif(20.0)).color(GOLD))
+                                .min_size(Vec2::new(220.0, 40.0)),
+                        )
+                        .clicked()
+                    {
                         actions.push(HudAction::Begin);
+                    }
+                    ui.add_space(12.0);
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("Save and quit").font(serif(16.0)).color(DIM))
+                                .min_size(Vec2::new(160.0, 40.0)),
+                        )
+                        .clicked()
+                    {
+                        actions.push(HudAction::Quit);
                     }
                 });
             });

@@ -29,10 +29,11 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | F3 | performance overlay |
 | F11 | fullscreen |
 | F12 | screenshot to `~/Pictures` (`%USERPROFILE%\Pictures` on Windows) |
-| Esc | pause (progress is saved; autosave every 20 s) |
+| Esc | pause: settings (look speed, invert, field of view, volumes) and save-and-quit |
 
-Save file: `$XDG_DATA_HOME/hushfold/save.json` on Linux, `%APPDATA%\hushfold\save.json`
-on Windows (delete it to start over).
+Progress autosaves every 20 s and on pause or quit. The save lives in
+`$XDG_DATA_HOME/hushfold/save.json` on Linux and `%APPDATA%\hushfold\save.json` on
+Windows (delete it to start over); settings sit beside it in `settings.json`.
 
 ## How filing works
 

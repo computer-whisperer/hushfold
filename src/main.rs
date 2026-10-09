@@ -9,11 +9,13 @@ mod hud;
 mod library;
 mod nav;
 mod platform;
+mod settings;
 
 use audio::Audio;
 use game::{Game, Input};
 use gfx::{FrameInput, PostParams, Renderer};
 use hud::{Hud, HudAction};
+use settings::Settings;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
@@ -39,6 +41,11 @@ struct Running {
     last: Instant,
     save_timer: f32,
     fps_acc: (f32, u32),
+    /// Fractional scroll from touchpads, which report pixels.
+    scroll_acc: f32,
+    /// Render without waiting for the compositor (`HUSHFOLD_UNPACED`).
+    unpaced: bool,
+    quit: bool,
     script: Option<Script>,
 }
 
@@ -76,6 +83,19 @@ impl Running {
             self.grabbed = false;
         }
         self.input.primary_down = false;
+    }
+
+    fn apply_settings(&mut self) {
+        let s = self.hud.settings;
+        self.game.fov = s.fov;
+        self.audio.set_volumes(s.music_volume, s.effects_volume);
+    }
+
+    /// Persist settings (never from scripted runs, which use the defaults).
+    fn save_settings(&self) {
+        if self.script.is_none() {
+            self.hud.settings.save();
+        }
     }
 
     fn playing(&self) -> bool {
@@ -138,6 +158,7 @@ impl Running {
             }
             KeyCode::F10 => {
                 self.game.save();
+                self.save_settings();
                 event_loop.exit();
             }
             _ => {}
@@ -205,8 +226,11 @@ impl Running {
                 }
                 HudAction::Begin => {
                     self.hud.show_intro = false;
+                    self.save_settings();
                     self.set_grab(true);
                 }
+                HudAction::SettingsChanged => self.apply_settings(),
+                HudAction::Quit => self.quit = true,
                 HudAction::CloseMenu => {
                     self.hud.menu_open = false;
                     self.set_grab(true);
@@ -366,6 +390,11 @@ impl ApplicationHandler for App {
             if loaded { " (save loaded)" } else { "" }
         );
         renderer.set_static(&game.lib.static_insts);
+        let settings = if script.is_none() {
+            Settings::load()
+        } else {
+            Settings::default()
+        };
         let egui_ctx = egui::Context::default();
         hud::install_fonts(&egui_ctx);
         egui_ctx.set_visuals(egui::Visuals::dark());
@@ -377,13 +406,14 @@ impl ApplicationHandler for App {
             None,
             None,
         );
-        self.run = Some(Running {
+        let mut run = Running {
             renderer,
             egui_ctx,
             egui_state,
             game,
             audio: Audio::new(),
             hud: Hud {
+                settings,
                 menu_open: false,
                 show_intro: script.is_none(),
                 show_stats: false,
@@ -398,8 +428,13 @@ impl ApplicationHandler for App {
             last: Instant::now(),
             save_timer: 0.0,
             fps_acc: (0.0, 0),
+            scroll_acc: 0.0,
+            unpaced: std::env::var_os("HUSHFOLD_UNPACED").is_some(),
+            quit: false,
             script,
-        });
+        };
+        run.apply_settings();
+        self.run = Some(run);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -424,6 +459,7 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => {
                 r.game.save();
+                r.save_settings();
                 event_loop.exit();
             }
             WindowEvent::Resized(s) => r.renderer.resize(s.width, s.height),
@@ -456,14 +492,16 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } if r.playing() => {
-                let d = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(p) => (p.y / 40.0) as f32,
-                };
-                if d > 0.0 {
-                    r.input.cycle -= 1;
-                } else if d < 0.0 {
-                    r.input.cycle += 1;
+                match delta {
+                    // One book per wheel notch, however finely the wheel reports.
+                    MouseScrollDelta::LineDelta(_, y) => r.input.cycle -= y.signum() as i32,
+                    // Touchpads report pixels: one book per 40 px of travel.
+                    MouseScrollDelta::PixelDelta(p) => {
+                        r.scroll_acc += p.y as f32 / 40.0;
+                        let steps = r.scroll_acc.trunc();
+                        r.scroll_acc -= steps;
+                        r.input.cycle -= steps as i32;
+                    }
                 }
             }
             _ => {}
@@ -476,14 +514,22 @@ impl ApplicationHandler for App {
             && r.playing()
             && r.script.is_none()
         {
-            r.input.look += glam::Vec2::new(delta.0 as f32, delta.1 as f32) * MOUSE_SENS;
+            let s = r.hud.settings;
+            let y = if s.invert_look { -delta.1 } else { delta.1 };
+            r.input.look += glam::Vec2::new(delta.0 as f32, y as f32) * MOUSE_SENS * s.look_speed;
         }
     }
 
-    fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(r) = &mut self.run {
+            if r.quit {
+                r.game.save();
+                r.save_settings();
+                event_loop.exit();
+                return;
+            }
             // Benchmark switch: render as fast as possible instead of on the compositor's frame callback.
-            if std::env::var_os("HUSHFOLD_UNPACED").is_some() {
+            if r.unpaced {
                 r.frame();
             } else {
                 r.renderer.window.request_redraw();

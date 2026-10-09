@@ -16,11 +16,12 @@ const SHELF_REACH: f32 = 4.2;
 const PLAYER_R: f32 = 0.3;
 const HAND_VISIBLE: usize = 8;
 
-/// Vertical FOV: 70° on wide windows, widened so the horizontal FOV never drops below 85°.
-fn vfov(aspect: f32) -> f32 {
-    let min_h = 85f32.to_radians();
+/// Vertical FOV: `v_deg` on wide windows, widened on narrow ones so the horizontal
+/// FOV never drops below `v_deg` × 85/70 (85° at the default 70°).
+fn vfov(aspect: f32, v_deg: f32) -> f32 {
+    let min_h = (v_deg * 85.0 / 70.0).to_radians();
     let from_h = 2.0 * ((min_h * 0.5).tan() / aspect).atan();
-    70f32.to_radians().max(from_h).min(110f32.to_radians())
+    v_deg.to_radians().max(from_h).min(110f32.to_radians())
 }
 
 // ------------------------------------------------------------------ upgrades
@@ -274,6 +275,8 @@ pub struct Game {
     nav: Nav,
     /// Sort Sense: the way to the active book's slot.
     pub sense_route: Option<Route>,
+    /// Vertical field of view on wide windows, in degrees (a setting).
+    pub fov: f32,
     pub dirty_save: bool,
     /// False in scripted runs so they never touch the player's save.
     pub persist: bool,
@@ -359,6 +362,7 @@ impl Game {
             heap_bounds: Vec::new(),
             nav: Nav::new(&lib.obstacles),
             sense_route: None,
+            fov: 70.0,
             dirty_save: false,
             persist: true,
             lib,
@@ -1248,7 +1252,7 @@ impl Game {
 
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = Mat4::look_to_rh(self.player.eye(), self.player.forward(), Vec3::Y);
-        let proj = Mat4::perspective_rh(vfov(aspect), aspect, 0.03, 140.0);
+        let proj = Mat4::perspective_rh(vfov(aspect, self.fov), aspect, 0.03, 140.0);
         proj * view
     }
 

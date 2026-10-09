@@ -79,8 +79,11 @@ pub struct Audio {
     banks: Vec<Vec<Arc<[f32]>>>,
     last: [Option<Instant>; SFX_COUNT],
     rng: StdRng,
-    pub music_gain: Arc<AtomicU32>,
+    music_gain: Arc<AtomicU32>,
+    ambience_gain: Arc<AtomicU32>,
     pub music_on: bool,
+    music_volume: f32,
+    effects_volume: f32,
 }
 
 impl Audio {
@@ -112,10 +115,12 @@ impl Audio {
         banks[sfx_index(Sfx::Tick)].push(tick().into());
         banks[sfx_index(Sfx::Purchase)].push(purchase().into());
 
-        let music_gain = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let music_gain = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let ambience_gain = Arc::new(AtomicU32::new(0.0f32.to_bits()));
         if let Some(s) = &sink {
             let mixer = s.mixer().clone();
             let gain = music_gain.clone();
+            let amb_gain = ambience_gain.clone();
             std::thread::spawn(move || {
                 let amb: Arc<[f32]> = ambience().into();
                 mixer.add(Clip {
@@ -123,8 +128,8 @@ impl Audio {
                     pos: 0,
                     gain: 0.35,
                     looping: true,
-                    live_gain: None,
-                    smoothed: 1.0,
+                    live_gain: Some(amb_gain),
+                    smoothed: 0.0,
                 });
                 let music: Arc<[f32]> = music().into();
                 mixer.add(Clip {
@@ -143,7 +148,10 @@ impl Audio {
             last: [None; SFX_COUNT],
             rng,
             music_gain,
+            ambience_gain,
             music_on: true,
+            music_volume: 1.0,
+            effects_volume: 1.0,
         }
     }
 
@@ -156,14 +164,30 @@ impl Audio {
             last: [None; SFX_COUNT],
             rng: StdRng::seed_from_u64(0),
             music_gain: Arc::new(AtomicU32::new(0)),
+            ambience_gain: Arc::new(AtomicU32::new(0)),
             music_on: false,
+            music_volume: 0.0,
+            effects_volume: 0.0,
         }
+    }
+
+    /// Volumes in 0..=1. Effects cover sound effects and the hall's ambience.
+    pub fn set_volumes(&mut self, music: f32, effects: f32) {
+        self.music_volume = music;
+        self.effects_volume = effects;
+        self.apply_gains();
     }
 
     pub fn toggle_music(&mut self) {
         self.music_on = !self.music_on;
-        let g: f32 = if self.music_on { 1.0 } else { 0.0 };
-        self.music_gain.store(g.to_bits(), Ordering::Relaxed);
+        self.apply_gains();
+    }
+
+    fn apply_gains(&self) {
+        let music = if self.music_on { self.music_volume } else { 0.0 };
+        self.music_gain.store(music.to_bits(), Ordering::Relaxed);
+        self.ambience_gain
+            .store(self.effects_volume.to_bits(), Ordering::Relaxed);
     }
 
     pub fn play(&mut self, s: Sfx, vol: f32) {
@@ -203,7 +227,7 @@ impl Audio {
         sink.mixer().add(Clip {
             data,
             pos: 0,
-            gain: vol,
+            gain: vol * self.effects_volume,
             looping: false,
             live_gain: None,
             smoothed: 1.0,
