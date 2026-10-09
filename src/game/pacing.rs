@@ -473,7 +473,7 @@ impl Bot {
                     g.player.pos = stand;
                     (g.group, g.seek) = (Group::Series, Some(b));
                     if g.aim_toss(target) < 0.8 {
-                        g.toss(&mut self.audio);
+                        g.toss(false, &mut self.audio);
                     }
                     (g.group, g.seek) = (group, None);
                     if g.held.len() < before.len() {

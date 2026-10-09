@@ -28,7 +28,8 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | WASD / Shift | walk / hurry |
 | Mouse | look |
 | Left click | tap a book to take it · hold on a pile to scoop what is inside the ring · click a series run to file |
-| Right mouse (hold) | charge a toss, with an arc showing where it lands; release to throw your whole armful, or while seeking only what you seek (a quick click drops it just ahead) |
+| Right mouse (hold) | charge a toss, with an arc showing where it lands; release to throw every book you carry of the group you seek, or else of the active book's group |
+| X (hold) | the same for your whole armful (a tap drops it just ahead) |
 | F | seek the aimed book's kind: scoops take only those books, from any depth (Sifting Touch); F again stops |
 | R | the level you seek and toss at: category, or with upgrades department or series |
 | 1–5 | cast a spell you have learned (the hotbar shows each one's recharge) |
@@ -144,7 +145,7 @@ that fit it.
   in the Hall unless `HUSHFOLD_LIBRARY=great`. Commands
   (one per line): `pose x y z yaw pitch`, `wait frames`, `walk fwd frames`,
   `click` (a tap), `press` / `release` (hold and release the left button),
-  `cycle n`, `charge` / `throw` (hold and release the toss), `seek`, `regroup`,
+  `cycle n`, `charge [all]` / `throw` (hold and release the toss; `all`: the armful toss, X), `seek`, `regroup`,
   `post`, `cheats on|off`, `cheat lumens n|skills|veils|shelve fraction|goto [department]`,
   `facepile`, `faceslot`, `facefam i`, `lookat x y z dist`, `fill category fraction`,
   `take category n`, `unveil`, `library hall|great` (a fresh one), `grant lumens`,

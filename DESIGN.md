@@ -73,11 +73,13 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
   for 0.4 s after a 0.18 s tap; release to take the topmost books inside it, up
   to arm capacity. Its largest size grows with the room in the arms.
 - Hold right mouse: charge a toss (the arc and landing ring show where it goes);
-  release to throw the whole armful as a stream, or while seeking only the books
-  of the group sought (none held: nothing, with a hint). A quick click throws at
-  the least strength, dropping the armful just ahead. Left hold gathers, right
-  hold throws. (It used to throw the active book's group, which in a mixed early
-  armful was often one book; the playtest wanted the armful.)
+  release to throw every held book of the group sought, or if none is held the
+  active book's group, as a stream. Left hold gathers, right hold throws.
+- Hold X: the same for the whole armful; a tap drops it just ahead (the least
+  strength). The right-mouse toss threw the whole armful for a while, after the
+  playtest asked for a way to throw it; the playtester had been using the group
+  toss, often one book in a mixed early armful, to throw books toward their own
+  sections, so the armful got its own key instead.
 - F (Sifting Touch): *seek* the aimed book's group (F at a book of the group
   sought, or at nothing, stops; at nothing while not seeking, seeks the active
   book's group). While seeking, the scoop takes only the group sought, from any
@@ -213,7 +215,7 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   Library takes 8.5 h (filing) to 13.1 h (hands): no path but filing has an
   engine of its own yet.
 - Some series starting together (the Great Library), the bot hunting sets,
-  familiars doubled, the whole-armful toss: series complete through the game
+  familiars doubled, the whole-armful toss (X): series complete through the game
   rather than at the end; the Hall ~1.6 h, the Great Library ~8.6 h; by path
   the Great Library 7.9 h (filing) to 11.5 h (hands), familiars 11.1 h.
 

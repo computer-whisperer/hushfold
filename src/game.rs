@@ -455,10 +455,13 @@ pub struct Input {
     /// Left button: a tap takes one book, a hold scoops; a press on a run files.
     pub primary_down: bool,
     pub primary_pressed: bool,
-    /// Held to charge a toss; released to throw.
+    /// Right button: held to charge a toss of a group; released to throw.
     pub toss_down: bool,
     /// Pressed this frame (a press and release within one frame still tosses).
     pub toss_pressed: bool,
+    /// X: the same for the whole armful.
+    pub armful_down: bool,
+    pub armful_pressed: bool,
     /// F: seek the aimed book's group, or stop.
     pub seek: bool,
     pub cycle: i32,
@@ -583,6 +586,8 @@ pub struct Game {
     /// Toss charge, 0..1, while the toss button is held.
     pub toss_charge: f32,
     toss_was_down: bool,
+    /// The toss charging throws the whole armful (X) rather than a group.
+    toss_armful: bool,
     /// While charging: the predicted arc and where it lands.
     pub toss_arc: Vec<Vec3>,
     pub toss_land: Option<Vec3>,
@@ -714,6 +719,7 @@ impl Game {
             scoop: None,
             toss_charge: 0.0,
             toss_was_down: false,
+            toss_armful: false,
             toss_arc: Vec::new(),
             toss_land: None,
             aura_budget: 0.0,
@@ -1365,9 +1371,13 @@ impl Game {
         (hand, dir * speed)
     }
 
-    /// Charge while the toss button is held (showing the arc); throw on release.
+    /// Charge while a toss button is held (showing the arc); throw on release.
     fn update_toss(&mut self, dt: f32, input: &Input, audio: &mut Audio) {
-        let down = input.toss_down || input.toss_pressed;
+        let armful = input.armful_down || input.armful_pressed;
+        let down = input.toss_down || input.toss_pressed || armful;
+        if down && !self.toss_was_down {
+            self.toss_armful = armful;
+        }
         let released = self.toss_was_down && !down;
         self.toss_was_down = down;
         self.toss_arc.clear();
@@ -1382,29 +1392,26 @@ impl Game {
             self.hint = Some(("Nothing to toss — gather some books first.".into(), 1.5));
         }
         if released && !self.held.is_empty() {
-            self.toss(audio);
+            self.toss(self.toss_armful, audio);
         }
         if !down {
             self.toss_charge = 0.0;
         }
     }
 
-    /// Throw the armful as a loose stream, or while seeking only the books of the
-    /// group sought.
-    fn toss(&mut self, audio: &mut Audio) {
-        let group: Vec<u32> = match self.sought() {
-            Some((_, key)) => self.held.iter().copied().filter(|&b| self.group_of(b) == key).collect(),
-            None => self.held.clone(),
+    /// Throw every held book of the group sought, or if none is held the active
+    /// book's group, as a loose stream; with `armful`, everything held.
+    fn toss(&mut self, armful: bool, audio: &mut Audio) {
+        let Some(active) = self.active_book() else { return };
+        let group: Vec<u32> = if armful {
+            self.held.clone()
+        } else {
+            let key = match self.sought() {
+                Some((_, key)) if self.held.iter().any(|&b| self.group_of(b) == key) => key,
+                _ => self.group_of(active),
+            };
+            self.held.iter().copied().filter(|&b| self.group_of(b) == key).collect()
         };
-        if group.is_empty() {
-            audio.play(Sfx::Nope, 0.3);
-            self.hint = Some((
-                "You carry none of what you seek (F at nothing stops seeking).".into(),
-                2.5,
-            ));
-            self.toss_charge = 0.0;
-            return;
-        }
         let prev = self.active_book();
         self.held.retain(|b| !group.contains(b));
         self.follow_active(prev);
@@ -2978,15 +2985,15 @@ mod tests {
         }
         check(&mut g);
         assert!(g.held.len() > 10, "gathered {}", g.held.len());
-        // File one, toss the rest, and check mid-flight and after everything has landed.
+        // Toss some, file one, and check mid-flight and after everything has landed.
+        g.toss_charge = 0.6;
+        g.toss(false, &mut audio);
         if let Some(b) = g.active_book() {
             g.leave_hand(&[b]);
             g.held.retain(|&h| h != b);
             g.state[b as usize] = BookState::Filing;
             g.start_flight(b, Dest::Shelf, 0.42, 0.0);
         }
-        g.toss_charge = 0.6;
-        g.toss(&mut audio);
         for k in 0..240 {
             g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
             if k % 20 == 0 {
@@ -3297,9 +3304,9 @@ mod tests {
         assert!(g.sense.is_some_and(|s| s.room.is_none()), "{:?}", g.sense);
     }
 
-    /// Toss throws the armful, or while seeking only the group sought; R cycles the
-    /// groups learned; F seeks, the lens lights what is sought, and a held scoop
-    /// takes only it.
+    /// Toss throws the active book's group, or the group sought; X throws the whole
+    /// armful; R cycles the groups learned; F seeks, the lens lights what is sought,
+    /// and a held scoop takes only it.
     #[test]
     fn toss_and_seek_take_the_group() {
         let mut g = Game::new(Layout::Great);
@@ -3320,10 +3327,18 @@ mod tests {
             }
             g.active = 0;
         };
-        // Not seeking, toss throws the whole armful.
         hold(&mut g);
         g.toss_charge = 0.5;
-        g.toss(&mut audio);
+        g.toss(false, &mut audio);
+        assert_eq!(g.held, vec![same_dept, other]);
+        // A tap of X (pressed one frame, up the next) throws everything.
+        let x = Input {
+            armful_pressed: true,
+            ..Input::default()
+        };
+        for input in [x, Input::default()] {
+            g.update(1.0 / 60.0, &input, &mut audio, true);
+        }
         assert!(g.held.is_empty());
         // Learn Broad Strokes; R moves from category to department.
         g.upg[upg_index(Upg::Broad)] = 1;
@@ -3333,20 +3348,21 @@ mod tests {
         };
         g.update(1.0 / 60.0, &r, &mut audio, true);
         assert_eq!(g.group, Group::Department);
+        hold(&mut g);
+        g.toss(false, &mut audio);
+        assert_eq!(g.held, vec![other]);
         // F at nothing seeks the active book's department, and the lens lights it.
         g.upg[upg_index(Upg::Sift)] = 4;
         g.upg[upg_index(Upg::Lens)] = 1;
         g.upg[upg_index(Upg::Arms)] = 4;
-        hold(&mut g);
-        g.active = 2;
         g.aim = Aim::None;
         g.press_seek(&mut audio);
         assert_eq!(g.sought(), Some((Group::Department, dept(&g, other))));
         assert_eq!(g.lens_sought(), [1.0, dept(&g, other) as f32, 0.0, 0.0]);
-        // Seeking, toss throws only the group sought; holding none of it, nothing.
-        g.toss(&mut audio);
-        assert_eq!(g.held, vec![a, same_dept]);
-        g.toss(&mut audio);
+        // Holding one of the group sought, toss throws it rather than the active book's.
+        g.held.clear();
+        hold(&mut g);
+        g.toss(false, &mut audio);
         assert_eq!(g.held, vec![a, same_dept]);
         // F at a book of another department seeks that one instead.
         g.held.clear();
@@ -3508,7 +3524,7 @@ mod tests {
             g.player.pos = g.nav.standable_near(floor + normal * 6.0);
             let off = g.aim_toss(floor + normal * 0.6);
             assert!(off < 1.0, "the toss lands {off:.2} m off");
-            g.toss(&mut audio);
+            g.toss(false, &mut audio);
             for _ in 0..240 {
                 g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
             }

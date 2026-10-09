@@ -205,6 +205,8 @@ impl Running {
             KeyCode::KeyF => self.input.seek = true,
             KeyCode::KeyR => self.input.regroup = true,
             KeyCode::KeyG => self.input.post = true,
+            // Latched so a tap shorter than a frame still tosses.
+            KeyCode::KeyX => self.input.armful_pressed = true,
             KeyCode::Digit1 => self.input.cast = Some(0),
             KeyCode::Digit2 => self.input.cast = Some(1),
             KeyCode::Digit3 => self.input.cast = Some(2),
@@ -261,15 +263,18 @@ impl Running {
             self.input.forward = (k(KeyCode::KeyW) as i32 - k(KeyCode::KeyS) as i32) as f32;
             self.input.strafe = (k(KeyCode::KeyD) as i32 - k(KeyCode::KeyA) as i32) as f32;
             self.input.sprint = k(KeyCode::ShiftLeft) || k(KeyCode::ShiftRight);
+            self.input.armful_down = k(KeyCode::KeyX);
         } else {
             self.input.forward = 0.0;
             self.input.strafe = 0.0;
+            self.input.armful_down = false;
             self.input.look = glam::Vec2::ZERO;
         }
         self.game.update(dt, &self.input, &mut self.audio, playing);
         self.input.look = glam::Vec2::ZERO;
         self.input.primary_pressed = false;
         self.input.toss_pressed = false;
+        self.input.armful_pressed = false;
         self.input.seek = false;
         self.input.cycle = 0;
         self.input.regroup = false;
@@ -387,9 +392,11 @@ impl Running {
                 Some("lookat") => self
                     .game
                     .script_look_at(glam::Vec3::new(num(1), num(2), num(3)), num(4)),
-                // charge … wait N … throw: hold and release the toss button.
+                // charge [all] … wait N … throw: hold and release the toss button (with
+                // `all`, X: the whole armful).
+                Some("charge") if w.get(1) == Some(&"all") => self.input.armful_down = true,
                 Some("charge") => self.input.toss_down = true,
-                Some("throw") => self.input.toss_down = false,
+                Some("throw") => (self.input.toss_down, self.input.armful_down) = (false, false),
                 Some("seek") => self.input.seek = true,
                 Some("regroup") => self.input.regroup = true,
                 Some("post") => self.input.post = true,

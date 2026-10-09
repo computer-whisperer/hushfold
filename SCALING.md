@@ -537,7 +537,10 @@ Built (2026-10-09), and measured:
 - Familiars about doubled (`WINGS`); they set off from still after taking or
   filing a book (their carried speed swung them into cases at the new speeds),
   and the flying tests run at the slowest and fastest Wings.
-- The toss throws the whole armful, or while seeking only what is sought.
+- The toss throws the whole armful, or while seeking only what is sought. Taken
+  back the same day: the playtester threw the active book's group (often one
+  book) toward its section, so right mouse throws the group again and X throws
+  the armful.
 - Refit: lumens now come sooner, so the old costs ran the Great Library in
   ~7.8 h with everything early. Scaling purchase by purchase drifted (raising
   the early, slightly-early costs delayed the engines; 9.5 → 9.7 → 10.1 h with

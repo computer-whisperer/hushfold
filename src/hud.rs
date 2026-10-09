@@ -609,7 +609,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             let m = if hud.settings.music { "on" } else { "off" };
             ui.label(
                 RichText::new(format!(
-                    "Tap take · Hold scoop · Click a run file · Hold right toss · F seek · R sort by · 1–5 spells · Scroll cycle · Tab Grimoire · M music ({m}) · Esc pause"
+                    "Tap take · Hold scoop · Click a run file · Hold right toss · X throw all · F seek · R sort by · 1–5 spells · Scroll cycle · Tab Grimoire · M music ({m}) · Esc pause"
                 ))
                 .font(serif(12.0))
                 .color(DIM.gamma_multiply(0.8)),
@@ -779,7 +779,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                     RichText::new(
                         "WASD walk · Shift hurry · Mouse look\n\
                          Tap a book to take it · Hold on a pile to scoop · Click a run to file\n\
-                         Hold right mouse to toss your armful (or what you seek), release to throw\n\
+                         Hold right mouse to toss a group, release to throw · X the whole armful\n\
                          F seek a book's kind · R sort by department, category or series\n\
                          1–5 cast the spells you have learned\n\
                          G post a familiar where you aim, or take one back\n\
