@@ -529,11 +529,12 @@ impl Game {
         if tidy && self.manual_pick.is_none() {
             self.pick_nearest_active();
         }
+        self.update_aura(dt);
+        // After the aura, which may have filed the active book.
         self.sense_route = match self.active_book() {
             Some(b) if sense => self.nav.route(self.player.pos, self.approach(b)),
             _ => None,
         };
-        self.update_aura(dt);
         self.update_flights(dt, audio);
         self.update_familiars(dt);
         self.update_particles(dt);
@@ -974,16 +975,16 @@ impl Game {
         }
         let from = self.player.pos;
         let cost = |g: &Self, b: u32| g.nav.distance(from, g.approach(b));
-        let mut best = (f32::MAX, 0);
+        let mut best = (f32::INFINITY, 0);
         for (i, &b) in self.held.iter().enumerate() {
             let d = cost(self, b);
             if d < best.0 {
                 best = (d, i);
             }
         }
-        // Hysteresis, so near-ties don't flicker as you walk.
-        let current = self.active_book().map_or(f32::MAX, |b| cost(self, b));
-        if best.0 < current - 0.6 {
+        // Hysteresis, so near-ties don't flicker as you walk. Unreachable books never win.
+        let current = self.active_book().map_or(f32::INFINITY, |b| cost(self, b));
+        if best.0.is_finite() && best.0 < current - 0.6 {
             self.active = best.1;
         }
     }

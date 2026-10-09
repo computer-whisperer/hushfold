@@ -41,7 +41,7 @@ struct Running {
     last: Instant,
     save_timer: f32,
     fps_acc: (f32, u32),
-    /// Fractional scroll from touchpads, which report pixels.
+    /// Scroll not yet turned into whole cycle steps.
     scroll_acc: f32,
     /// Render without waiting for the compositor (`HUSHFOLD_UNPACED`).
     unpaced: bool,
@@ -88,7 +88,7 @@ impl Running {
     fn apply_settings(&mut self) {
         let s = self.hud.settings;
         self.game.fov = s.fov;
-        self.audio.set_volumes(s.music_volume, s.effects_volume);
+        self.audio.configure(s.music, s.music_volume, s.effects_volume);
     }
 
     /// Persist settings (never from scripted runs, which use the defaults).
@@ -127,6 +127,7 @@ impl Running {
                 } else if self.hud.show_intro {
                     if self.game.total_shelved() > 0 || !self.game.held.is_empty() {
                         self.hud.show_intro = false;
+                        self.save_settings();
                         self.set_grab(true);
                     }
                 } else {
@@ -135,7 +136,11 @@ impl Running {
                     self.game.save();
                 }
             }
-            KeyCode::KeyM => self.audio.toggle_music(),
+            KeyCode::KeyM => {
+                self.hud.settings.music = !self.hud.settings.music;
+                self.apply_settings();
+                self.save_settings();
+            }
             KeyCode::F3 => self.hud.show_stats = !self.hud.show_stats,
             KeyCode::F11 => {
                 let full = self.renderer.window.fullscreen().is_none();
@@ -215,9 +220,8 @@ impl Running {
 
         let raw = self.egui_state.take_egui_input(&self.renderer.window);
         let mut actions = Vec::new();
-        let music_on = self.audio.music_on;
         let out = self.egui_ctx.run_ui(raw, |ui| {
-            actions = hud::draw(ui.ctx(), &self.game, &mut self.hud, aspect, music_on);
+            actions = hud::draw(ui.ctx(), &self.game, &mut self.hud, aspect);
         });
         self.egui_state
             .handle_platform_output(&self.renderer.window, out.platform_output);
@@ -504,17 +508,15 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } if r.playing() => {
-                match delta {
-                    // One book per wheel notch, however finely the wheel reports.
-                    MouseScrollDelta::LineDelta(_, y) => r.input.cycle -= y.signum() as i32,
-                    // Touchpads report pixels: one book per 40 px of travel.
-                    MouseScrollDelta::PixelDelta(p) => {
-                        r.scroll_acc += p.y as f32 / 40.0;
-                        let steps = r.scroll_acc.trunc();
-                        r.scroll_acc -= steps;
-                        r.input.cycle -= steps as i32;
-                    }
-                }
+                // One book per wheel notch (a line) or per 40 px of touchpad travel. Smooth
+                // scrolling reports fractions of either, so accumulate; horizontal is ignored.
+                r.scroll_acc += match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                };
+                let steps = r.scroll_acc.trunc();
+                r.scroll_acc -= steps;
+                r.input.cycle -= steps as i32;
             }
             _ => {}
         }

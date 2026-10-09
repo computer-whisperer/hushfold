@@ -91,7 +91,7 @@ fn panel_frame() -> egui::Frame {
         .inner_margin(10.0)
 }
 
-pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on: bool) -> Vec<HudAction> {
+pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<HudAction> {
     let mut actions = Vec::new();
     let screen = ctx.content_rect().size();
     let vp = g.view_proj(aspect);
@@ -444,7 +444,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
         .anchor(Align2::RIGHT_BOTTOM, [-16.0, -16.0])
         .interactable(false)
         .show(ctx, |ui| {
-            let m = if music_on { "on" } else { "off" };
+            let m = if hud.settings.music { "on" } else { "off" };
             ui.label(
                 RichText::new(format!(
                     "Click gather/file · Scroll cycle · Tab Grimoire · M music ({m}) · Esc pause"
@@ -653,7 +653,8 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
                         fn pct(v: &mut f32) -> egui::Slider<'_> {
                             egui::Slider::new(v, 0.0..=1.0).custom_formatter(|x, _| format!("{:.0}%", x * 100.0))
                         }
-                        ui.add(pct(&mut st.music_volume).text("Music"));
+                        let music = if st.music { "Music" } else { "Music (off: press M)" };
+                        ui.add(pct(&mut st.music_volume).text(music));
                         ui.add(pct(&mut st.effects_volume).text("Effects and ambience"));
                         if *st != before {
                             actions.push(HudAction::SettingsChanged);

@@ -10,6 +10,8 @@ pub struct Settings {
     pub invert_look: bool,
     /// Vertical field of view on wide windows, in degrees.
     pub fov: f32,
+    /// Toggled with M.
+    pub music: bool,
     pub music_volume: f32,
     pub effects_volume: f32,
     /// Toggled with F11; restored at launch.
@@ -22,6 +24,7 @@ impl Default for Settings {
             look_speed: 1.0,
             invert_look: false,
             fov: 70.0,
+            music: true,
             music_volume: 0.8,
             effects_volume: 1.0,
             fullscreen: false,

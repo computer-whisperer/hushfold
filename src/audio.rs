@@ -82,7 +82,7 @@ pub struct Audio {
     rng: StdRng,
     music_gain: Arc<AtomicU32>,
     ambience_gain: Arc<AtomicU32>,
-    pub music_on: bool,
+    music_on: bool,
     music_volume: f32,
     effects_volume: f32,
 }
@@ -144,7 +144,7 @@ impl Audio {
                 });
             });
         }
-        Audio {
+        let audio = Audio {
             sink,
             banks,
             last: [None; SFX_COUNT],
@@ -154,7 +154,9 @@ impl Audio {
             music_on: true,
             music_volume: 1.0,
             effects_volume: 1.0,
-        }
+        };
+        audio.apply_gains();
+        audio
     }
 
     /// No output device and no synthesis; every play is a no-op. Used by tests.
@@ -174,14 +176,10 @@ impl Audio {
     }
 
     /// Volumes in 0..=1. Effects cover sound effects and the hall's ambience.
-    pub fn set_volumes(&mut self, music: f32, effects: f32) {
-        self.music_volume = music;
-        self.effects_volume = effects;
-        self.apply_gains();
-    }
-
-    pub fn toggle_music(&mut self) {
-        self.music_on = !self.music_on;
+    pub fn configure(&mut self, music_on: bool, music_volume: f32, effects_volume: f32) {
+        self.music_on = music_on;
+        self.music_volume = music_volume;
+        self.effects_volume = effects_volume;
         self.apply_gains();
     }
 

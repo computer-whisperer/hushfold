@@ -201,6 +201,13 @@ fn trim_color(t: u32, base: vec3<f32>) -> vec3<f32> {
     }
 }
 
+// Distance (in metres) from a point on a box face to the nearest edge of that face.
+fn box_edge(local: vec3<f32>, scale: vec3<f32>, lnormal: vec3<f32>) -> f32 {
+    let e = (vec3<f32>(0.5) - abs(local)) * scale;
+    let n = abs(lnormal);
+    return select(select(min(e.x, e.y), min(e.x, e.z), n.y > 0.5), min(e.y, e.z), n.x > 0.5);
+}
+
 struct Surf {
     albedo: vec3<f32>,
     spec: f32,
@@ -336,10 +343,8 @@ fn book_surface(i: VOut) -> Surf {
         // The active book in hand: a bright rim along every edge, readable on any cover
         // colour, over a faint warm wash.
         let t = g.cam_pos.w;
-        let e = (vec3<f32>(0.5) - abs(i.local)) * i.scale;
-        let al = abs(ln);
-        let edge = select(select(min(e.x, e.y), min(e.x, e.z), al.y > 0.5), min(e.y, e.z), al.x > 0.5);
-        let rim = 1.0 - smoothstep(0.0015, 0.0035, edge);
+        let rim_edge = box_edge(i.local, i.scale, ln);
+        let rim = 1.0 - smoothstep(0.0015, 0.0035, rim_edge);
         let pulse = 0.5 + 0.5 * sin(t * 4.0);
         s.emit = vec3<f32>(1.0, 0.82, 0.5) * (rim * (1.3 + 0.7 * pulse) + 0.1 + 0.08 * pulse);
     }
@@ -495,9 +500,7 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_trans(i: VOut) -> @location(0) vec4<f32> {
     // Ghost outline distance, and its screen-space rate (derivatives need uniform control flow).
-    let e = (vec3<f32>(0.5) - abs(i.local)) * i.scale;
-    let ln = abs(i.lnormal);
-    let edge = select(select(min(e.x, e.y), min(e.x, e.z), ln.y > 0.5), min(e.y, e.z), ln.x > 0.5);
+    let edge = box_edge(i.local, i.scale, i.lnormal);
     let px = max(fwidth(edge), 1e-5);
 
     let t = g.cam_pos.w;

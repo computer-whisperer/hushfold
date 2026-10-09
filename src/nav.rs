@@ -16,6 +16,8 @@ const SEG_CLEARANCE: f32 = 0.15;
 /// Grid step costs: orthogonal and diagonal, in tenths of a cell.
 const STEP: u32 = 10;
 const DIAG: u32 = 14;
+/// How far round the player (in cells) the field is seeded with straight-line costs.
+const SEED_CELLS: i32 = 3;
 
 /// How to walk from the player to a target.
 #[derive(Clone, Copy, Debug)]
@@ -117,10 +119,30 @@ impl Nav {
         self.dist.fill(u32::MAX);
         self.prev.fill(u32::MAX);
         let mut heap = BinaryHeap::new();
-        // The player's own cell may overlap furniture clearance; start there anyway.
+        // Seed every free cell nearby that the player can walk to in a straight line, at
+        // its true distance. The player's own cell may lie inside furniture clearance
+        // (between two chairs, say) with no free neighbours; the seeds get past that.
+        let p = Vec2::new(from.x, from.z);
         self.dist[src] = 0;
         heap.push(Reverse((0u32, src as u32)));
         let (w, h) = (self.w as i32, self.h as i32);
+        let (sx, sz) = ((src % self.w) as i32, (src / self.w) as i32);
+        for dz in -SEED_CELLS..=SEED_CELLS {
+            for dx in -SEED_CELLS..=SEED_CELLS {
+                let (nx, nz) = (sx + dx, sz + dz);
+                if nx < 0 || nz < 0 || nx >= w || nz >= h {
+                    continue;
+                }
+                let n = (nz * w + nx) as usize;
+                let c = self.center(n);
+                if n == src || !self.free(n) || !self.clear(p, c) {
+                    continue;
+                }
+                let d = (p.distance(c) / CELL * STEP as f32).round() as u32;
+                self.dist[n] = d;
+                heap.push(Reverse((d, n as u32)));
+            }
+        }
         while let Some(Reverse((d, i))) = heap.pop() {
             let i = i as usize;
             if d > self.dist[i] {
@@ -224,5 +246,43 @@ impl Nav {
             dist,
             direct: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::library::Library;
+
+    /// Tight spots a player can stand in (between two chairs, in a hall corner, beside
+    /// the hearth) used to leave the field stuck in the player's own cell.
+    #[test]
+    fn tight_spots_still_reach_the_hall() {
+        let lib = Library::generate(crate::game::SEED);
+        let mut nav = Nav::new(&lib.obstacles);
+        let open_floor = Vec3::new(0.0, 0.0, 5.0);
+        let spots = [
+            (-4.5, -1.6),
+            (4.5, 1.6),
+            (-4.5, 3.6),
+            (23.6, 17.6),
+            (-23.6, -17.6),
+            (2.9, 17.5),
+            (-2.9, 17.5),
+        ];
+        for (x, z) in spots {
+            let p = Vec3::new(x, 0.0, z);
+            // Only spots the player's collision actually allows.
+            let ok = lib.obstacles.iter().all(|o| {
+                let q = Vec2::new(x.clamp(o.min.x, o.max.x), z.clamp(o.min.z, o.max.z));
+                q.distance(Vec2::new(x, z)) >= 0.3 - 1e-3
+            });
+            assert!(ok, "test spot ({x}, {z}) is not standable");
+            nav.update(p, true);
+            let d = nav.distance(p, open_floor);
+            assert!(d.is_finite() && d < 40.0, "from ({x}, {z}): {d}");
+            let r = nav.route(p, Vec3::new(-16.0, 0.0, -9.0)).expect("route");
+            assert!(r.dist.is_finite());
+        }
     }
 }
