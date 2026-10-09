@@ -1,7 +1,7 @@
 //! egui HUD: crosshair, armful, active-book card, world labels, toasts, Grimoire.
 
 use crate::catalog;
-use crate::game::{Aim, Game, Tier, UPGRADES, Upg, upg_costs, upg_def};
+use crate::game::{Aim, Cheat, Game, Tier, UPGRADES, Upg, upg_costs, upg_def};
 use crate::library::{LabelKind, Layout, ROWS};
 use crate::settings::Settings;
 use egui::{Align2, Color32, FontFamily, FontId, Pos2, Rect, RichText, Stroke, Vec2};
@@ -10,6 +10,8 @@ use glam::{Mat4, Vec3, Vec4};
 pub struct Hud {
     pub settings: Settings,
     pub menu_open: bool,
+    /// The cheat window (F9).
+    pub cheats_open: bool,
     pub show_intro: bool,
     /// The pause screen is asking whether to start over.
     pub confirm_restart: bool,
@@ -22,6 +24,8 @@ pub struct Hud {
 
 pub enum HudAction {
     Buy(Upg),
+    Cheat(Cheat),
+    CloseCheats,
     Begin,
     CloseMenu,
     SettingsChanged,
@@ -593,6 +597,10 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         }
     }
 
+    if hud.cheats_open {
+        cheat_window(ctx, g, &mut actions);
+    }
+
     // ---- Intro / pause.
     if hud.show_intro {
         let fresh = g.total_shelved() == 0 && g.held.is_empty() && g.lumens == 0;
@@ -728,6 +736,74 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             });
     }
     actions
+}
+
+/// The cheat window (F9), for trying late-game situations.
+fn cheat_window(ctx: &egui::Context, g: &Game, actions: &mut Vec<HudAction>) {
+    let mut open = true;
+    egui::Window::new(RichText::new("Cheats").font(serif(22.0)).color(GOLD))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(Align2::RIGHT_CENTER, [-24.0, 0.0])
+        .frame(panel_frame().fill(Color32::from_rgba_unmultiplied(24, 16, 12, 240)))
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.set_width(340.0);
+            for style in [egui::TextStyle::Body, egui::TextStyle::Button] {
+                ui.style_mut().text_styles.insert(style, serif(14.0));
+            }
+            let note = |ui: &mut egui::Ui, text: &str| {
+                ui.label(RichText::new(text).font(serif(12.0)).color(DIM));
+            };
+            let heading = |ui: &mut egui::Ui, text: String| {
+                ui.add_space(4.0);
+                ui.label(RichText::new(text).font(serif(16.0)).color(INK));
+            };
+            let mut button = |ui: &mut egui::Ui, text: &str, c: Cheat| {
+                if ui.button(text).clicked() {
+                    actions.push(HudAction::Cheat(c));
+                }
+            };
+            note(ui, "These change this library's save; Start over (Esc) undoes them.");
+            heading(ui, format!("Lumens  ✦ {}", g.lumens));
+            ui.horizontal(|ui| {
+                for n in [1_000, 10_000, 100_000] {
+                    button(ui, &format!("+{n}"), Cheat::Lumens(n));
+                }
+            });
+            heading(ui, "Skills and veils".into());
+            ui.horizontal(|ui| {
+                button(ui, "Learn every skill", Cheat::AllSkills);
+                button(ui, "Lift every veil", Cheat::LiftVeils);
+            });
+            note(ui, "Lifted veils return when the library is next loaded; shelving keeps them open.");
+            let done = 100.0 * g.total_shelved() as f32 / g.total_books().max(1) as f32;
+            heading(ui, format!("Shelve the library  ({done:.0}% home)"));
+            ui.horizontal(|ui| {
+                for f in [0.25, 0.5, 0.8, 0.95] {
+                    button(ui, &format!("{:.0}%", f * 100.0), Cheat::Shelve(f));
+                }
+            });
+            note(
+                ui,
+                "Files books from the piles until every open department is that far home, then the ones whose veils that lifts. The big steps take a few seconds.",
+            );
+            heading(ui, "Go to".into());
+            egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                button(ui, "Where the game starts", Cheat::GoTo(None));
+                for (d, dept) in g.lib.catalog.departments.iter().enumerate() {
+                    let name = if g.dept_open(d) {
+                        dept.name.clone()
+                    } else {
+                        format!("{} (veiled)", dept.name)
+                    };
+                    button(ui, &name, Cheat::GoTo(Some(d)));
+                }
+            });
+        });
+    if !open {
+        actions.push(HudAction::CloseCheats);
+    }
 }
 
 /// One skill in the Grimoire: its name, level and blurb, and the button to learn

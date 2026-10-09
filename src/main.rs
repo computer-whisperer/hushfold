@@ -120,6 +120,7 @@ impl Running {
         self.apply_settings();
         self.hud.confirm_restart = false;
         self.hud.menu_open = false;
+        self.hud.cheats_open = false;
         if self.hud.settings.library != layout {
             self.hud.settings.library = layout;
             self.save_settings();
@@ -140,7 +141,7 @@ impl Running {
     }
 
     fn playing(&self) -> bool {
-        (self.grabbed || self.script.is_some()) && !self.hud.menu_open && !self.hud.show_intro
+        (self.grabbed || self.script.is_some()) && !self.hud.menu_open && !self.hud.cheats_open && !self.hud.show_intro
     }
 
     fn on_key(&mut self, code: KeyCode, pressed: bool, event_loop: &ActiveEventLoop) {
@@ -159,11 +160,21 @@ impl Running {
                     return;
                 }
                 self.hud.menu_open = !self.hud.menu_open;
+                self.hud.cheats_open = false;
                 self.set_grab(!self.hud.menu_open);
             }
+            KeyCode::F9 => {
+                if self.hud.show_intro {
+                    return;
+                }
+                self.hud.cheats_open = !self.hud.cheats_open;
+                self.hud.menu_open = false;
+                self.set_grab(!self.hud.cheats_open);
+            }
             KeyCode::Escape => {
-                if self.hud.menu_open {
+                if self.hud.menu_open || self.hud.cheats_open {
                     self.hud.menu_open = false;
+                    self.hud.cheats_open = false;
                     self.set_grab(true);
                 } else if self.hud.show_intro {
                     if self.game.total_shelved() > 0 || !self.game.held.is_empty() {
@@ -297,6 +308,11 @@ impl Running {
                     self.hud.menu_open = false;
                     self.set_grab(true);
                 }
+                HudAction::Cheat(c) => self.game.cheat(c, &mut self.audio),
+                HudAction::CloseCheats => {
+                    self.hud.cheats_open = false;
+                    self.set_grab(true);
+                }
             }
         }
         let prims = self.egui_ctx.tessellate(out.shapes, out.pixels_per_point);
@@ -394,6 +410,21 @@ impl Running {
                     }
                 }
                 Some("menu") => self.hud.menu_open = w.get(1) == Some(&"on"),
+                Some("cheats") => self.hud.cheats_open = w.get(1) == Some(&"on"),
+                // cheat lumens <n> | skills | veils | shelve <fraction> | goto [<department>]
+                Some("cheat") => {
+                    let c = match w.get(1).copied() {
+                        Some("lumens") => Some(game::Cheat::Lumens(num(2) as u64)),
+                        Some("skills") => Some(game::Cheat::AllSkills),
+                        Some("veils") => Some(game::Cheat::LiftVeils),
+                        Some("shelve") => Some(game::Cheat::Shelve(num(2))),
+                        Some("goto") => Some(game::Cheat::GoTo(w.get(2).and_then(|d| d.parse().ok()))),
+                        _ => None,
+                    };
+                    if let Some(c) = c {
+                        self.game.cheat(c, &mut self.audio);
+                    }
+                }
                 // intro on|off|confirm (confirm: the pause screen asking whether to start over)
                 Some("intro") => {
                     self.hud.show_intro = matches!(w.get(1), Some(&"on" | &"confirm"));
@@ -530,6 +561,7 @@ impl ApplicationHandler for App {
             hud: Hud {
                 settings,
                 menu_open: false,
+                cheats_open: false,
                 show_intro: script.is_none(),
                 confirm_restart: false,
                 show_stats: false,
@@ -605,7 +637,7 @@ impl ApplicationHandler for App {
                     if pressed {
                         r.input.primary_pressed = true;
                     }
-                } else if pressed && !consumed && !r.hud.menu_open && !r.hud.show_intro {
+                } else if pressed && !consumed && !r.hud.menu_open && !r.hud.cheats_open && !r.hud.show_intro {
                     r.set_grab(true);
                 }
             }

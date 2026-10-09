@@ -79,6 +79,11 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
   into its exact slot (forgiving aim; the skill is finding the run).
 - Scroll/Q/E: cycle the active book (HUD shows its category/series/volume).
 - Tab: Grimoire (upgrades). Shift: hurry.
+- F9: cheats for trying late-game situations (`game/cheats.rs`): lumens, every
+  skill, lifting veils (until the next load, since veil states follow from what
+  is shelved), shelving the library to a fraction (open departments first, then
+  those whose veils that lifts; books are credited as if filed, without the
+  sparkle), and going to any room's doorway (outside its veil while veiled).
 
 ## Progression (Lumens ✦)
 1 per book, +volumes on series completion, +100 per category.

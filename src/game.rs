@@ -1,10 +1,12 @@
 //! Game state: player, books in motion, upgrades, progression, save/load (familiars
-//! in `familiar`).
+//! in `familiar`, cheats in `cheats`).
 
+mod cheats;
 mod familiar;
 #[cfg(test)]
 mod pacing;
 
+pub use cheats::Cheat;
 use familiar::Familiar;
 pub use familiar::Role;
 
@@ -1343,7 +1345,10 @@ impl Game {
         }
     }
 
-    fn on_shelved(&mut self, b: u32, audio: &mut Audio, thunks: &mut u32) {
+    /// Book `b` is home: its state, the counts, and the lumens it earns with any
+    /// series or category bonus. Returns whether it completed its series and its
+    /// category. No sound or sparkle; `on_shelved` adds those.
+    fn credit_shelved(&mut self, b: u32) -> (bool, bool) {
         let bi = b as usize;
         self.state[bi] = BookState::Shelved;
         self.pos[bi] = self.lib.books[bi].slot_pos;
@@ -1356,6 +1361,25 @@ impl Game {
         self.lumens += 1;
         self.earned += 1;
         self.dirty_save = true;
+        let series_done = self.series_shelved[s] == self.lib.series[s].volumes;
+        if series_done {
+            let bonus = self.lib.series[s].volumes as u64;
+            self.lumens += bonus;
+            self.earned += bonus;
+        }
+        let category_done = self.category_shelved[cat] == self.lib.category_books[cat];
+        if category_done {
+            self.lumens += 100;
+            self.earned += 100;
+        }
+        (series_done, category_done)
+    }
+
+    fn on_shelved(&mut self, b: u32, audio: &mut Audio, thunks: &mut u32) {
+        let (series_done, category_done) = self.credit_shelved(b);
+        let bi = b as usize;
+        let s = self.lib.books[bi].series as usize;
+        let cat = self.lib.series[s].category;
         if *thunks < 3 {
             audio.play(Sfx::Thunk, 0.5);
             *thunks += 1;
@@ -1363,29 +1387,22 @@ impl Game {
         let col = self.lib.series[s].color;
         let bright = [col[0] * 3.0 + 0.4, col[1] * 3.0 + 0.35, col[2] * 3.0 + 0.2];
         self.burst(self.lib.books[bi].slot_pos, 5, bright, 0.5);
-
         let ser = &self.lib.series[s];
-        if self.series_shelved[s] == ser.volumes {
-            let bonus = ser.volumes as u64;
-            self.lumens += bonus;
-            self.earned += bonus;
-            if ser.volumes > 1 {
-                audio.play_pitched(Sfx::Chime, 0.45, ser.volumes as usize);
-                let title = ser.title.clone();
-                self.toast(
-                    format!("Series complete: {title}  (+{bonus} ✦)"),
-                    [0.95, 0.85, 0.6],
-                    false,
-                );
-                for &ob in &self.lib.series_books[s].clone() {
-                    let p = self.lib.books[ob as usize].slot_pos;
-                    self.burst(p, 6, [1.6, 1.2, 0.5], 0.9);
-                }
+        if series_done && ser.volumes > 1 {
+            let bonus = ser.volumes;
+            audio.play_pitched(Sfx::Chime, 0.45, ser.volumes as usize);
+            let title = ser.title.clone();
+            self.toast(
+                format!("Series complete: {title}  (+{bonus} ✦)"),
+                [0.95, 0.85, 0.6],
+                false,
+            );
+            for &ob in &self.lib.series_books[s].clone() {
+                let p = self.lib.books[ob as usize].slot_pos;
+                self.burst(p, 6, [1.6, 1.2, 0.5], 0.9);
             }
         }
-        if self.category_shelved[cat] == self.lib.category_books[cat] {
-            self.lumens += 100;
-            self.earned += 100;
+        if category_done {
             audio.play(Sfx::Fanfare, 0.7);
             let c = catalog::category_color(&self.lib.catalog.categories[cat]);
             self.toast(
