@@ -297,13 +297,15 @@ impl Library {
     }
 
     /// True if something at `p` rises in the way of a body standing at `feet`: the
-    /// edge of a floor higher than a step but below the head, or any part of a flight
-    /// of stairs higher than a step (stairs are solid stone underneath).
+    /// edge of a floor higher than a step but below the head, or a flight of stairs
+    /// whose stone (from its own floor up to its treads) fills the body's height above
+    /// a step. A flight on the floor above is overhead, not in the way.
     pub fn rises_at(&self, p: Vec2, feet: f32, step: f32, head: f32) -> bool {
         let slab = (self.slabs.iter())
             .filter(|s| p.cmpge(s.min).all() && p.cmple(s.max).all())
             .any(|s| (feet + step..feet + head).contains(&self.levels[s.level].y));
-        let stairs = (self.ramps.iter()).any(|r| r.contains(p) && r.height(p) > feet + step);
+        let stairs = (self.ramps.iter())
+            .any(|r| r.contains(p) && r.height(p) > feet + step && self.levels[r.level].y < feet + head);
         slab || stairs
     }
 

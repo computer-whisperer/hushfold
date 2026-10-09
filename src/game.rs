@@ -2786,6 +2786,29 @@ mod tests {
         }
     }
 
+    /// The flights on the first floor are overhead on the ground floor: walking under
+    /// them to the north and south rooms is clear (regression: an invisible wall at
+    /// the gallery edge, under the stairs above).
+    #[test]
+    fn walking_under_upper_stairs() {
+        let mut g = Game::new(Layout::Great);
+        g.open_all_gates();
+        let mut audio = crate::audio::Audio::silent();
+        let walk = Input {
+            forward: 1.0,
+            ..Input::default()
+        };
+        for (start, yaw) in [(Vec3::new(0.0, 0.0, -6.0), 0.0), (Vec3::new(0.5, 0.0, 6.0), PI)] {
+            g.player.pos = start;
+            g.player.yaw = yaw;
+            for _ in 0..60 * 4 {
+                g.update(1.0 / 60.0, &walk, &mut audio, true);
+            }
+            let p = g.player.pos;
+            assert!(p.z.abs() > 15.0 && p.y == 0.0, "from {start}: stopped at {p}");
+        }
+    }
+
     /// The stairs are solid stone: walking into a flight from its high end on the
     /// floor below (under the gallery) is blocked.
     #[test]
