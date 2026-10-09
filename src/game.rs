@@ -807,6 +807,7 @@ impl Game {
                     vec![matching[0]]
                 };
                 let books: Vec<u32> = chosen.iter().map(|&i| self.held[i]).collect();
+                self.leave_hand(&books);
                 let prev = self.active_book();
                 self.held.retain(|b| !books.contains(b));
                 self.follow_active(prev);
@@ -966,6 +967,58 @@ impl Game {
             delay,
             dest,
         });
+    }
+
+    /// Where each held book is drawn: the window of the stack in view, with the books
+    /// outside it tucked at the nearer end. Books still flying to the hand take no
+    /// place in the stack.
+    fn held_layout(&self) -> (std::ops::Range<usize>, Vec<(Vec3, Quat)>) {
+        let n = self.held.len();
+        let start = if n <= HAND_VISIBLE {
+            0
+        } else {
+            self.active.saturating_sub(HAND_VISIBLE / 2).min(n - HAND_VISIBLE)
+        };
+        let end = (start + HAND_VISIBLE).min(n);
+        let (base, rot) = self.hand_xform(0);
+        let f = self.player.forward();
+        let r = self.player.right();
+        let u = r.cross(f);
+        let mut out = vec![(base, rot); n];
+        let mut y = 0.0;
+        for (i, slot) in out.iter_mut().enumerate().take(end).skip(start) {
+            let b = self.held[i];
+            if self.flights.iter().any(|fl| fl.book == b) {
+                continue;
+            }
+            let info = &self.lib.books[b as usize];
+            let jitter = ((b as f32 * 12.9898).sin() * 43758.5).fract() - 0.5;
+            let mut p = base + u * (y + info.size.x * 0.5) + r * (jitter * 0.03);
+            if i == self.active {
+                p += -r * 0.06 - f * 0.02;
+            }
+            *slot = (p, Quat::from_axis_angle(u, jitter * 0.12 - 0.25) * rot);
+            y += info.size.x;
+        }
+        for slot in &mut out[end..] {
+            *slot = (base + u * y, rot);
+        }
+        (start..end, out)
+    }
+
+    /// Books about to leave the arms start from where they are drawn in the hand (their
+    /// world pose is otherwise stale from when they arrived). Books still flying to the
+    /// hand already have a live pose.
+    fn leave_hand(&mut self, books: &[u32]) {
+        let (_, layout) = self.held_layout();
+        for &b in books {
+            let in_flight = self.flights.iter().any(|f| f.book == b);
+            if let Some(i) = self.held.iter().position(|&h| h == b)
+                && !in_flight
+            {
+                (self.pos[b as usize], self.rot[b as usize]) = layout[i];
+            }
+        }
     }
 
     fn hand_xform(&self, slot: usize) -> (Vec3, Quat) {
@@ -1157,6 +1210,7 @@ impl Game {
             let b = self.held[i];
             let arrived = !self.flights.iter().any(|f| f.book == b);
             if arrived && self.lib.books[b as usize].slot_pos.distance(eye) < radius {
+                self.leave_hand(&[b]);
                 self.held.remove(i);
                 self.state[b as usize] = BookState::Filing;
                 self.start_flight(b, Dest::Shelf, 0.6, 0.0);
@@ -1528,34 +1582,12 @@ impl Game {
         }
 
         // Held stack in view.
-        if !self.held.is_empty() {
-            let n = self.held.len();
-            let start = if n <= HAND_VISIBLE {
-                0
-            } else {
-                self.active.saturating_sub(HAND_VISIBLE / 2).min(n - HAND_VISIBLE)
-            };
-            let end = (start + HAND_VISIBLE).min(n);
-            let (base, rot) = self.hand_xform(0);
-            let f = self.player.forward();
-            let r = self.player.right();
-            let u = r.cross(f);
-            let mut y = 0.0;
-            for i in start..end {
-                let b = self.held[i];
-                if in_flight.contains(&b) {
-                    continue;
-                }
-                let info = &self.lib.books[b as usize];
-                let is_active = i == self.active;
-                let jitter = ((b as f32 * 12.9898).sin() * 43758.5).fract() - 0.5;
-                let mut p = base + u * (y + info.size.x * 0.5) + r * (jitter * 0.03);
-                if is_active {
-                    p += -r * 0.06 - f * 0.02;
-                }
-                let yaw = Quat::from_axis_angle(u, jitter * 0.12 - 0.25);
-                held_insts.push(self.book_inst(b as usize, p, yaw * rot, if is_active { 1 } else { 0 }));
-                y += info.size.x;
+        let (window, layout) = self.held_layout();
+        for i in window {
+            let b = self.held[i];
+            if !in_flight.contains(&b) {
+                let (p, q) = layout[i];
+                held_insts.push(self.book_inst(b as usize, p, q, (i == self.active) as u32));
             }
         }
 
@@ -2222,6 +2254,46 @@ mod tests {
             r.waypoint.x < -20.0 || r.waypoint.x > -12.6,
             "waypoint should be at a row end: {r:?}"
         );
+    }
+
+    /// Filing a book, by click or by the aura, flies it from the hand, not from wherever
+    /// it was when it reached the arms (regression).
+    #[test]
+    fn filing_flies_from_the_hand() {
+        let mut audio = crate::audio::Audio::silent();
+        for by_aura in [false, true] {
+            let mut g = Game::new();
+            let b = 0u32;
+            g.loose.take(&[b]);
+            g.state[b as usize] = BookState::Held;
+            g.held.push(b);
+            // Picked up across the hall, long ago.
+            g.pos[b as usize] = Vec3::new(-20.0, 0.4, 15.0);
+            let at = g.approach(b);
+            g.look_at(at, g.lib.books[b as usize].slot_pos);
+            if by_aura {
+                g.upg[upg_index(Upg::Aura)] = 1;
+                g.update_aura(1.0);
+            } else {
+                let info = &g.lib.books[b as usize];
+                let series = info.series;
+                let run = g.lib.runs[info.face as usize][info.row as usize]
+                    .iter()
+                    .copied()
+                    .find(|r| r.series == series)
+                    .unwrap();
+                g.aim = Aim::Shelf {
+                    face: info.face,
+                    row: info.row,
+                    run: Some(run),
+                    dist: 1.0,
+                };
+                g.interact(&mut audio, true);
+            }
+            let f = g.flights.iter().find(|f| f.book == b).expect("filing flight");
+            let d = f.from_pos.distance(g.player.eye());
+            assert!(d < 1.2, "aura {by_aura}: flight starts {d:.1} m from the eye");
+        }
     }
 
     #[test]
