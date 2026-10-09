@@ -413,8 +413,8 @@ struct SaveData {
     #[serde(default, skip_serializing)]
     upgrades: Vec<u32>,
     shelved: Vec<u32>,
-    /// Books mid-flight to a shelf or carried by a familiar; they fly home on load
-    /// so their rewards are paid through the normal path.
+    /// Books mid-flight to a shelf; they fly home on load so their rewards are paid
+    /// through the normal path.
     #[serde(default)]
     pending: Vec<u32>,
     held: Vec<u32>,
@@ -2015,8 +2015,8 @@ impl Game {
         for (b, st) in self.state.iter().enumerate() {
             match st {
                 BookState::Shelved => shelved.push(b as u32),
-                BookState::Filing | BookState::Carried(_) => pending.push(b as u32),
-                BookState::Loose | BookState::Held => {}
+                BookState::Filing => pending.push(b as u32),
+                BookState::Loose | BookState::Held | BookState::Carried(_) => {}
             }
         }
         let p = &self.player;
@@ -2046,7 +2046,16 @@ impl Game {
                 .filter(|&(_, l, _)| l > 0)
                 .map(|(b, l, _)| (b, l as u8))
                 .collect(),
-            airborne: self.loose.airborne().map(|(b, p)| (b, p.to_array())).collect(),
+            // Books a familiar carries fall from where they dangle.
+            airborne: (self.loose.airborne())
+                .chain(
+                    (0..self.state.len() as u32).filter_map(|b| match self.state[b as usize] {
+                        BookState::Carried(_) => Some((b, self.pos[b as usize])),
+                        _ => None,
+                    }),
+                )
+                .map(|(b, p)| (b, p.to_array()))
+                .collect(),
             familiars: (self.familiars.iter())
                 .map(|f| (f.role.name().to_string(), f.post.as_ref().map(|p| p.at.to_array())))
                 .collect(),

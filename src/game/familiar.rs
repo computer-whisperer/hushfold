@@ -22,6 +22,9 @@ const PERCH_H: f32 = 1.25;
 const ARRIVE: f32 = 0.25;
 /// How far round the spot it flew to a familiar takes books from.
 const GRASP: f32 = 0.8;
+/// How near the shelver a courier would take it to a book already lies (a pile set
+/// down there spreads this far).
+const SETTLED: f32 = 2.5;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
@@ -84,6 +87,9 @@ pub(super) struct Familiar {
     riding_since: f32,
     /// Seconds it has sat at its post finding nothing to do.
     pub(super) idle: f32,
+    /// Books it has set down where they were wanted (a courier); for the pacing bot.
+    #[cfg(test)]
+    pub(super) delivered: u32,
 }
 
 impl Familiar {
@@ -119,6 +125,8 @@ impl Game {
             rest: 0.5,
             riding_since: self.time,
             idle: 0.0,
+            #[cfg(test)]
+            delivered: 0,
         });
     }
 
@@ -168,7 +176,7 @@ impl Game {
     }
 
     /// Familiar `i` leaves its post for the shoulder, setting down what it carries.
-    fn recall(&mut self, i: usize) {
+    pub(super) fn recall(&mut self, i: usize) {
         let carry = std::mem::take(&mut self.familiars[i].carry);
         let from = self.familiars[i].pos;
         self.set_down(&carry, from);
@@ -258,7 +266,7 @@ impl Game {
         let mut k = 0;
         while k + 1 < way.len() {
             let mut j = k + 1;
-            while j + 1 < way.len() && self.lib.world.line_of_sight(way[k], way[j + 1]) {
+            while j + 1 < way.len() && self.flight_clear(way[k], way[j + 1]) {
                 j += 1;
             }
             kept.push(way[j]);
@@ -268,10 +276,18 @@ impl Game {
         Some(kept)
     }
 
+    /// Nothing a crane would hit lies between `a` and `b`: nothing that stops sight
+    /// (walls, cases) or bodies (railings, chairs).
+    fn flight_clear(&self, a: Vec3, b: Vec3) -> bool {
+        let w = &self.lib.world;
+        w.clear(a, b, Stops::SIGHT) && w.clear(a, b, Stops::BODIES)
+    }
+
     /// Where a courier at `post` would take book `b`: the post of a shelver that can
-    /// file it, else just inside its room's doorway; `None` if its department is
-    /// still veiled or the way there is closed.
-    fn courier_goal(&self, post: &Post, b: u32, reach: f32) -> Option<Vec3> {
+    /// file it, else its room's drop spot; `None` if its department is still veiled,
+    /// the way there is closed, or the book is already there (by that shelver, or
+    /// anywhere in its room).
+    fn courier_goal(&self, post: &Post, b: u32) -> Option<Vec3> {
         let dept = self.lib.dept_of(self.lib.category_of_book(b));
         if !self.dept_open(dept) {
             return None;
@@ -284,11 +300,16 @@ impl Game {
             .map(|p| (self.nav.distance(&p.field, p.at, approach), p.at))
             .filter(|&(d, _)| d <= file_reach)
             .min_by(|a, b| a.0.total_cmp(&b.0));
-        let goal = shelver.map_or(self.lib.rooms[dept].drop, |(_, at)| at);
-        let here = Vec2::new(goal.x - post.at.x, goal.z - post.at.z).length() <= reach
-            && self.lib.world.level_at(goal) == post.level;
+        let at = self.loose.pose(b).0;
+        let (goal, there) = match shelver {
+            Some((_, post)) => {
+                let near = Vec2::new(post.x - at.x, post.z - at.z).length() <= SETTLED && (post.y - at.y).abs() < 1.0;
+                (post, near)
+            }
+            None => (self.lib.rooms[dept].drop, self.lib.room_at(at) == Some(dept)),
+        };
         let open = self.nav.distance(&post.field, post.at, goal).is_finite();
-        (!here && open).then_some(goal)
+        (!there && open).then_some(goal)
     }
 
     /// Whether a shelver at `post` can file book `b`: its department is open and its
@@ -315,7 +336,7 @@ impl Game {
             match self.familiars[i].role {
                 Role::Shelver if self.shelver_files(post, b) => return Some(Task::Fetch { at: p, goal: p }),
                 Role::Courier => {
-                    if let Some(goal) = self.courier_goal(post, b, reach) {
+                    if let Some(goal) = self.courier_goal(post, b) {
                         return Some(Task::Fetch { at: p, goal });
                     }
                 }
@@ -327,7 +348,7 @@ impl Game {
 
     /// On arriving at `at`: take what it came for from the books there.
     fn take_up(&mut self, i: usize, at: Vec3, goal: Vec3) {
-        let (_, cap, reach, _) = WINGS[self.level(Upg::Wings) as usize];
+        let (_, cap, ..) = WINGS[self.level(Upg::Wings) as usize];
         let Some(post) = self.familiars[i].post.as_ref() else {
             return;
         };
@@ -335,7 +356,7 @@ impl Game {
         let wanted: Vec<u32> = (self.loose.near(lv, spot, GRASP, |_| true).into_iter())
             .filter(|&b| match self.familiars[i].role {
                 Role::Shelver => self.shelver_files(post, b),
-                Role::Courier => self.courier_goal(post, b, reach) == Some(goal),
+                Role::Courier => self.courier_goal(post, b) == Some(goal),
             })
             .collect();
         let books = self.loose.gather(lv, spot, GRASP, cap, |b| wanted.contains(&b));
@@ -402,7 +423,8 @@ impl Game {
                 f.pos += f.vel * dt;
                 let d = f.pos.distance(next);
                 let after = f.path.len().checked_sub(2).map(|k| f.path[k]);
-                if d < ARRIVE || (d < 0.6 && after.is_some_and(|a| world.line_of_sight(f.pos, a))) {
+                let clear = |a: Vec3| world.clear(f.pos, a, Stops::SIGHT) && world.clear(f.pos, a, Stops::BODIES);
+                if d < ARRIVE || (d < 0.6 && after.is_some_and(clear)) {
                     f.path.pop();
                 }
                 self.carry_dangle(i);
@@ -463,6 +485,10 @@ impl Game {
             }
             Task::Deliver(at) => {
                 let carry = std::mem::take(&mut self.familiars[i].carry);
+                #[cfg(test)]
+                {
+                    self.familiars[i].delivered += carry.len() as u32;
+                }
                 // Beside the goal, so a pile there grows rather than buries the perch.
                 let jitter = Vec3::new(self.rng.gen_range(-0.4..0.4), 0.0, self.rng.gen_range(-0.4..0.4));
                 self.set_down(&carry, at + Vec3::Y * 0.9 + jitter);
@@ -591,8 +617,13 @@ mod tests {
     use super::*;
     use crate::world::SLAB;
 
-    /// Run the game headless for `secs`, checking every frame that no familiar is
-    /// inside a wall, a case or a floor.
+    /// How far past a corner a crane's centre may brush.
+    const BRUSH: f32 = 0.03;
+
+    /// Run the game headless for `secs`, checking every frame that no posted familiar
+    /// is inside a wall, a case or a floor (more than `BRUSH`: momentum may carry a
+    /// crane's centre a little past a corner its path clears). Riding ones glide to
+    /// the shoulder in a straight line; G takes one back only in plain sight.
     fn run(g: &mut Game, secs: f32) {
         let mut audio = Audio::silent();
         let walls: Vec<(Vec3, Vec3)> = (g.lib.world.solids().iter())
@@ -607,8 +638,11 @@ mod tests {
             .collect();
         for frame in 0..(secs * 60.0) as usize {
             g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
-            for (i, f) in g.familiars.iter().enumerate() {
-                let inside = |&(mn, mx): &(Vec3, Vec3)| f.pos.cmpgt(mn).all() && f.pos.cmplt(mx).all();
+            for (i, f) in g.familiars.iter().enumerate().filter(|(_, f)| f.post.is_some()) {
+                let inside = |&(mn, mx): &(Vec3, Vec3)| {
+                    let (mn, mx) = (mn + Vec3::splat(BRUSH), mx - Vec3::splat(BRUSH));
+                    f.pos.cmpgt(mn).all() && f.pos.cmplt(mx).all()
+                };
                 assert!(
                     !walls.iter().any(inside) && !floors.iter().any(inside),
                     "frame {frame}: familiar {i} inside something at {}, flying {:?}",
@@ -616,6 +650,18 @@ mod tests {
                     f.path
                 );
             }
+        }
+    }
+
+    /// Take every resting book within 6 m of `at` but those in `keep` off the floor
+    /// (marked shelved), so a familiar there works on just those.
+    fn clear_round(g: &mut Game, at: Vec3, keep: &[u32]) {
+        let others: Vec<u32> = (0..g.lib.books.len() as u32)
+            .filter(|&b| g.loose.is_resting(b) && g.loose.pose(b).0.distance(at) < 6.0 && !keep.contains(&b))
+            .collect();
+        g.loose.take(&others);
+        for &b in &others {
+            g.state[b as usize] = BookState::Shelved;
         }
     }
 
@@ -690,14 +736,11 @@ mod tests {
             heap,
         );
         // Clear everything else from round the post, so the courier has just these.
-        let others: Vec<u32> = (0..n)
-            .filter(|&b| g.loose.is_resting(b) && g.loose.pose(b).0.distance(heap) < 6.0)
-            .filter(|b| !to_shelver.contains(b) && !to_room.contains(b) && !veiled.contains(b))
-            .collect();
-        g.loose.take(&others);
-        for &b in &others {
-            g.state[b as usize] = BookState::Shelved;
-        }
+        clear_round(
+            &mut g,
+            heap,
+            &[to_shelver.clone(), to_room.clone(), veiled.clone()].concat(),
+        );
         g.spawn_familiar(Role::Courier);
         g.post_familiar(1, heap);
         run(&mut g, 180.0);
@@ -714,6 +757,71 @@ mod tests {
             );
         }
         assert!(veiled.iter().all(|&b| near_heap(&g, b)));
+    }
+
+    /// A shelver posted at the end case of a row files the books whose slots are on
+    /// the back of that case, flying round the end of the row, not through it
+    /// (regression: the way out joined from the near side of the case).
+    #[test]
+    fn a_shelver_flies_round_to_the_back_of_its_case() {
+        for layout in Layout::ALL {
+            let mut g = Game::new(layout);
+            g.open_all_gates();
+            let nf = g.lib.faces.len();
+            let mut tried = 0;
+            let ends: Vec<usize> = (0..nf).filter(|&f| g.lib.faces[f].case_idx == 0).take(4).collect();
+            for fi in ends {
+                let (fc, fnrm) = (g.lib.faces[fi].center, g.lib.faces[fi].normal);
+                let back = (0..nf).find(|&k| {
+                    let b = &g.lib.faces[k];
+                    b.normal.dot(fnrm) < -0.9 && (b.center - fc).length() < 1.5
+                });
+                let Some(back) = back else { continue };
+                let post = g.nav.standable_near(fc + fnrm * 1.2);
+                let books: Vec<u32> = (0..g.lib.books.len() as u32)
+                    .filter(|&b| g.lib.books[b as usize].face as usize == back && g.loose.is_resting(b))
+                    .step_by(7)
+                    .take(4)
+                    .collect();
+                drop_round(&mut g, &books, post);
+                clear_round(&mut g, post, &books);
+                let i = g.familiars.len();
+                g.spawn_familiar(Role::Shelver);
+                g.post_familiar(i, post);
+                run(&mut g, 30.0);
+                let filed = books
+                    .iter()
+                    .filter(|&&b| g.state[b as usize] == BookState::Shelved)
+                    .count();
+                assert_eq!(filed, books.len(), "{layout:?} face {fi}");
+                g.recall(i);
+                tried += 1;
+            }
+            assert!(tried >= 2, "{layout:?}: {tried} faces tried");
+        }
+    }
+
+    /// A courier posted a little way from its room's drop leaves the pile there alone
+    /// (regression: it carried books it had just set down back and forth).
+    #[test]
+    fn a_courier_leaves_books_already_home() {
+        let mut g = Game::new(Layout::Great);
+        let drop = g.lib.rooms[0].drop;
+        let post = g.nav.standable_near(drop + Vec3::new(0.0, 0.0, -3.2));
+        let books: Vec<u32> = (0..g.lib.books.len() as u32)
+            .filter(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == 0)
+            .step_by(13)
+            .take(40)
+            .collect();
+        drop_round(&mut g, &books, drop);
+        g.spawn_familiar(Role::Courier);
+        g.post_familiar(0, post);
+        let mut carried = 0;
+        for _ in 0..60 {
+            run(&mut g, 1.0);
+            carried += g.familiars[0].carry.len();
+        }
+        assert_eq!(carried, 0);
     }
 
     /// G at the floor posts the familiar riding longest; G at it takes it back.

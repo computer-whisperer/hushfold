@@ -448,7 +448,9 @@ impl Nav {
         }
     }
 
-    /// The node of `f` nearest `p` (its own cell, or a neighbour if that one is blocked).
+    /// The node of `f` nearest `p`: its own cell, or if that is blocked a reached
+    /// neighbour, preferring those with a clear walk to `p` (so not the far side of
+    /// the case `p` stands against).
     fn reached_near(&self, f: &Field, p: Vec3) -> Option<usize> {
         let n = self.locate(p)?;
         if f.dist[n] != UNREACHED {
@@ -458,7 +460,8 @@ impl Nav {
         let base = n - i;
         let at = Vec2::new(p.x, p.z);
         let (x, z) = ((i % layer.w) as i32, (i / layer.w) as i32);
-        let mut best: Option<(f32, usize)> = None;
+        // (blocked walk, distance): a clear walk wins over any distance.
+        let mut best: Option<((bool, f32), usize)> = None;
         for dz in -2..=2 {
             for dx in -2..=2 {
                 let (nx, nz) = (x + dx, z + dz);
@@ -470,8 +473,9 @@ impl Nav {
                     continue;
                 }
                 let d = f.dist[base + j] as f32 * CELL / STEP as f32 + layer.center(j).distance(at);
-                if best.is_none_or(|(bd, _)| d < bd) {
-                    best = Some((d, base + j));
+                let key = (!self.clear(self.node_pos(base + j), p), d);
+                if best.is_none_or(|(bk, _)| key.0.cmp(&bk.0).then(key.1.total_cmp(&bk.1)).is_lt()) {
+                    best = Some((key, base + j));
                 }
             }
         }

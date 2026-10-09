@@ -96,7 +96,7 @@ over 8 h; the player's own Toss and Sift stay the fastest coarse tools.
    tables), filing (hands, Bundle, Tidy Arms, a weaker aura), familiar roles.
    Ideas parked for it: a toss that lands on its own series run files itself.
    Design below (Phase 3 design). **Built; awaiting playtest.** The bot: the
-   Great Library ~9.0 h, the Hall ~1.6 h.
+   Great Library ~10.6 h, the Hall ~1.6 h.
 4. The Great Library: content and balance. The pacing bot measures mechanism
    throughput with the real code; playtests judge whether the logistics are fun.
 
@@ -328,10 +328,14 @@ trip. It still never tosses toward a destination, so tossing is upside it
 doesn't count. Targets: the Great Library in 8–10 h with the last purchase late
 in the game; the Hall in 1.5–2 h.
 
-Measured 2026-10-09 (`game/pacing.rs`): the Great Library ~9.0 h, 40 purchases
-about one every 12 minutes, the last at ~8.2 h, every department open by ~5.5 h,
-peak ~26k books an hour around hour six; the Hall ~1.6 h. Familiars shelve
-8–11%. Findings on the way:
+Measured 2026-10-09 (`game/pacing.rs`): the Great Library ~10.6 h, 40 purchases
+spread to ~9.4 h, every department open by ~5.5 h, peak ~22k books an hour around
+hour six; the Hall ~1.6 h. A first measure said ~9.0 h; review found the bot
+moved its familiars for free (~880 times) and gathered piles it couldn't see
+(~12% of the books), and with both charged honestly it is ~10.6 h. Familiars
+shelve ~6% of the Great Library and carry ~8% to their rooms; walking to post
+them costs about what they save, and they take about half the lumens, so as
+costed they don't pay for themselves (open question). Findings on the way:
 - With today's skills the late game was bound by filing clicks (~0.8 s a book),
   not walking or gathering; the aura's cost, not its strength, was the dial.
 - The bot's filing route matters as much as any skill: visiting slots in rings

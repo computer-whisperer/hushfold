@@ -5,12 +5,14 @@
 //! pile that gives the most books per second of walking and gathers an armful. A
 //! plain click takes the top of the pile whatever it is, and books it can't file
 //! yet are set down where it stands; with Sifting Touch it sifts the group (the
-//! coarsest it has) with the most books in reach. It files the armful nearest slot
-//! first, posts its familiars (couriers at heaps of books far from home, shelvers
-//! at the cases with books piling up near them) and runs their real code over each
-//! trip, and buys the cheapest skill it can afford. It never tosses toward a
-//! destination and reads nothing (it knows every slot), so tossing and the reading
-//! skills are upside it doesn't count.
+//! coarsest it has) with the most books in reach; further clicks take only piles
+//! it can see. It files the armful nearest slot first, and walks to post its
+//! familiars (couriers at heaps of books far from home, shelvers at the cases with
+//! books piling up near them; one idle two minutes is walked to, taken back and
+//! posted again), running their real code over each trip. It buys the cheapest
+//! skill it can afford. It never tosses toward a destination and reads nothing
+//! (it knows every slot), so tossing and the reading skills are upside it doesn't
+//! count.
 //!
 //! Run with `cargo test --release pacing -- --ignored --nocapture`.
 
@@ -25,7 +27,12 @@ const FILE_CLICK: f32 = 0.9;
 /// Cells ranked by walking per book before the bot looks closer at what to sift.
 const SHORTLIST: usize = 10;
 /// Seconds a familiar may sit idle at its post before the bot moves it.
-const RESTLESS: f32 = 30.0;
+const RESTLESS: f32 = 120.0;
+/// How far the bot aims G (at the floor to post a familiar, or at one to take it
+/// back): it walks to within that of the spot.
+const AIM: f32 = 12.0;
+/// Seconds per G.
+const POST: f32 = 1.0;
 
 /// What to sift: a group and which one of it (`None`: a plain click).
 type Sift = Option<(Group, usize)>;
@@ -47,6 +54,8 @@ struct Bot {
     gathered: u32,
     /// Clicks that took nothing (the books lay past a case from the click).
     empty_clicks: u32,
+    /// Familiars taken back from an idle post to be posted elsewhere.
+    reposts: u32,
 }
 
 impl Bot {
@@ -184,13 +193,24 @@ impl Bot {
             if g.held.len() + aside.len() >= cap {
                 break;
             }
+            // The richest pile in reach that it can see to aim at.
             let matches = |b: u32| fileable[b as usize] && sift.is_none_or(|(group, key)| group.of(&g.lib, b) == key);
-            target = (g.loose)
-                .best_pile(|l, q, books| {
+            let eye = at + Vec3::Y * EYE;
+            let mut piles: Vec<(usize, Vec3)> = (g.loose.piles())
+                .filter(|&(l, q, _)| l == lv && q.distance(at) < reach)
+                .filter_map(|(_, _, books)| {
                     let n = books.iter().filter(|&&b| matches(b)).count();
-                    (l == lv && q.distance(at) < reach && n > 0).then(|| -(n as f32))
+                    let top = books
+                        .iter()
+                        .map(|&b| g.loose.pose(b).0)
+                        .max_by(|a, b| a.y.total_cmp(&b.y))?;
+                    (n > 0).then_some((n, top))
                 })
-                .map(|(_, top)| top);
+                .collect();
+            piles.sort_by_key(|&(n, _)| std::cmp::Reverse(n));
+            target = (piles.into_iter())
+                .map(|(_, top)| top)
+                .find(|&top| g.lib.world.line_of_sight(eye, top + Vec3::Y * 0.05));
         }
         // What can't be filed yet goes back down where the bot stands.
         if !aside.is_empty() {
@@ -269,21 +289,34 @@ impl Bot {
         self.pos = here;
     }
 
-    /// Post familiars that are riding, or have sat idle a while, where there is work
-    /// for them.
+    /// Post familiars where there is the most work for them, walking there (to
+    /// within aim), and move those that have sat idle a while, walking to take them
+    /// back first: a player setting up their helpers on purpose.
     fn post_familiars(&mut self) {
         for i in 0..self.g.familiars.len() {
             let f = &self.g.familiars[i];
-            if f.post.is_some() && f.idle < RESTLESS {
-                continue;
+            match &f.post {
+                Some(post) if f.idle >= RESTLESS => {
+                    let at = post.at;
+                    if self.walk(at, AIM).is_none() {
+                        continue;
+                    }
+                    self.g.recall(i);
+                    self.t += POST;
+                    self.reposts += 1;
+                }
+                Some(_) => continue,
+                None => {}
             }
-            let spot = match f.role {
+            let spot = match self.g.familiars[i].role {
                 Role::Shelver => self.shelver_spot(i),
                 Role::Courier => self.courier_spot(i),
             };
-            match spot {
-                Some(at) => self.g.post_familiar(i, at),
-                None => self.g.familiars[i].idle = 0.0,
+            if let Some(at) = spot
+                && self.walk(at, AIM).is_some()
+            {
+                self.g.post_familiar(i, at);
+                self.t += POST;
             }
         }
     }
@@ -386,6 +419,7 @@ pub(super) fn simulate(layout: Layout) -> f32 {
         trips: 0,
         gathered: 0,
         empty_clicks: 0,
+        reposts: 0,
     };
     let mut next_report = 0.0;
     let mut stuck = 0;
@@ -440,11 +474,13 @@ pub(super) fn simulate(layout: Layout) -> f32 {
     }
     let g = &bot.g;
     println!(
-        "done at {:.2} h, shelved {}; familiars shelved {} ({:.0}%); {:.1}% of the time on stairs; {} empty clicks",
+        "done at {:.2} h, shelved {}; familiars shelved {} ({:.0}%) and delivered {}, {} moved; {:.1}% of the time on stairs; {} empty clicks",
         bot.t / 3600.0,
         g.total_shelved(),
         bot.by_familiars,
         100.0 * bot.by_familiars as f32 / g.total_shelved().max(1) as f32,
+        g.familiars.iter().map(|f| f.delivered).sum::<u32>(),
+        bot.reposts,
         100.0 * bot.climbing / bot.t,
         bot.empty_clicks
     );

@@ -133,11 +133,12 @@ pacing -- --ignored --nocapture`), which plays with the real mechanisms: it walk
 on the nav field to the pile with the most books per second of walking; a plain
 click takes the top of the pile whatever it is (books it can't file yet go back
 down where it stands); with Sifting Touch it sifts the coarsest group it has with
-the most books in reach; it files nearest slot first, as Tidy Arms picks (a click
-per book, or per series with Bundle, the aura at its rate); it posts familiars
-(couriers at heaps of books far from home, shelvers at cases with books piling
-up near them) and runs their real code over each trip; and it buys the cheapest
-skill it can afford. It never tosses and reads nothing, so those are upside it
+the most books in reach, and clicks again only at piles it can see; it files
+nearest slot first, as Tidy Arms picks (a click per book, or per series with
+Bundle, the aura at its rate); it walks to post familiars (couriers at heaps of
+books far from home, shelvers at cases with books piling up near them), and to
+move one idle two minutes, and runs their real code over each trip; and it buys
+the cheapest skill it can afford. It never tosses and reads nothing, so those are upside it
 doesn't count. Between slots it charges the straight line (no less than the
 difference of their walks from where filing began): right once the aura files
 through a case, optimistic before it. The late-game engine is Deeper Arms IV ×
@@ -151,9 +152,10 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   2.8 h, every department open by ~7 h, then a flat ~6–7k books an hour. The
   skills run out in the first sixth; phase 3 rebuilds them for this.
 - Phase 3 (skills by level, familiars at posts, the bot above): the Hall ~1.6 h,
-  the Great Library ~9.0 h with 40 purchases about one every 12 min (the last at
-  ~8.2 h) and every department open by ~5.5 h. Familiars shelve 8–11% of the
-  books; the Great Library's bot spends ~2% of its time on stairs.
+  the Great Library ~10.6 h, purchases spread to ~9.4 h, every department open
+  by ~5.5 h. Familiars shelve ~6% of the Great Library and carry ~8% to their
+  rooms, about what walking to post them costs, while taking about half the
+  lumens; the bot spends ~4% of its time on stairs.
 
 ## Rendering
 Box-only geometry, per-instance `kind` selects procedural material in WGSL

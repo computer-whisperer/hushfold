@@ -336,7 +336,16 @@ impl World {
         boxes.min(stairs)
     }
 
-    /// True if nothing that stops sight lies between `a` and `b`.
+    /// True if nothing that stops every kind in `what` lies on the segment from `a`
+    /// to `b`.
+    pub fn clear(&self, a: Vec3, b: Vec3, what: Stops) -> bool {
+        let d = b - a;
+        let len = d.length();
+        len < 1e-5 || self.ray(a, d / len, len, what) >= len - 1e-3
+    }
+
+    /// True if nothing that stops sight lies between `a` and `b` (short of the last
+    /// 15 cm, so a label on a surface is seen).
     pub fn line_of_sight(&self, a: Vec3, b: Vec3) -> bool {
         let d = b - a;
         let len = d.length();
