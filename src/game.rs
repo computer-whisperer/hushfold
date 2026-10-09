@@ -15,6 +15,10 @@ const EYE: f32 = 1.62;
 const SHELF_REACH: f32 = 4.2;
 const PLAYER_R: f32 = 0.3;
 const HAND_VISIBLE: usize = 8;
+/// Shelving Aura by level: (radius in metres, books per second).
+const AURA_LEVELS: [(f32, f32); 4] = [(0.0, 0.0), (3.0, 2.0), (4.5, 4.0), (6.0, 8.0)];
+/// Familiar Wings by level: (flight speed in m/s, books carried).
+const WINGS_LEVELS: [(f32, usize); 3] = [(2.6, 2), (3.8, 3), (5.0, 5)];
 
 /// Vertical FOV: `v_deg` on wide windows, widened on narrow ones so the horizontal
 /// FOV never drops below `v_deg` × 85/70 (85° at the default 70°).
@@ -92,12 +96,12 @@ pub fn upg_def(u: Upg) -> UpgDef {
         Upg::Familiar => UpgDef {
             name: "Paper Familiar",
             blurb: "A folded-paper crane that ferries books to their shelves on its own.",
-            costs: &[250, 600, 1200, 2400, 4000],
+            costs: &[250, 600, 1200, 2200, 3200],
         },
         Upg::Aura => UpgDef {
             name: "Shelving Aura",
             blurb: "Books you carry drift to their slots whenever you pass close by.",
-            costs: &[500, 1500, 4000],
+            costs: &[500, 1500, 3000],
         },
         Upg::Wings => UpgDef {
             name: "Familiar Wings",
@@ -994,7 +998,7 @@ impl Game {
         if lvl == 0 {
             return;
         }
-        let (radius, rate) = [(0.0, 0.0), (3.0, 6.0), (6.0, 15.0), (11.0, 40.0)][lvl as usize];
+        let (radius, rate) = AURA_LEVELS[lvl as usize];
         self.aura_budget = (self.aura_budget + rate * dt).min(rate * 0.5 + 1.0);
         let eye = self.player.eye();
         let prev = self.active_book();
@@ -1016,8 +1020,7 @@ impl Game {
 
     fn update_familiars(&mut self, dt: f32) {
         let wings = self.level(Upg::Wings) as usize;
-        let speed = [2.6, 4.0, 6.0][wings];
-        let cap = [2, 4, 8][wings];
+        let (speed, cap) = WINGS_LEVELS[wings];
         let cruise = 4.9f32;
         let mut fams = std::mem::take(&mut self.familiars);
         for (fi, fam) in fams.iter_mut().enumerate() {
@@ -1726,7 +1729,8 @@ mod tests {
 
     /// Pacing estimate: a bot that walks (at real speeds) to the nearest heap, gathers an
     /// armful, files it in nearest-slot order, and greedily buys the cheapest upgrade.
-    /// Familiars and the aura are approximated. Run with `--ignored --nocapture`.
+    /// Familiars shelve at the rates `familiar_throughput` measures; the aura is
+    /// approximated. Run with `--ignored --nocapture`.
     #[test]
     #[ignore]
     fn pacing_simulation() {
@@ -1739,6 +1743,7 @@ mod tests {
         while g.total_shelved() < g.total_books() && t < 60.0 * 60.0 * 20.0 {
             // Familiars: each files ~one book per (flight time + handling), approximated.
             let fams = g.level(Upg::Familiar) as f32;
+            let trip_start = t;
             // Gather.
             let Some(h) = (0..g.lib.heaps.len())
                 .filter(|&h| !g.lib.heaps[h].books.is_empty() && g.wing_unlocked(g.lib.heaps[h].wing))
@@ -1761,7 +1766,7 @@ mod tests {
                 g.held.push(b);
             }
             // File, nearest slot first; a click files one book, or a whole series with Bundle.
-            let aura_r: f32 = [0.0, 3.0, 6.0, 11.0][g.level(Upg::Aura) as usize];
+            let (aura_r, aura_rate) = AURA_LEVELS[g.level(Upg::Aura) as usize];
             while !g.held.is_empty() {
                 let (i, _) = g
                     .held
@@ -1774,7 +1779,6 @@ mod tests {
                 let slot = g.lib.books[b as usize].slot_pos;
                 let d = Vec3::new(slot.x - pos.x, 0.0, slot.z - pos.z).length();
                 let walk = (d - aura_r.max(1.8)).max(0.0);
-                t += walk / speed(&g) + if aura_r > 0.0 { 0.15 } else { 0.9 };
                 pos += Vec3::new(slot.x - pos.x, 0.0, slot.z - pos.z).normalize_or_zero() * walk;
                 let s = g.lib.books[b as usize].series;
                 let batch: Vec<u32> = if g.level(Upg::Bundle) > 0 {
@@ -1786,15 +1790,23 @@ mod tests {
                 } else {
                     vec![b]
                 };
+                // One click files the batch; the aura files it at its rate. Whichever is quicker.
+                let click = 0.9f32;
+                let file = if aura_rate > 0.0 {
+                    click.min(batch.len() as f32 / aura_rate)
+                } else {
+                    click
+                };
+                t += walk / speed(&g) + file;
                 g.held.retain(|x| !batch.contains(x));
                 let mut thunks = 0;
                 for x in batch {
                     g.on_shelved(x, &mut audio, &mut thunks);
                 }
             }
-            // Familiars over the elapsed trip: ~0.12 books/s each, more with Wings.
-            let rate = [0.12, 0.2, 0.32][g.level(Upg::Wings) as usize] * fams;
-            let fam_books = (rate * 30.0) as usize;
+            // Familiars over the elapsed trip, at measured rates per Wings level.
+            let rate = [0.095, 0.17, 0.25][g.level(Upg::Wings) as usize] * fams;
+            let fam_books = (rate * (t - trip_start)) as usize;
             for _ in 0..fam_books {
                 if let Some(h) = (0..g.lib.heaps.len())
                     .find(|&h| !g.lib.heaps[h].books.is_empty() && g.wing_unlocked(g.lib.heaps[h].wing))
@@ -1838,6 +1850,29 @@ mod tests {
             }
         }
         println!("done at {:.1} h, shelved {}", t / 3600.0, g.total_shelved());
+    }
+
+    /// Measures what familiars actually shelve per second, by running the real familiar
+    /// code headless. Feeds the rates in `pacing_simulation`. Run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn familiar_throughput() {
+        let mut audio = crate::audio::Audio::silent();
+        for wings in 0..=2 {
+            for fams in [1, 5] {
+                let mut g = Game::new();
+                g.upg[upg_index(Upg::Wings)] = wings;
+                for _ in 0..fams {
+                    g.spawn_familiar();
+                }
+                let secs = 180.0;
+                for _ in 0..(secs * 60.0) as usize {
+                    g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
+                }
+                let rate = g.total_shelved() as f32 / secs / fams as f32;
+                println!("wings {wings} familiars {fams}: {rate:.3} books/s each");
+            }
+        }
     }
 
     /// Every slot must be fileable when looked at from a natural oblique standpoint

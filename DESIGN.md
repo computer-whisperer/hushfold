@@ -49,6 +49,15 @@ filed or you gather again. Sort Sense's marker sits on the slot when the walk is
 line, and otherwise on the farthest visible point along the route.
 East wing is veiled until 60% of the West wing is sorted.
 
+Pacing is tuned with two ignored tests (`--ignored --nocapture`): `familiar_throughput`
+runs the real familiar code headless to measure books/s per Wings level, and
+`pacing_simulation` plays an idealised bot (nearest heap, nearest slot, cheapest
+upgrade) using those rates. As of 0.1.1 the bot finishes in ~1.4 h, the East Wing
+takes the last ~30 min, and the last upgrade is affordable at ~86% shelved. The
+late-game engine is Deeper Arms IV × Shelving Aura, so the aura's books-per-second
+rate is the main dial; in 0.1.0 (6/15/40 books/s, 11 m at III) the bot finished in
+~1.0 h with the whole East Wing in ~16 min.
+
 ## Rendering
 Box-only geometry, per-instance `kind` selects procedural material in WGSL
 (wood, book, floor, stone, rug, emissive, plaque). Forward lighting with up to
