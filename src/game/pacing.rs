@@ -8,8 +8,9 @@
 //! coarsest it has) with the most books in reach and scoops only that; further
 //! scoops take only piles it can see. When the Gathering Charm is ready and most
 //! of what is left where it gathered belongs in other rooms, it sends that to the
-//! hub; when Summon Series is, it calls the series held with the most loose
-//! volumes in reach.
+//! hub; when Summon Series is, it hunts sets: it calls the strays of a series held
+//! that they would complete (the biggest), else the series held with the most
+//! loose volumes in reach.
 //!
 //! It files the armful nearest slot first, casting Glimpse and Shelving Rush as it
 //! starts whenever they are ready. It knows every slot, so reading is charged as
@@ -335,23 +336,34 @@ impl Bot {
                 self.charms += 1;
             }
         }
-        // Summon Series, if ready and there is room: the series held with the most
-        // loose volumes in reach comes to the arms.
+        // Summon Series, if ready and there is room, hunting sets: a series held that
+        // the volumes in reach would complete (the biggest), else the series held
+        // with the most loose volumes in reach (three or more).
         let summon = self.g.level(Upg::Summon);
-        if self.ready(Upg::Summon) && self.g.held.len() + aside.len() < cap {
+        let room = cap.saturating_sub(self.g.held.len() + aside.len());
+        if self.ready(Upg::Summon) && room > 0 {
             let g = &mut self.g;
             g.player.pos = self.pos;
             let mut series: Vec<u32> = g.held.iter().map(|&b| g.lib.books[b as usize].series).collect();
+            series.sort();
             series.dedup();
+            let held_of =
+                |g: &Game, s: u32| g.held.iter().filter(|&&b| g.lib.books[b as usize].series == s).count() as u32;
             let best = (series.into_iter())
-                .map(|s| (g.summonable(s, summon).len(), s))
-                .max_by_key(|&(n, s)| (n, std::cmp::Reverse(s)));
-            if let Some((n, s)) = best
-                && n >= 3
-            {
-                g.active = g
-                    .held
-                    .iter()
+                .filter_map(|s| {
+                    let n = g.summonable(s, summon).len();
+                    let missing =
+                        (g.lib.series[s as usize].volumes - g.series_shelved[s as usize] - held_of(g, s)) as usize;
+                    let completes = missing > 0 && n >= missing && missing <= room;
+                    if completes {
+                        Some(((1, g.lib.series[s as usize].volumes as usize), s))
+                    } else {
+                        (n >= 3).then_some(((0, n), s))
+                    }
+                })
+                .max_by_key(|&(score, s)| (score, std::cmp::Reverse(s)));
+            if let Some((_, s)) = best {
+                g.active = (g.held.iter())
                     .position(|&b| g.lib.books[b as usize].series == s)
                     .unwrap();
                 if g.summon(summon, &mut self.audio) {

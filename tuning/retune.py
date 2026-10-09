@@ -12,6 +12,9 @@ overshoot; it settles in two or three.
   python3 tuning/retune.py scale   <hall|great> <bot output> [beta=1]
   python3 tuning/retune.py sorted  <hall|great>   (re-deal the current costs, sorted,
                                                   along a reordered schedule)
+  python3 tuning/retune.py uniform <hall|great> <factor>   (every cost times factor:
+      when the whole economy got richer or poorer, scaling purchase by purchase
+      delays the engines and drifts; a uniform factor keeps their timing)
 
 The bot's output comes from
   cargo test --release pacing_<hall|great> -- --ignored --nocapture > out.txt
@@ -96,6 +99,10 @@ def main():
         cs = sorted(c for v in read_costs(lib).values() for c in v)
         assert len(cs) == len(sched), f"{len(cs)} costs for {len(sched)} purchases"
         write_costs(lib, sched, cs)
+        return
+    if cmd == "uniform":
+        f = float(sys.argv[3])
+        write_costs(lib, sched, [c * f for c in in_schedule_order(sched, read_costs(lib))])
         return
     got, end = bought(sys.argv[3])
     if cmd == "compare":
