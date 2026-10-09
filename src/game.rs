@@ -2873,9 +2873,12 @@ mod tests {
             for k in 0..8 {
                 let s = Vec3::new([-1.0, 1.0][k & 1], [-1.0, 1.0][(k >> 1) & 1], [-1.0, 1.0][k >> 2]);
                 let q = pos + rot * (half * s);
+                // How far inside a step it is: the shortest way out, so a corner just
+                // past a riser's face counts as the millimetres it is, not as its depth
+                // below the step's top.
                 let depth = (solid.iter())
                     .filter(|(mn, mx)| q.cmpgt(*mn).all() && q.cmplt(*mx).all())
-                    .map(|(_, mx)| mx.y - q.y)
+                    .map(|(mn, mx)| (q - *mn).min(*mx - q).min_element())
                     .fold(0.0, f32::max);
                 if depth > 0.005 {
                     sunk.push(format!("book {b} corner {q} {depth:.3} deep"));

@@ -500,3 +500,28 @@ time, familiars shelve ~6–10%.
 came out by the nearer face, so at long frames (a hitch; the bot's 0.05 s steps)
 a hard throw could pass the middle of an outer wall and come to rest on its top,
 outside the building, out of reach. Steps now never move a book more than 5 cm.
+
+### Next (agreed 2026-10-09): sets, the armful, familiars
+
+From a look at the reward structure (series bonuses are half of all lumens, but
+series complete only when their last stray turns up, so ~all completions land in
+the last hour) and the first playtest of the opening:
+- **Some series lie together** (a mix, not all): each series of two or more
+  volumes draws how much of it starts in one pile: ~25% whole, ~40% a core of
+  40–80% with the rest scattered one by one, ~35% scattered entirely. A whole set
+  goes to its own room (85%, else the atrium); other units by the old shares
+  (65% own room, 20% atrium, 15% earlier rooms). Measured: 26% of series start in
+  one heap, 37% entirely in their own room, the median widest gap between a
+  series' volumes 26 m (was 33 m). The Great Library's mix of veiled books in
+  early areas stays as it is. The Hall keeps its released generation for now:
+  saves keep only moved books and rebuild untouched piles from generation, so
+  changing it would rearrange the piles of 0.1.x saves (open question).
+- **Set tools sized to the scatter, and earlier.** Summon Series I reaches the
+  room you are in (II the floor, III anywhere); Fine Fingers (seeking a series)
+  comes within the first hour or so in the Great Library.
+- **The bot hunts sets**: Summon Series goes first to a series it can complete.
+- **Familiars buffed** ahead of measuring: they shelved ~6–10% and the familiars
+  path was the slowest.
+- **The toss throws the whole armful**, or while seeking only what is sought (it
+  threw the active book's category, often one book of a mixed early armful).
+- Then refit the costs and measure the paths again.

@@ -510,25 +510,29 @@ impl Library {
 
     /// Where the books start. A department's books lie in its own room, the atrium,
     /// and rooms that open before it, so every book is within reach once its
-    /// department opens; early rooms are mixed, later ones purer.
+    /// department opens; early rooms are mixed, later ones purer. They go as units
+    /// (`series_units`): a series lying whole goes to its own room (else the atrium);
+    /// other units 65% to its room, 20% to the atrium, 15% to rooms that open earlier
+    /// (the atrium for the first room).
     fn scatter_books(&mut self, rng: &mut StdRng) {
         let rooms = STOREYS * 4;
-        let mut room_pool: Vec<Vec<u32>> = vec![Vec::new(); rooms];
-        let mut atrium_pool: Vec<u32> = Vec::new();
+        let mut room_pool: Vec<Vec<Vec<u32>>> = vec![Vec::new(); rooms];
+        let mut atrium_pool: Vec<Vec<u32>> = Vec::new();
         for d in 0..rooms {
-            let mut books: Vec<u32> = (0..self.books.len() as u32)
+            let books: Vec<u32> = (0..self.books.len() as u32)
                 .filter(|&b| self.dept_of(self.category_of_book(b)) == d)
                 .collect();
-            books.shuffle(rng);
-            let own = (books.len() as f32 * 0.65) as usize;
-            let atrium = (books.len() as f32 * 0.2) as usize;
-            room_pool[d].extend(books.drain(..own));
-            atrium_pool.extend(books.drain(..atrium));
-            for (i, b) in books.into_iter().enumerate() {
-                if d == 0 {
-                    atrium_pool.push(b);
+            let mut earlier = 0;
+            for unit in self.series_units(rng, &books) {
+                let (own, atrium) = if self.whole_set(&unit) { (0.85, 0.15) } else { (0.65, 0.2) };
+                let x = rng.gen_range(0.0..1.0f32);
+                if x < own {
+                    room_pool[d].push(unit);
+                } else if x < own + atrium || d == 0 {
+                    atrium_pool.push(unit);
                 } else {
-                    room_pool[i % d].push(b);
+                    room_pool[earlier % d].push(unit);
+                    earlier += 1;
                 }
             }
         }
@@ -542,30 +546,40 @@ impl Library {
         // The atrium: heaps on the reading floor (one great one in the middle), piles
         // under the galleries and along them.
         atrium_pool.shuffle(rng);
-        let n = atrium_pool.len();
-        let great: Vec<u32> = atrium_pool.drain(..n * 3 / 20).collect();
+        let total: usize = atrium_pool.iter().map(Vec::len).sum();
+        let take = |pool: &mut Vec<Vec<u32>>, books: usize| -> Vec<Vec<u32>> {
+            let mut out = Vec::new();
+            let mut n = 0;
+            while n < books
+                && let Some(u) = pool.pop()
+            {
+                n += u.len();
+                out.push(u);
+            }
+            out
+        };
+        let great: Vec<u32> = take(&mut atrium_pool, total * 3 / 20).into_iter().flatten().collect();
         self.add_pile(rng, 0, Vec2::ZERO, 0.4 + 0.045 * (great.len() as f32).sqrt(), great);
         // Between the well and the atrium walls (on the ground floor, under the
         // galleries; upstairs, the galleries themselves).
         let a = Vec2::splat(ATRIUM - 0.2);
         let ring = cut(vec![(-a, a)], (Vec2::splat(-WELL - 0.3), Vec2::splat(WELL + 0.3)));
         let well = vec![(Vec2::splat(-WELL + 0.6), Vec2::splat(WELL - 0.6))];
+        let rest: usize = atrium_pool.iter().map(Vec::len).sum();
         let shares = [
             (0, well, 0.3),
             (0, ring.clone(), 0.25),
             (1, ring.clone(), 0.25),
             (2, ring, 0.2),
         ];
-        let total = atrium_pool.len();
         for (i, (l, rects, share)) in shares.into_iter().enumerate() {
-            let take = if i == 3 {
-                atrium_pool.len()
+            let units = if i == 3 {
+                std::mem::take(&mut atrium_pool)
             } else {
-                ((total as f32 * share) as usize).min(atrium_pool.len())
+                take(&mut atrium_pool, (rest as f32 * share) as usize)
             };
-            let books: Vec<u32> = atrium_pool.drain(..take).collect();
             let spots = self.pile_spots(rng, l, &rects, 0.8, 0.6);
-            self.spread(rng, l, &spots, books);
+            self.spread(rng, l, &spots, units);
         }
     }
 
@@ -605,30 +619,5 @@ impl Library {
             }
         }
         spots
-    }
-
-    /// Share `books` out between pile `spots` on `level`, roughly evenly.
-    fn spread(&mut self, rng: &mut StdRng, level: usize, spots: &[Vec2], mut books: Vec<u32>) {
-        assert!(
-            !spots.is_empty() || books.is_empty(),
-            "nowhere to put {} books",
-            books.len()
-        );
-        let count = spots.len();
-        for (i, &p) in spots.iter().enumerate() {
-            let left = count - i;
-            let n = if left == 1 {
-                books.len()
-            } else {
-                ((books.len() as f32 / left as f32) * rng.gen_range(0.75..1.25)) as usize
-            };
-            let n = n.min(books.len());
-            if n == 0 {
-                continue;
-            }
-            let radius = 0.4 + 0.06 * (n as f32).sqrt();
-            let pile: Vec<u32> = books.drain(..n).collect();
-            self.add_pile(rng, level, p, radius, pile);
-        }
     }
 }

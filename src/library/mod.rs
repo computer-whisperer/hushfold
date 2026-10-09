@@ -462,6 +462,73 @@ impl Library {
         }
     }
 
+    /// `books` (one department's, say) as units to scatter, shuffled: a unit lies in
+    /// one pile. Each series of two or more volumes draws how much of it lies
+    /// together: about a quarter whole, about two fifths with a core of 40–80% of its
+    /// volumes and the rest scattered one by one, the others scattered entirely.
+    fn series_units(&self, rng: &mut StdRng, books: &[u32]) -> Vec<Vec<u32>> {
+        let mut by_series: Vec<Vec<u32>> = Vec::new();
+        let mut at: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+        for &b in books {
+            let s = self.books[b as usize].series;
+            let i = *at.entry(s).or_insert_with(|| {
+                by_series.push(Vec::new());
+                by_series.len() - 1
+            });
+            by_series[i].push(b);
+        }
+        let mut units = Vec::new();
+        for mut vols in by_series {
+            vols.shuffle(rng);
+            let together = match rng.gen_range(0.0..1.0f32) {
+                x if x < 0.25 => 1.0,
+                x if x < 0.65 => rng.gen_range(0.4..0.8),
+                _ => 0.0,
+            };
+            let core = (vols.len() as f32 * together).round() as usize;
+            if core >= 2 {
+                units.push(vols.drain(..core).collect());
+            }
+            units.extend(vols.into_iter().map(|b| vec![b]));
+        }
+        units.shuffle(rng);
+        units
+    }
+
+    /// A unit from `series_units` that is a whole series of two or more volumes.
+    fn whole_set(&self, unit: &[u32]) -> bool {
+        let s = self.books[unit[0] as usize].series as usize;
+        unit.len() >= 2 && unit.len() == self.series_books[s].len()
+    }
+
+    /// Share `units` out between pile `spots` on `level`, roughly evenly by books,
+    /// keeping each unit in one pile.
+    fn spread(&mut self, rng: &mut StdRng, level: usize, spots: &[Vec2], units: Vec<Vec<u32>>) {
+        let mut left: usize = units.iter().map(Vec::len).sum();
+        assert!(!spots.is_empty() || left == 0, "nowhere to put {left} books");
+        let mut units = units.into_iter();
+        for (i, &p) in spots.iter().enumerate() {
+            let piles_left = spots.len() - i;
+            let want = if piles_left == 1 {
+                left
+            } else {
+                ((left as f32 / piles_left as f32) * rng.gen_range(0.75..1.25)) as usize
+            };
+            let mut pile = Vec::new();
+            while pile.len() < want
+                && let Some(u) = units.next()
+            {
+                pile.extend(u);
+            }
+            if pile.is_empty() {
+                continue;
+            }
+            left -= pile.len();
+            let radius = 0.4 + 0.06 * (pile.len() as f32).sqrt();
+            self.add_pile(rng, level, p, radius, pile);
+        }
+    }
+
     /// Drop points for a pile: denser toward the middle as it grows, so it heaps up.
     fn add_pile(&mut self, rng: &mut StdRng, level: usize, center: Vec2, radius: f32, books: Vec<u32>) {
         let count = books.len().max(1) as f32;
