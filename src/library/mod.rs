@@ -296,6 +296,17 @@ impl Library {
         slabs.chain(ramps)
     }
 
+    /// True if something at `p` rises in the way of a body standing at `feet`: the
+    /// edge of a floor higher than a step but below the head, or any part of a flight
+    /// of stairs higher than a step (stairs are solid stone underneath).
+    pub fn rises_at(&self, p: Vec2, feet: f32, step: f32, head: f32) -> bool {
+        let slab = (self.slabs.iter())
+            .filter(|s| p.cmpge(s.min).all() && p.cmple(s.max).all())
+            .any(|s| (feet + step..feet + head).contains(&self.levels[s.level].y));
+        let stairs = (self.ramps.iter()).any(|r| r.contains(p) && r.height(p) > feet + step);
+        slab || stairs
+    }
+
     /// The highest floor or stair surface under `p` that is no higher than `below`.
     pub fn ground_at(&self, p: Vec2, below: f32) -> Option<f32> {
         self.surfaces(p).filter(|&y| y <= below).max_by(f32::total_cmp)

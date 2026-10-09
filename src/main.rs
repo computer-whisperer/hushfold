@@ -114,6 +114,8 @@ impl Running {
         );
         self.renderer.set_static(&self.game.lib.static_insts);
         self.renderer.clear_chunks();
+        // Fill its chunks now, so this frame doesn't draw an empty library.
+        self.game.build_instances();
         self.apply_settings();
         self.hud.confirm_restart = false;
         self.hud.menu_open = false;

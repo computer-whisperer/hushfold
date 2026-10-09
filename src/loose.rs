@@ -140,6 +140,8 @@ struct Grid {
     buckets: Vec<Vec<u32>>,
     slabs: Vec<(Vec2, Vec2)>,
     ramps: Vec<Ramp>,
+    /// Where the space reaches higher than `roof` (a skylit well).
+    raised: Vec<(Vec2, Vec2, f32)>,
     /// Furniture standing on this level (min, max), rows of tall pieces merged.
     solids: Vec<(Vec3, Vec3)>,
     /// Closed gates on this level: (gate, min, max).
@@ -181,6 +183,10 @@ impl Grid {
                 .map(|s| (s.min, s.max))
                 .collect(),
             ramps: lib.ramps.iter().filter(|r| r.level == l).copied().collect(),
+            raised: (lib.raised_roofs.iter())
+                .filter(|r| r.0 == l)
+                .map(|&(_, mn, mx, y)| (mn, mx, y))
+                .collect(),
             solids: merge_solids(solids, lv.y),
             gates: (lib.gates.iter().enumerate())
                 .filter(|(_, g)| g.level == l)
@@ -189,6 +195,14 @@ impl Grid {
         };
         g.base = (0..tw * th).map(|t| g.build_base(t)).collect();
         g
+    }
+
+    /// How high this level's space reaches at `p` where no floor above caps it.
+    fn roof_at(&self, p: Vec2) -> f32 {
+        (self.raised.iter())
+            .filter(|(mn, mx, _)| p.cmpge(*mn).all() && p.cmple(*mx).all())
+            .map(|r| r.2)
+            .fold(self.roof, f32::max)
     }
 
     fn tall(&self, mx: Vec3) -> bool {
@@ -762,12 +776,15 @@ impl Loose {
     /// Where a book dropped at `c` (length along `u`) on level `lv` comes to rest: it
     /// slides downhill while its support is too steep, then fits what is under it.
     /// `Err` is where it slid over an edge (its centre over a hole), to fall from.
+    /// A hole is judged by the surface books land on, so another book overhanging the
+    /// edge holds it, as the landing test in `step` says.
     fn drop(&self, lv: usize, b: u32, c: Vec2, u: Vec2) -> Result<Rest, Vec2> {
         let g = &self.grids[lv];
+        let open = |c: Vec2| g.height(c) == HOLE;
         let mut c = self.keep_clear(lv, b, c);
         let v = Vec2::new(u.y, -u.x);
         for _ in 0..MAX_SLIDE_STEPS {
-            if g.is_hole(c) {
+            if open(c) {
                 return Err(c);
             }
             let (gr, _) = self.fit(lv, b, c, u);
@@ -781,7 +798,7 @@ impl Loose {
             }
             c = next;
         }
-        if g.is_hole(c) {
+        if open(c) {
             return Err(c);
         }
         Ok(self.fit(lv, b, c, u).1)
@@ -1190,7 +1207,7 @@ impl Loose {
                 }
             }
             Some(up) => bounce(&mut p.y, &mut v.y, f32::MIN, up.y - SLAB - FLY_R),
-            None => bounce(&mut p.y, &mut v.y, f32::MIN, self.grids[*lv].roof - FLY_R),
+            None => bounce(&mut p.y, &mut v.y, f32::MIN, self.grids[*lv].roof_at(at) - FLY_R),
         }
         let g = &self.grids[*lv];
         bounce(&mut p.x, &mut v.x, g.min.x + FLY_R, g.max.x - FLY_R);
@@ -1790,6 +1807,57 @@ mod tests {
                 assert!(y <= lowest_taken + 1e-6, "left book {b} above a taken one");
             }
         }
+    }
+
+    /// A book dropped onto another that overhangs the top of a stairwell comes to rest
+    /// (regression: it landed and fell again every frame, forever).
+    #[test]
+    fn books_settle_on_an_overhang() {
+        let lib = Library::generate(crate::library::Layout::Great, crate::game::SEED);
+        let mut loose = Loose::new(&lib);
+        let (lv, top) = loose.best_pile(|l, c, _| (l == 0).then(|| xz(c).length())).unwrap();
+        let books = loose.gather(lv, Vec2::new(top.x, top.z), 1.0, 30, |_| true);
+        let n = lib.books.len();
+        let (mut pos, mut rot) = (vec![Vec3::ZERO; n], vec![Quat::IDENTITY; n]);
+        // A book lying on the first floor at the top of the west stairwell, its middle
+        // on the floor and its end out over the stairwell (z > -5.5 is open).
+        let ledge = books[0];
+        loose.take(&[ledge]);
+        let u = Vec2::Y;
+        let half = lib.books[ledge as usize].size.y * 0.5;
+        loose.restore(
+            ledge,
+            1,
+            Rest {
+                c: Vec3::new(-10.2, 6.0, -5.5 - half * 0.4),
+                u,
+                su: 0.0,
+                sv: 0.0,
+            },
+        );
+        loose.rebuild_all();
+        // Then the rest dropped on its overhanging end, one after another.
+        for (i, &b) in books[1..].iter().enumerate() {
+            let at = Vec3::new(-10.2 + (i % 3) as f32 * 0.03 - 0.03, 6.5, -5.5 + half * 0.4);
+            loose.throw(
+                b,
+                at,
+                Vec3::ZERO,
+                Quat::from_rotation_y(i as f32),
+                Vec3::ZERO,
+                i as f32 * 0.3,
+            );
+        }
+        let mut last = 0;
+        for f in 0..60 * 20 {
+            let landed = loose.update(1.0 / 60.0, &mut pos, &mut rot).len();
+            if f >= 60 * 19 {
+                last += landed;
+            }
+        }
+        assert_eq!(last, 0, "books still landing after 19 s");
+        assert!(books.iter().all(|&b| loose.is_resting(b)));
+        assert_eq!(loose.heightfield_errors(), 0);
     }
 
     /// A sift doesn't reach through a bookcase to books on its other side.

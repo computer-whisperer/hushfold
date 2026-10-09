@@ -140,8 +140,8 @@ the implementation's own choices, revisable at the phase boundary.
   of their feet; a higher rise blocks like a wall; railings guard edges. Solids
   collide only where they overlap the body vertically.
 - Nav: a 0.5 m grid per level, ramps linking the cells at their two ends.
-  Dijkstra from the player over all levels, stopping once every requested target
-  is settled.
+  Dijkstra from the player over all levels, run in full whenever the player
+  changes cell (no early exit: the whole field serves Tidy Arms and Sort Sense).
 
 ### Rendering
 - Chunks: resting and shelved books and ghosts live in persistent per-chunk

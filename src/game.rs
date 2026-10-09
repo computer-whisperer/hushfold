@@ -716,21 +716,34 @@ impl Game {
         let k = 1.0 - (-dt * 10.0).exp();
         let walk = Vec3::new(self.player.vel.x, 0.0, self.player.vel.z).lerp(wish * speed, k);
         let pos = self.player.pos;
-        let feet = pos.y;
-        let mut np = pos + walk * dt;
-        // Collide with what stands in the way (circle vs box in xz).
+        let lv = &self.lib.levels[self.lib.level_at(pos)];
+        let (lo, hi) = (lv.min + PLAYER_R + 0.1, lv.max - PLAYER_R - 0.1);
+        // In steps short enough that nothing thin (a veil, a rail) is stepped over.
+        let total = Vec2::new(walk.x, walk.z) * dt;
+        let steps = (total.length() / 0.1).ceil().max(1.0) as usize;
+        let sub = dt / steps as f32;
+        let mut np = pos;
+        let mut vy = self.player.vel.y;
         let mut pressed_gate = None;
-        for _ in 0..2 {
-            for (mn, mx, gate) in self.solids_in_way(feet) {
-                let q = Vec2::new(np.x.clamp(mn.x, mx.x), np.z.clamp(mn.z, mx.z));
-                let d = Vec2::new(np.x, np.z) - q;
-                let l = d.length();
-                if l < PLAYER_R {
-                    let push = if l > 1e-5 {
-                        d / l * (PLAYER_R - l)
-                    } else {
-                        Vec2::new(PLAYER_R, 0.0)
-                    };
+        for _ in 0..steps {
+            let (from, feet) = (np, np.y);
+            np.x += total.x / steps as f32;
+            np.z += total.y / steps as f32;
+            // Collide with what stands in the way (circle vs box in xz).
+            for _ in 0..2 {
+                for (mn, mx, gate) in self.solids_in_way(feet) {
+                    let q = Vec2::new(np.x.clamp(mn.x, mx.x), np.z.clamp(mn.z, mx.z));
+                    let d = Vec2::new(np.x, np.z) - q;
+                    let l = d.length();
+                    if l >= PLAYER_R {
+                        continue;
+                    }
+                    if l <= 1e-5 {
+                        // Inside it (only if it moved in): back to where this step began.
+                        (np.x, np.z) = (from.x, from.z);
+                        continue;
+                    }
+                    let push = d / l * (PLAYER_R - l);
                     np.x += push.x;
                     np.z += push.y;
                     if gate.is_some() && Vec2::new(wish.x, wish.z).dot(-push.normalize_or_zero()) > 0.3 {
@@ -738,38 +751,35 @@ impl Game {
                     }
                 }
             }
-        }
-        let lv = &self.lib.levels[self.lib.level_at(pos)];
-        np.x = np.x.clamp(lv.min.x + PLAYER_R + 0.1, lv.max.x - PLAYER_R - 0.1);
-        np.z = np.z.clamp(lv.min.y + PLAYER_R + 0.1, lv.max.y - PLAYER_R - 0.1);
-        // A rise too high to step onto (the side of a flight of stairs) is a wall: slide
-        // along it if one axis is clear, else stay.
-        let walled =
-            |x: f32, z: f32| (self.lib.surfaces(Vec2::new(x, z))).any(|s| s > feet + STEP_UP && s < feet + BODY_H);
-        if walled(np.x, np.z) {
-            if !walled(np.x, pos.z) {
-                np.z = pos.z;
-            } else if !walled(pos.x, np.z) {
-                np.x = pos.x;
-            } else {
-                np = pos;
+            np.x = np.x.clamp(lo.x, hi.x);
+            np.z = np.z.clamp(lo.y, hi.y);
+            // A rise too high to step onto is a wall: slide along it if one axis is
+            // clear, else stay.
+            let walled = |x: f32, z: f32| self.lib.rises_at(Vec2::new(x, z), feet, STEP_UP, BODY_H);
+            if walled(np.x, np.z) {
+                if !walled(np.x, from.z) {
+                    np.z = from.z;
+                } else if !walled(from.x, np.z) {
+                    np.x = from.x;
+                } else {
+                    (np.x, np.z) = (from.x, from.z);
+                }
             }
-        }
-        // Stand on the floor or stair underfoot; step down stairs, fall off edges.
-        let mut vy = self.player.vel.y;
-        match self.lib.ground_at(Vec2::new(np.x, np.z), feet + STEP_UP) {
-            Some(g) if g >= feet - 0.6 && vy <= 0.0 => {
-                np.y = g;
-                vy = 0.0;
-            }
-            ground => {
-                vy -= crate::loose::GRAVITY * dt;
-                np.y = feet + vy * dt;
-                if let Some(g) = ground
-                    && np.y <= g
-                {
+            // Stand on the floor or stair underfoot; step down stairs, fall off edges.
+            match self.lib.ground_at(Vec2::new(np.x, np.z), feet + STEP_UP) {
+                Some(g) if g >= feet - 0.6 && vy <= 0.0 => {
                     np.y = g;
                     vy = 0.0;
+                }
+                ground => {
+                    vy -= crate::loose::GRAVITY * sub;
+                    np.y = feet + vy * sub;
+                    if let Some(g) = ground
+                        && np.y <= g
+                    {
+                        np.y = g;
+                        vy = 0.0;
+                    }
                 }
             }
         }
@@ -2740,6 +2750,60 @@ mod tests {
         }
         check(&mut g);
         assert!(g.total_shelved() >= 1);
+    }
+
+    /// Pressing into a thin solid (a closed veil, a gallery rail) never carries the
+    /// player through it, even sprinting at the longest frame step (regression: one
+    /// 50 ms frame stepped through a gate).
+    #[test]
+    fn thin_walls_hold_at_long_frames() {
+        let mut audio = crate::audio::Audio::silent();
+        let sprint = Input {
+            forward: 1.0,
+            sprint: true,
+            ..Input::default()
+        };
+        // (layout, start, facing, the x the player must stay short of)
+        let cases = [
+            (Layout::Hall, Vec3::new(10.5, 0.0, 3.0), PI * 0.5, VEIL_X),
+            (Layout::Great, Vec3::new(12.0, 0.0, 0.2), PI * 0.5, 14.0),
+            (Layout::Great, Vec3::new(12.0, 6.0, 0.0), -PI * 0.5, 9.0),
+        ];
+        for (layout, start, yaw, edge) in cases {
+            let mut g = Game::new(layout);
+            g.upg[upg_index(Upg::Slippers)] = 2;
+            g.player.pos = start;
+            g.player.yaw = yaw;
+            for _ in 0..60 {
+                g.update(0.05, &sprint, &mut audio, true);
+            }
+            let p = g.player.pos;
+            let held = if yaw > 0.0 { p.x < edge } else { p.x > edge };
+            assert!(
+                held && (p.y - start.y).abs() < 0.01,
+                "{layout:?} from {start}: ended at {p}"
+            );
+        }
+    }
+
+    /// The stairs are solid stone: walking into a flight from its high end on the
+    /// floor below (under the gallery) is blocked.
+    #[test]
+    fn stairs_are_solid_from_below() {
+        let mut g = Game::new(Layout::Great);
+        let mut audio = crate::audio::Audio::silent();
+        // Under the first-floor gallery, north of the west flight's top, facing south.
+        g.player.pos = Vec3::new(-10.2, 0.0, -8.0);
+        g.player.yaw = PI;
+        let walk = Input {
+            forward: 1.0,
+            ..Input::default()
+        };
+        for _ in 0..60 * 4 {
+            g.update(1.0 / 60.0, &walk, &mut audio, true);
+        }
+        let p = g.player.pos;
+        assert!(p.z < -5.5 - 0.25 && p.y == 0.0, "walked into the stairs: {p}");
     }
 
     #[test]

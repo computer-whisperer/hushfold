@@ -329,6 +329,10 @@ impl Library {
                     stringer,
                 );
             }
+            // The flight's high end is a stone face down to the floor below.
+            let (a, b) = side.rect(STAIR_HALF_RUN, STAIR_HALF_RUN + 0.1, WELL, WELL + STAIR_W);
+            let (lo, hi) = box3(a, b, y0, y1);
+            self.obstacle(lo, hi, true);
             let up = f.level + 1;
             self.rail(
                 up,
