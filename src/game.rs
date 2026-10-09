@@ -413,7 +413,18 @@ impl Game {
             self.held.sort();
             self.follow_active(prev);
         }
-        self.toast(format!("{} learned", upg_def(u).name), [0.95, 0.8, 0.45], false);
+        let def = upg_def(u);
+        let name = if def.costs.len() > 1 {
+            let roman = ["I", "II", "III", "IV", "V"];
+            format!(
+                "{} {}",
+                def.name,
+                roman[(self.level(u) as usize - 1).min(roman.len() - 1)]
+            )
+        } else {
+            def.name.to_string()
+        };
+        self.toast(format!("{name} learned"), [0.95, 0.8, 0.45], false);
         self.dirty_save = true;
         true
     }
