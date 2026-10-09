@@ -1984,6 +1984,37 @@ mod tests {
         );
     }
 
+    /// Saves name books by index and rebuild unmoved piles from generation, so the
+    /// Hall must generate exactly as it did (0.1.x saves included).
+    #[test]
+    fn hall_generates_as_before() {
+        let g = Game::new();
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut eat = |x: u32| {
+            h ^= x as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        };
+        for (b, info) in g.lib.books.iter().enumerate() {
+            eat(info.series);
+            eat(info.volume);
+            for v in [info.size, info.slot_pos] {
+                v.to_array().iter().for_each(|f| eat(f.to_bits()));
+            }
+            let r = g.loose.rest(b as u32);
+            for f in [r.c.x, r.c.y, r.c.z, r.u.x, r.u.y, r.su, r.sv] {
+                eat(f.to_bits());
+            }
+        }
+        for s in &g.lib.series {
+            s.title.bytes().for_each(|c| eat(c as u32));
+            s.color.iter().for_each(|f| eat(f.to_bits()));
+            eat(s.pattern);
+            eat(s.trim);
+        }
+        assert_eq!(g.lib.books.len(), 11690);
+        assert_eq!(h, 7532805995221069936, "hall fingerprint");
+    }
+
     /// Pacing estimate: a bot that walks (at real speeds) to the nearest pile, gathers an
     /// armful, files it in nearest-slot order, and greedily buys the cheapest upgrade.
     /// Familiars shelve at the rates `familiar_throughput` measures; the aura is

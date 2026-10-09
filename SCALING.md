@@ -72,7 +72,10 @@ over 8 h; the player's own Toss and Sift stay the fastest coarse tools.
 
 0. Kill-tests: toss/settle looks natural with thousands of books (passed in
    phase 1: generated piles, gathers, sifts and 30-book tosses screenshot well);
-   150k books render within budget with persistent GPU buffers (start of phase 2).
+   150k books render within budget (passed 2026-10-09 on an RX 6800: ~290k extra
+   book and ghost boxes in view cost a few ms of GPU, ~1.08M cost ~15–19 ms, i.e.
+   ~10 ms per million; the cost at scale is the per-frame rebuild and upload, which
+   persistent chunk buffers remove).
 1. **Loose books, Toss and Sift in the current hall.** Familiars and the pacing bot
    ported to piles. Built; awaiting playtest of the feel. The pacing bot (no toss
    or sift) went from ~1.4 h to ~1.5 h because piles now spread.
@@ -81,6 +84,8 @@ over 8 h; the player's own Toss and Sift stay the fastest coarse tools.
    updates (today every book and ghost is rebuilt and uploaded each frame); room
    culling and per-room light lists (the shader loops every light per pixel).
    Catalogue gains departments (16 categories → ~100 in ~10 departments).
+   Design below; built in steps: world model (Hall only, generating exactly as
+   before), rendering, the Great Library and choosing it, a pacing baseline.
 3. Skill tree rebuilt around the hierarchy levels: reading (pile tinting by
    department, coarse sense, room-scoped Sort Sense), coarse moves (Toss range and
    landing, Sift filters, carts, restorable lifts and chutes), staging (labelled
@@ -88,3 +93,82 @@ over 8 h; the player's own Toss and Sift stay the fastest coarse tools.
    Ideas parked for it: a toss that lands on its own series run files itself.
 4. The Great Library: content and balance. The pacing bot measures mechanism
    throughput with the real code; playtests judge whether the logistics are fun.
+
+## Phase 2 design
+
+Agreed as the phase 2 plan 2026-10-09 ("continue with phase 2"); details below are
+the implementation's own choices, revisable at the phase boundary.
+
+### World model
+- `Library` is layout-agnostic; `library/hall.rs` and `library/great.rs` build it
+  from shared pieces (bookcase units, category filling, sconces, piles). The Hall
+  must generate bit-identically (test `hall_generates_as_before`): saves name books
+  by index and rebuild unmoved piles from generation.
+- **Levels**: a floor elevation and roof height per level. Floors are slabs
+  (rectangles); anywhere a level has no slab is a hole (the atrium well, stair
+  wells). Stairs are ramps from one level's floor to the next.
+- **Solids** have real vertical extent and stand on a level's floor (walls,
+  railings, bookcases, tables). Slabs block sight and aim rays too.
+- **Departments** generalise wings, **gates** the veil. A gate is a thin solid
+  (across the Hall, or filling a doorway) that blocks walking, throwing,
+  gathering, aiming and routes until the departments opened before it are
+  shelved to a fraction; it is drawn as the veil and dissolves. The Hall: two
+  departments (West, East Wing), one gate at 60%.
+- Chose a solid for the gate because every system already respects solids; the
+  veil's special cases (x < VEIL_X in physics, nav, aim and gathering) go away.
+  Gathering and landing skids now never cross a tall solid, which also stops a
+  sift reaching through a bookcase.
+
+### Loose books across levels
+- One heightfield and bucket grid per level over its bounds. The heightfield is
+  stored in 32×32-cell tiles: a tile's base is flat floor, a hole (−∞) or per-cell
+  (furniture, ramps); its top is allocated only once a book lies on it. Chose
+  tiles over dense arrays because the Great Library's ~7.5k m² over three levels
+  would be ~9M cells (~73 MB dense) of which piles touch a small part.
+- A resting book belongs to one level (saved with it). A flight carries its level:
+  it rises into the level above through a hole, bounces off a slab's underside
+  elsewhere, and falls into the level below through a hole. A railing (taller
+  than the shed height) sheds books toward open floor, and over the well that
+  is down. A book that slides off an edge falls.
+
+### Player and nav
+- Gravity: the player stands on the highest slab or ramp within a step (0.45 m)
+  of their feet; a higher rise blocks like a wall; railings guard edges. Solids
+  collide only where they overlap the body vertically.
+- Nav: a 0.5 m grid per level, ramps linking the cells at their two ends.
+  Dijkstra from the player over all levels, stopping once every requested target
+  is settled.
+
+### Rendering
+- Chunks: static geometry, resting and shelved books, and ghosts live in
+  per-chunk (level, 4 m tile) persistent buffers, rebuilt only when something in
+  them changes (Loose and Game report which books moved). Moving things (flying,
+  falling, held, carried, familiars, particles) stay in the per-frame buffer.
+- Culling: chunks outside the frustum are skipped. No occlusion culling yet (the
+  kill-test says the GPU has room).
+- Lights: every light in a storage buffer, refreshed each frame; a static world
+  grid (per level, 4 m cells) lists the lights that reach each cell; the shader
+  loops only those, plus the player's candle and familiars. Timestamp queries
+  measure GPU time.
+
+### The Great Library (first cut)
+- Three levels 6 m apart. A 28 m square atrium whose 18 m well is open from the
+  ground floor to a skylight; galleries 5 m wide ring it on the upper levels,
+  railed at the well. Four flights of stairs in the gallery strips (west and
+  east: ground to first; north and south: first to second), so the well stays a
+  clear drop zone for tossing.
+- Twelve department rooms, one off each side of the atrium on each level, 26 m
+  wide and 18 m deep, entered by a gated door: four rows of five double-sided
+  cases running away from the door, a category on each side of a row (eight per
+  room, five cases each), ~10k books a room, ~120k in all.
+- Catalogue: twelve departments of eight categories. Colour family tells the
+  department; within one, the spine pattern tells the category (eight patterns,
+  one per category). The Hall keeps its per-category hues and random patterns.
+- Rooms open in order (ground floor first, then up) as the departments already
+  open are shelved to a fraction. A book of a department starts only where it is
+  reachable by the time its department opens: its own room, the atrium, or a
+  room that opens earlier, so early rooms are mixed and later rooms purer, and
+  the atrium holds a great mixed heap.
+- Familiars still fly straight (through walls); they are rebuilt as roles with
+  stations in phase 3.
+- Choosing: starting over asks which library; each has its own save.
