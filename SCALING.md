@@ -95,6 +95,7 @@ over 8 h; the player's own Toss and Sift stay the fastest coarse tools.
    landing, Sift filters, carts, restorable lifts and chutes), staging (labelled
    tables), filing (hands, Bundle, Tidy Arms, a weaker aura), familiar roles.
    Ideas parked for it: a toss that lands on its own series run files itself.
+   Design below (Phase 3 design).
 4. The Great Library: content and balance. The pacing bot measures mechanism
    throughput with the real code; playtests judge whether the logistics are fun.
 
@@ -240,3 +241,81 @@ screen showed steps), and sight lines passing through stair stone.
 - Deferred: a spatial index for solids (queries are linear scans; it goes inside
   the world when a profile asks); raised floors (daises, landings) as floors with
   their own height; familiars moving through the world (phase 3).
+
+## Phase 3 design
+
+Started 2026-10-09 ("continue with Phase 3"), from the sketch agreed with the plan
+(phases, item 3). What follows is the implementation's own reading of it,
+revisable at the phase boundary after a playtest.
+
+### The tree, by level of the hierarchy
+
+One set of skills for both libraries; each library lists the ones that fit it, at
+its own costs (`tree(layout)`), so the Hall keeps a short game and the Great
+Library about 45 purchases spread over the whole of it. A skill means the same in
+both. The Grimoire groups them by what they act on.
+
+- **Reading** (where books go)
+  - *Sort Sense I–II* (slot): I shows the active book's slot and the way to it
+    while you stand in the room it belongs to (the Hall's rooms are its wings);
+    II, anywhere.
+  - *Wayfinding* (department; Great only): when Sort Sense doesn't reach, the
+    compass points the walk to the active book's room instead.
+  - *Department Lens* (department; Great only): V tints every loose book with
+    its department's colour, flat and bright, so a heap reads at a glance.
+- **Moving** (coarse)
+  - *Sorting by*: toss throws, and sift draws, every book of the active (or
+    aimed) book's *group*, which R cycles: category (from the start), department
+    (*Broad Strokes*, Great only), series (*Fine Fingers*). Chose one selector
+    for both verbs because the group is the level of the hierarchy you are
+    working at, and it reads on the HUD.
+  - *Sifting Touch I–IV*: radius 0.9 / 1.8 / 2.7 / 3.6 m.
+  - *Long Toss I–II*: harder throws (12 → 16 → 20 m/s) that scatter less.
+  - *Lodestone Grasp*: as before (long reach, hold to keep gathering).
+- **Filing** (precise): *Deeper Arms I–IV*, *Swift Slippers I–II*, *Tidy Arms*,
+  *Series Bundle* as before; *Shelving Aura I–III* weaker than 0.1's (the bot
+  sets the numbers).
+- **Familiars**: bought one at a time by role, plus *Familiar Wings I–II*
+  (faster, carry more, reach further from their post).
+
+### Familiars: roles at posts
+
+A familiar rides on your shoulder until you post it: G at a spot on the floor
+posts the familiar riding longest; G at a posted familiar (or its perch) takes it
+back. A posted familiar works only round its post, so where you put it is the
+decision; none does the whole job.
+
+- **Shelver** (slot): files loose books lying within ~3 m of its post whose
+  shelves are a short walk from it (~8 m). Post one at a category's cases and
+  bring that category to it.
+- **Courier** (department): takes loose books lying within ~3 m of its post and
+  carries them to where they're wanted: the post of a shelver that can file
+  them, if there is one, or else the doorway of their department's room. It
+  leaves books that are already there, and books of veiled departments.
+- Shelver posts are the staging points the sketch's labelled tables were for:
+  couriers bring a category to its shelver. Chose this over labelled tables
+  because it needs no new verb or furniture, and the post already says where.
+- **Moving through the world**: each post keeps a walking-distance field from it
+  over the nav grid (`nav::Field`; the player's own field is one too), redone
+  when a gate opens. A familiar's trip follows the field's path at flying height,
+  straightened where the line is clear to sight, so it goes through doors and up
+  the stairs, or across the well over a railing, never through a wall or floor.
+
+### Deferred, with the reason
+
+- *Carts*: Arms IV and Toss already carry in bulk; push physics is a new system.
+- *Lifts and chutes*: the well already carries books down; whether carrying up
+  the stairs is a chore is for the bot (time on stairs) and a playtest to say.
+- *Sorters* (a familiar that splits a pile by destination): couriers and the
+  Broad Strokes sift cover the bucket pass; revisit if heaps feel like a chore.
+
+### Pacing
+
+The bot is reworked to measure the new mechanisms honestly: a plain gather takes
+the top of the pile whatever it is (veiled books are tossed aside where it
+stands); it sifts by the group that gives the most books per second of walking
+once it can; it posts couriers at the biggest heaps and shelvers at the cases of
+the categories piling up near them, and runs the real familiar code over each
+trip. It still never tosses toward a destination, so tossing is upside it
+doesn't count. Targets: the Great Library in 8–10 h with the last purchase late
+in the game; the Hall in 1.5–2 h.
