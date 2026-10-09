@@ -446,14 +446,14 @@ impl Bot {
                 let target = Vec3::new(front.x, ground(front), front.z);
                 let eye = stand + Vec3::Y * EYE;
                 if target.distance(stand) < TOSS_REACH && g.lib.world.line_of_sight(eye, target + Vec3::Y * 0.3) {
+                    // Seeking the series, so only it flies.
                     let (group, before) = (g.group, g.held.clone());
                     g.player.pos = stand;
-                    g.group = Group::Series;
-                    g.active = i;
+                    (g.group, g.seek) = (Group::Series, Some(b));
                     if g.aim_toss(target) < 0.8 {
                         g.toss(&mut self.audio);
                     }
-                    g.group = group;
+                    (g.group, g.seek) = (group, None);
                     if g.held.len() < before.len() {
                         for b in before.into_iter().filter(|b| !g.held.contains(b)) {
                             self.moved_by.insert(b, "tossed");

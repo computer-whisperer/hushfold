@@ -193,12 +193,12 @@ pub fn upg_def(u: Upg) -> UpgDef {
         ),
         Upg::Broad => (
             "Broad Strokes",
-            "Press R to sort by department: seek and toss whole departments at once.",
+            "Press R to seek by department: scoop and toss whole departments at once.",
             Tier::Moving,
         ),
         Upg::Fine => (
             "Fine Fingers",
-            "Press R to sort by series: seek and toss a single series.",
+            "Press R to seek by series: scoop and toss a single series.",
             Tier::Moving,
         ),
         Upg::LongToss => ("Long Toss", "Throw harder, and the books scatter less.", Tier::Moving),
@@ -1382,15 +1382,19 @@ impl Game {
         }
     }
 
-    /// Throw every held book of the group sought, or if none is held the active
-    /// book's group, as a loose stream.
+    /// Throw the armful as a loose stream, or while seeking only the books of the
+    /// group sought.
     fn toss(&mut self, audio: &mut Audio) {
-        let Some(active) = self.active_book() else { return };
-        let key = match self.sought() {
-            Some((_, key)) if self.held.iter().any(|&b| self.group_of(b) == key) => key,
-            _ => self.group_of(active),
+        let group: Vec<u32> = match self.sought() {
+            Some((_, key)) => self.held.iter().copied().filter(|&b| self.group_of(b) == key).collect(),
+            None => self.held.clone(),
         };
-        let group: Vec<u32> = self.held.iter().copied().filter(|&b| self.group_of(b) == key).collect();
+        if group.is_empty() {
+            audio.play(Sfx::Nope, 0.3);
+            self.hint = Some(("You carry none of what you seek (F at nothing stops seeking).".into(), 2.5));
+            self.toss_charge = 0.0;
+            return;
+        }
         let prev = self.active_book();
         self.held.retain(|b| !group.contains(b));
         self.follow_active(prev);
@@ -2964,15 +2968,15 @@ mod tests {
         }
         check(&mut g);
         assert!(g.held.len() > 10, "gathered {}", g.held.len());
-        // Toss some, file one, and check mid-flight and after everything has landed.
-        g.toss_charge = 0.6;
-        g.toss(&mut audio);
+        // File one, toss the rest, and check mid-flight and after everything has landed.
         if let Some(b) = g.active_book() {
             g.leave_hand(&[b]);
             g.held.retain(|&h| h != b);
             g.state[b as usize] = BookState::Filing;
             g.start_flight(b, Dest::Shelf, 0.42, 0.0);
         }
+        g.toss_charge = 0.6;
+        g.toss(&mut audio);
         for k in 0..240 {
             g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
             if k % 20 == 0 {
@@ -3283,9 +3287,9 @@ mod tests {
         assert!(g.sense.is_some_and(|s| s.room.is_none()), "{:?}", g.sense);
     }
 
-    /// Toss throws the active book's group, or the group sought; R cycles the groups
-    /// learned; F seeks, the lens lights what is sought, and a held scoop takes only
-    /// it.
+    /// Toss throws the armful, or while seeking only the group sought; R cycles the
+    /// groups learned; F seeks, the lens lights what is sought, and a held scoop
+    /// takes only it.
     #[test]
     fn toss_and_seek_take_the_group() {
         let mut g = Game::new(Layout::Great);
@@ -3306,10 +3310,11 @@ mod tests {
             }
             g.active = 0;
         };
+        // Not seeking, toss throws the whole armful.
         hold(&mut g);
         g.toss_charge = 0.5;
         g.toss(&mut audio);
-        assert_eq!(g.held, vec![same_dept, other]);
+        assert!(g.held.is_empty());
         // Learn Broad Strokes; R moves from category to department.
         g.upg[upg_index(Upg::Broad)] = 1;
         let r = Input {
@@ -3318,21 +3323,19 @@ mod tests {
         };
         g.update(1.0 / 60.0, &r, &mut audio, true);
         assert_eq!(g.group, Group::Department);
-        g.held.clear();
-        hold(&mut g);
-        g.toss(&mut audio);
-        assert_eq!(g.held, vec![other]);
         // F at nothing seeks the active book's department, and the lens lights it.
         g.upg[upg_index(Upg::Sift)] = 4;
         g.upg[upg_index(Upg::Lens)] = 1;
         g.upg[upg_index(Upg::Arms)] = 4;
+        hold(&mut g);
+        g.active = 2;
         g.aim = Aim::None;
         g.press_seek(&mut audio);
         assert_eq!(g.sought(), Some((Group::Department, dept(&g, other))));
         assert_eq!(g.lens_sought(), [1.0, dept(&g, other) as f32, 0.0, 0.0]);
-        // Holding one of the group sought, toss throws it rather than the active book's.
-        g.held.clear();
-        hold(&mut g);
+        // Seeking, toss throws only the group sought; holding none of it, nothing.
+        g.toss(&mut audio);
+        assert_eq!(g.held, vec![a, same_dept]);
         g.toss(&mut audio);
         assert_eq!(g.held, vec![a, same_dept]);
         // F at a book of another department seeks that one instead.
@@ -3472,8 +3475,6 @@ mod tests {
             let mut audio = crate::audio::Audio::silent();
             g.upg[upg_index(Upg::Arms)] = 4;
             g.upg[upg_index(Upg::Homing)] = homing;
-            g.upg[upg_index(Upg::Fine)] = 1;
-            g.group = Group::Series;
             // A series with several loose volumes, all in the arms.
             let series = (0..g.lib.series.len() as u32)
                 .find(|&s| {

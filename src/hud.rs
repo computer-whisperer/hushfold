@@ -762,7 +762,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                     RichText::new(
                         "WASD walk · Shift hurry · Mouse look\n\
                          Tap a book to take it · Hold on a pile to scoop · Click a run to file\n\
-                         Hold right mouse to toss a group, release to throw\n\
+                         Hold right mouse to toss your armful (or what you seek), release to throw\n\
                          F seek a book's kind · R sort by department, category or series\n\
                          1–5 cast the spells you have learned\n\
                          G post a familiar where you aim, or take one back\n\
