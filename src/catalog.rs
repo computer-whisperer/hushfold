@@ -32,6 +32,14 @@ impl Series {
     pub fn width(&self) -> f32 {
         self.thickness.iter().sum()
     }
+
+    /// The two-letter filing key shown on shelf edges ("Al" for "The Almanac…").
+    pub fn shelf_key(&self) -> String {
+        let mut c = self.sort_key.chars();
+        let a = c.next().unwrap_or('?').to_ascii_uppercase();
+        let b = c.next().unwrap_or(' ');
+        format!("{a}{b}")
+    }
 }
 
 const PEOPLE: &[&str] = &[

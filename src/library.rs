@@ -609,13 +609,7 @@ impl Library {
                 if runs.is_empty() {
                     continue;
                 }
-                let key = |s: u32| {
-                    let k = &self.series[s as usize].sort_key;
-                    let mut c = k.chars();
-                    let a = c.next().unwrap_or('?').to_ascii_uppercase();
-                    let b = c.next().unwrap_or(' ');
-                    format!("{a}{b}")
-                };
+                let key = |s: u32| self.series[s as usize].shelf_key();
                 let text = format!("{} – {}", key(runs[0].series), key(runs[runs.len() - 1].series));
                 let face = &self.faces[f];
                 let pos = face.center + Vec3::Y * (row_floor_y(row) - BOARD_T * 0.5) + face.normal * 0.02;

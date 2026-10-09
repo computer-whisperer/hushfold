@@ -402,7 +402,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
                             ROWS
                         )
                     } else {
-                        format!("{} · {} Wing", cat.name, wing)
+                        format!("{} · {} Wing · under {}", cat.name, wing, s.shelf_key())
                     };
                     ui.label(
                         RichText::new(place)
