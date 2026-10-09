@@ -687,6 +687,18 @@ pub(super) fn simulate(layout: Layout) -> f32 {
                 g.total_books(),
                 depts.join(" ")
             );
+            // Milestones reached so far: series and categories complete.
+            let series = (0..g.lib.series.len())
+                .filter(|&s| g.series_shelved[s] == g.lib.series[s].volumes)
+                .count();
+            let cats = (0..g.lib.category_books.len())
+                .filter(|&c| g.category_shelved[c] == g.lib.category_books[c])
+                .count();
+            println!(
+                "            complete: {series} / {} series, {cats} / {} categories",
+                g.lib.series.len(),
+                g.lib.category_books.len()
+            );
             let sp = bot.spent.map(|x| x / bot.trips.max(1) as f32);
             println!(
                 "            per trip: {:.0} books, {:.0} s to the pile, {:.0} s gathering, {:.0} s to slots, {:.0} s filing, {:.0} s reading",
