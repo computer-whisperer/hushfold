@@ -24,6 +24,8 @@ pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
         max: Vec2::new(HALL_X, HALL_Z),
     });
     lib.spawn = (Vec3::new(0.0, 0.0, 6.5), 0.0);
+    // The middle of the reading room, between its tables.
+    lib.hub = Vec3::ZERO;
     lib.build_hall();
     lib.build_stacks(rng);
     lib.build_center();

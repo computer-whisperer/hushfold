@@ -85,7 +85,8 @@ that fit it.
   read the signs, the letter ranges on the shelf edges and the titles.
 - **Moving**: Sifting Touch (seek a kind of book and scoop only it, wider with
   each level), Broad Strokes and Fine Fingers (seek by department, by series),
-  Long Toss, Lodestone Grasp (long reach).
+  Long Toss, Homing Toss (a book you toss that lands in front of its own shelf,
+  near its slot, slips into it), Lodestone Grasp (long reach).
 - **Filing**: Deeper Arms (6 → 96 books), Swift Slippers, Tidy Arms
   (self-sorting armful, nearest home first), Series Bundle (file a whole series
   at once), Shelving Aura (books drift home as you pass).
@@ -94,7 +95,14 @@ that fit it.
   carries books lying near its post to a shelver that can file them, or to
   their room. Familiar Wings makes them faster and stronger.
 - **Spells**, each on its own recharge: Glimpse (for a few seconds every series
-  you carry glows, and a marker shows each through the walls).
+  you carry glows, and a marker shows each through the walls), the Gathering
+  Charm (Great Library: a heap you aim at streams to the great heap in the
+  atrium, where couriers can carry it on to the rooms), Echo (the heaps holding
+  the kind of book you seek are marked through the walls), Summon Series (loose
+  volumes of the active book's series fly to your arms), Shelving Rush (for a
+  few seconds, books you carry near their slots fly home as fast as you pass).
+- A familiar with nothing to do for two minutes comes back to your shoulder by
+  itself.
 
 ## Technical notes
 

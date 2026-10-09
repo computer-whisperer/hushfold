@@ -6,16 +6,26 @@
 //! plain scoop takes the top of the pile whatever it is, and books it can't file
 //! yet are set down where it stands; with Sifting Touch it seeks the group (the
 //! coarsest it has) with the most books in reach and scoops only that; further
-//! scoops take only piles it can see. It files the armful nearest slot first, and walks to post its
-//! familiars (couriers at heaps of books far from home, shelvers at the cases with
-//! books piling up near them; one idle two minutes is walked to, taken back and
-//! posted again), running their real code over each trip. It buys the cheapest
-//! skill it can afford. It knows every slot, so reading is charged as time: finding
-//! each series' run by its letters and titles, and each category's cases by their
-//! signs, less with Signposts and Kindred Glow, nothing while Sort Sense or Glimpse
-//! shows the way (first guesses, to be calibrated against play). It casts Glimpse
-//! as it starts filing whenever it is ready. It never tosses toward a destination,
-//! so tossing is upside it doesn't count.
+//! scoops take only piles it can see. When the Gathering Charm is ready and most
+//! of what is left where it gathered belongs in other rooms, it sends that to the
+//! hub; when Summon Series is, it calls the series held with the most loose
+//! volumes in reach.
+//!
+//! It files the armful nearest slot first, casting Glimpse and Shelving Rush as it
+//! starts whenever they are ready. It knows every slot, so reading is charged as
+//! time: finding each series' run by its letters and titles, and each category's
+//! cases by their signs, less with Signposts and Kindred Glow, nothing while Sort
+//! Sense or Glimpse shows the way (first guesses, to be calibrated against play).
+//! With Homing Toss and Fine Fingers it tosses a series at its shelf, with the real
+//! throw and landing, when it can see the spot and that saves a walk.
+//!
+//! It walks to post the familiars riding with it (couriers round the hub or at
+//! heaps of books far from home, shelvers at the cases with books piling up near
+//! them; one idle two minutes comes back by itself), running their real code over
+//! each trip. It buys the cheapest skill it can afford, or with `HUSHFOLD_PATH`
+//! (reading, hands, familiars, filing) favours that tech path, counting the skills
+//! off it as three times dearer. Other tosses, and Echo (it knows where every book
+//! lies), are upside it doesn't count.
 //!
 //! Run with `cargo test --release pacing -- --ignored --nocapture`.
 
@@ -38,11 +48,37 @@ const FIND_RUN: [f32; 4] = [4.0, 2.0, 0.8, 0.0];
 const FIND_CASES: f32 = 3.0;
 /// Seconds to cast a spell.
 const CAST: f32 = 0.3;
+/// With Homing Toss (and Fine Fingers), a series is tossed at its shelf rather than
+/// walked to when that saves more than this walk (m), from no further than this.
+const TOSS_OVER: f32 = 3.0;
+const TOSS_REACH: f32 = 14.0;
+/// Seconds to aim and throw a toss.
+const TOSS: f32 = 1.2;
+/// A preferred path makes the skills off it look this much dearer.
+const OFF_PATH: u64 = 3;
+
+/// A preferred tech path (`HUSHFOLD_PATH`): the skills it favours.
+fn path_skills(path: &str) -> &'static [Upg] {
+    match path {
+        "reading" => &[
+            Upg::Signposts,
+            Upg::Glow,
+            Upg::SortSense,
+            Upg::Wayfinding,
+            Upg::Lens,
+            Upg::Glimpse,
+            Upg::Echo,
+            Upg::Summon,
+        ],
+        "hands" => &[Upg::Sift, Upg::Broad, Upg::Fine, Upg::LongToss, Upg::Homing, Upg::Lodestone],
+        "familiars" => &[Upg::Shelver, Upg::Courier, Upg::Wings, Upg::Gathering],
+        "filing" => &[Upg::Arms, Upg::Slippers, Upg::Tidy, Upg::Bundle, Upg::Aura, Upg::Rush],
+        _ => &[],
+    }
+}
 const FILE_CLICK: f32 = 0.9;
 /// Cells ranked by walking per book before the bot looks closer at what to sift.
 const SHORTLIST: usize = 10;
-/// Seconds a familiar may sit idle at its post before the bot moves it.
-const RESTLESS: f32 = 120.0;
 /// How far the bot aims G (at the floor to post a familiar, or at one to take it
 /// back): it walks to within that of the spot.
 const AIM: f32 = 12.0;
@@ -69,19 +105,44 @@ struct Bot {
     gathered: u32,
     /// Scoops that took nothing (the books lay past a case from the aim).
     empty_scoops: u32,
-    /// Familiars taken back from an idle post to be posted elsewhere.
-    reposts: u32,
+    /// Familiars posted, and Gathering Charms cast.
+    posts: u32,
+    charms: u32,
     /// The group it seeks.
     seeking: Sift,
-    /// When Glimpse's effect ends, and when it can be cast again.
-    glimpse_until: f32,
-    glimpse_ready: f32,
+    /// Each spell's (by hotbar slot) time it can be cast again and its effect ends,
+    /// on the bot's clock.
+    spell_ready: [f32; SPELLS.len()],
+    spell_until: [f32; SPELLS.len()],
+    /// Books tossed at their shelves, and Summon Series cast.
+    tossed: u32,
+    summons: u32,
+    /// The skills it favours (none: it buys the cheapest).
+    path: &'static [Upg],
 }
 
 impl Bot {
     fn walk_speed(&self) -> f32 {
         // Some hurrying.
         [4.0, 5.5, 7.0][self.g.level(Upg::Slippers) as usize] * 1.3
+    }
+
+    fn slot(u: Upg) -> usize {
+        SPELLS.iter().position(|&x| x == u).unwrap()
+    }
+
+    /// Spell `u` is learned and has recharged, by the bot's clock.
+    fn ready(&self, u: Upg) -> bool {
+        self.g.level(u) > 0 && self.t >= self.spell_ready[Self::slot(u)]
+    }
+
+    /// Charge a cast of spell `u` and start its clocks.
+    fn commit(&mut self, u: Upg) {
+        let (lasts, recharge) = spell_times(u, self.g.level(u));
+        self.t += CAST;
+        self.spent[4] += CAST;
+        let i = Self::slot(u);
+        (self.spell_until[i], self.spell_ready[i]) = (self.t + lasts, self.t + recharge);
     }
 
     fn fileable(&self) -> Vec<bool> {
@@ -119,8 +180,10 @@ impl Bot {
             self.g.time += dt;
             self.g.update_familiars(dt);
             self.g.update_flights(dt, &mut self.audio);
+            self.g.update_streams(dt);
             let g = &mut self.g;
-            let _ = g.loose.update(dt, &mut g.pos, &mut g.rot);
+            let landings = g.loose.update(dt, &mut g.pos, &mut g.rot);
+            g.home_tossed(&landings);
             left -= dt;
         }
         self.by_familiars += self.g.total_shelved() - before;
@@ -237,6 +300,42 @@ impl Bot {
                 .map(|(_, top)| top)
                 .find(|&top| g.lib.world.line_of_sight(eye, top + Vec3::Y * 0.05));
         }
+        // The Gathering Charm on what is left here, when most of it belongs in other
+        // rooms (or is veiled).
+        let charm = self.g.level(Upg::Gathering);
+        if self.ready(Upg::Gathering) {
+            let g = &mut self.g;
+            let left = g.charmed(lv, c, charm);
+            let here = g.lib.room_at(c);
+            let away = (left.iter())
+                .filter(|&&b| here != Some(g.lib.dept_of(g.lib.category_of_book(b))))
+                .count();
+            if away >= 20 && away * 2 >= left.len() && g.charm_heap(lv, c, charm) {
+                self.commit(Upg::Gathering);
+                self.charms += 1;
+            }
+        }
+        // Summon Series, if ready and there is room: the series held with the most
+        // loose volumes in reach comes to the arms.
+        let summon = self.g.level(Upg::Summon);
+        if self.ready(Upg::Summon) && self.g.held.len() + aside.len() < cap {
+            let g = &mut self.g;
+            g.player.pos = self.pos;
+            let mut series: Vec<u32> = g.held.iter().map(|&b| g.lib.books[b as usize].series).collect();
+            series.dedup();
+            let best = (series.into_iter())
+                .map(|s| (g.summonable(s, summon).len(), s))
+                .max_by_key(|&(n, s)| (n, std::cmp::Reverse(s)));
+            if let Some((n, s)) = best
+                && n >= 3
+            {
+                g.active = g.held.iter().position(|&b| g.lib.books[b as usize].series == s).unwrap();
+                if g.summon(summon, &mut self.audio) {
+                    self.commit(Upg::Summon);
+                    self.summons += 1;
+                }
+            }
+        }
         // What can't be filed yet goes back down where the bot stands.
         if !aside.is_empty() {
             for (k, &b) in aside.iter().enumerate() {
@@ -250,15 +349,20 @@ impl Bot {
     }
 
     /// File the armful, nearest slot first; a click files one book, or a whole series
-    /// with Bundle, and the aura files at its rate where that is quicker.
+    /// with Bundle, and the aura (or Shelving Rush) files at its rate where that is
+    /// quicker. With Homing Toss and Fine Fingers it tosses a series at its shelf from
+    /// where it stands, when it can see the spot and that saves a walk; what misses
+    /// lies there to be gathered again.
     fn file(&mut self) {
-        let glimpse = self.g.level(Upg::Glimpse);
-        if glimpse > 0 && self.t >= self.glimpse_ready {
-            let (lasts, recharge) = spell_times(Upg::Glimpse, glimpse);
-            self.t += CAST;
-            self.spent[4] += CAST;
-            (self.glimpse_until, self.glimpse_ready) = (self.t + lasts, self.t + recharge);
+        for u in [Upg::Glimpse, Upg::Rush] {
+            if self.ready(u) {
+                self.commit(u);
+            }
         }
+        let glimpse_until = self.spell_until[Self::slot(Upg::Glimpse)];
+        let rush_until = self.spell_until[Self::slot(Upg::Rush)];
+        let rush_r = spells::rush_reach(self.g.level(Upg::Rush));
+        let homing = self.g.level(Upg::Homing) > 0 && self.g.level(Upg::Fine) > 0;
         let mut found_series = std::collections::HashSet::new();
         let mut found_cases = std::collections::HashSet::new();
         let g = &mut self.g;
@@ -296,7 +400,9 @@ impl Bot {
                 self.climbing += (to.y - here.y).abs() / 6.0 * 11.0 / speed;
             }
             let hop = hop((here, here_d), (to, d));
-            let walk_m = (hop - aura_r.max(1.8)).max(0.0);
+            let rushing = self.t < rush_until;
+            let reach = if rushing { aura_r.max(rush_r) } else { aura_r };
+            let walk_m = (hop - reach.max(1.8)).max(0.0);
             // Reading where it goes, unless Sort Sense (in the book's room at I) or
             // Glimpse shows it: the run, and the cases the first time this trip.
             let s = g.lib.books[b as usize].series;
@@ -304,7 +410,7 @@ impl Bot {
             let sense = g.level(Upg::SortSense);
             let shown = sense >= 2
                 || (sense == 1 && g.lib.room_at(here) == Some(g.lib.dept_of(cat)))
-                || self.t < self.glimpse_until;
+                || self.t < glimpse_until;
             let glow = g.level(Upg::Glow) as usize;
             let mut read = 0.0;
             if !shown && found_series.insert(s) {
@@ -315,6 +421,31 @@ impl Bot {
             }
             self.t += read;
             self.spent[4] += read;
+            // A toss at the floor in front of its run, from where the bot stands.
+            if homing && walk_m > TOSS_OVER {
+                let ground = |p: Vec3| g.lib.world.ground(Vec2::new(p.x, p.z), p.y + 0.1).unwrap_or(p.y);
+                let stand = g.nav.standable_near(Vec3::new(here.x, ground(here), here.z));
+                let info = &g.lib.books[b as usize];
+                let front = info.slot_pos + g.lib.faces[info.face as usize].normal * 0.6;
+                let target = Vec3::new(front.x, ground(front), front.z);
+                let eye = stand + Vec3::Y * EYE;
+                if target.distance(stand) < TOSS_REACH && g.lib.world.line_of_sight(eye, target + Vec3::Y * 0.3) {
+                    let (group, before) = (g.group, g.held.len());
+                    g.player.pos = stand;
+                    g.group = Group::Series;
+                    g.active = i;
+                    if g.aim_toss(target) < 0.8 {
+                        g.toss(&mut self.audio);
+                    }
+                    g.group = group;
+                    if g.held.len() < before {
+                        self.tossed += (before - g.held.len()) as u32;
+                        self.t += TOSS;
+                        self.spent[3] += TOSS;
+                        continue;
+                    }
+                }
+            }
             (here, here_d) = (to, d);
             let batch: Vec<u32> = if g.level(Upg::Bundle) > 0 {
                 (g.held.iter().copied())
@@ -323,8 +454,9 @@ impl Bot {
             } else {
                 vec![b]
             };
-            let file = if aura_rate > 0.0 {
-                FILE_CLICK.min(batch.len() as f32 / aura_rate)
+            let rate = if rushing { spells::RUSH_RATE } else { aura_rate };
+            let file = if rate > 0.0 {
+                FILE_CLICK.min(batch.len() as f32 / rate)
             } else {
                 FILE_CLICK
             };
@@ -345,19 +477,8 @@ impl Bot {
     /// back first: a player setting up their helpers on purpose.
     fn post_familiars(&mut self) {
         for i in 0..self.g.familiars.len() {
-            let f = &self.g.familiars[i];
-            match &f.post {
-                Some(post) if f.idle >= RESTLESS => {
-                    let at = post.at;
-                    if self.walk(at, AIM).is_none() {
-                        continue;
-                    }
-                    self.g.recall(i);
-                    self.t += POST;
-                    self.reposts += 1;
-                }
-                Some(_) => continue,
-                None => {}
+            if self.g.familiars[i].post.is_some() {
+                continue;
             }
             let spot = match self.g.familiars[i].role {
                 Role::Shelver => self.shelver_spot(i),
@@ -368,6 +489,7 @@ impl Bot {
             {
                 self.g.post_familiar(i, at);
                 self.t += POST;
+                self.posts += 1;
             }
         }
     }
@@ -405,11 +527,11 @@ impl Bot {
         best.map(|(_, spot)| g.nav.standable_near(spot))
     }
 
-    /// At the heap with the most open books far from their rooms, away from other
-    /// couriers.
+    /// Round the hub or at a heap, wherever the most open books lie far from their
+    /// rooms, away from other couriers.
     fn courier_spot(&mut self, me: usize) -> Option<Vec3> {
         let fileable = self.fileable();
-        let g = &self.g;
+        let g = &mut self.g;
         let others: Vec<Vec3> = (g.familiars.iter().enumerate())
             .filter(|&(i, f)| i != me && f.role == Role::Courier)
             .filter_map(|(_, f)| f.post.as_ref().map(|p| p.at))
@@ -427,18 +549,38 @@ impl Bot {
                 best = Some((far, c));
             }
         }
+        // Round the hub: the books within a courier's reach of a spot at its edge.
+        let reach = familiar::WINGS[g.level(Upg::Wings) as usize].2;
+        let hub = g.lib.hub;
+        let lv = g.lib.world.level_at(hub);
+        for k in 0..8 {
+            let a = k as f32 * std::f32::consts::TAU / 8.0;
+            let c = g.nav.standable_near(hub + Vec3::new(a.cos(), 0.0, a.sin()) * 3.0);
+            if others.iter().any(|o| o.distance(c) < 4.0) || !g.nav.open_at(c) {
+                continue;
+            }
+            let lib = &g.lib;
+            let far = |b: u32| fileable[b as usize] && lib.rooms[lib.dept_of(lib.category_of_book(b))].drop.distance(c) > 8.0;
+            let n = g.loose.near(lv, Vec2::new(c.x, c.z), reach, far).len();
+            if n >= 4 && best.is_none_or(|(bn, _)| n > bn) {
+                best = Some((n, c));
+            }
+        }
         best.map(|(_, c)| g.nav.standable_near(c))
     }
 
-    /// Buy the cheapest skill affordable, and again until none is.
+    /// Buy the cheapest skill affordable (on a preferred path, those off it counted
+    /// as dearer), and again until none is.
     fn spend(&mut self) {
         loop {
             let g = &self.g;
+            // On a preferred path, the skills off it count as dearer.
+            let weight = |u: Upg| if self.path.is_empty() || self.path.contains(&u) { 1 } else { OFF_PATH };
             let cheapest = (UPGRADES.iter().copied())
-                .filter_map(|u| g.next_cost(u).map(|c| (c, u)))
+                .filter_map(|u| g.next_cost(u).map(|c| (c * weight(u), c, u)))
                 .min_by_key(|x| x.0);
             match cheapest {
-                Some((c, u)) if c <= self.g.lumens => {
+                Some((_, c, u)) if c <= self.g.lumens => {
                     self.g.buy(u, &mut self.audio);
                     println!(
                         "{:6.1} min  bought {:?} -> {}  (shelved {})",
@@ -471,11 +613,16 @@ pub(super) fn simulate(layout: Layout) -> f32 {
         gathered: 0,
         empty_scoops: 0,
         seeking: None,
-        glimpse_until: 0.0,
-        glimpse_ready: 0.0,
-        reposts: 0,
+        spell_ready: [0.0; SPELLS.len()],
+        spell_until: [0.0; SPELLS.len()],
+        tossed: 0,
+        summons: 0,
+        path: path_skills(&std::env::var("HUSHFOLD_PATH").unwrap_or_default()),
+        posts: 0,
+        charms: 0,
     };
     let mut next_report = 0.0;
+    let mut next_earn = 0.0;
     let mut stuck = 0;
     while bot.g.total_shelved() < bot.g.total_books() && bot.t < 60.0 * 60.0 * 30.0 {
         bot.post_familiars();
@@ -500,6 +647,11 @@ pub(super) fn simulate(layout: Layout) -> f32 {
         let secs = bot.t - trip;
         bot.advance(secs);
         bot.spend();
+        // The lumens earned so far, every two minutes, for costing the tree.
+        if bot.t >= next_earn {
+            println!("earn {:.1} {}", bot.t / 60.0, bot.g.earned);
+            next_earn += 120.0;
+        }
         if bot.t >= next_report {
             let g = &bot.g;
             let depts: Vec<String> = (g.dept_shelved.iter().zip(&g.dept_total).enumerate())
@@ -529,13 +681,16 @@ pub(super) fn simulate(layout: Layout) -> f32 {
     }
     let g = &bot.g;
     println!(
-        "done at {:.2} h, shelved {}; familiars shelved {} ({:.0}%) and delivered {}, {} moved; {:.1}% of the time on stairs; {} empty scoops",
+        "done at {:.2} h, shelved {}; familiars shelved {} ({:.0}%) and delivered {}, {} posted; {} charms, {} summons, {} books tossed home; {:.1}% of the time on stairs; {} empty scoops",
         bot.t / 3600.0,
         g.total_shelved(),
         bot.by_familiars,
         100.0 * bot.by_familiars as f32 / g.total_shelved().max(1) as f32,
         g.familiars.iter().map(|f| f.delivered).sum::<u32>(),
-        bot.reposts,
+        bot.posts,
+        bot.charms,
+        bot.summons,
+        bot.tossed,
         100.0 * bot.climbing / bot.t,
         bot.empty_scoops
     );

@@ -9,6 +9,9 @@ mod pacing;
 pub use cheats::Cheat;
 use familiar::Familiar;
 pub use familiar::Role;
+mod spells;
+pub use spells::{ECHO_SPEED, SPELLS, spell_times};
+use spells::Stream;
 
 use crate::audio::{Audio, Sfx};
 use crate::catalog;
@@ -42,6 +45,9 @@ const TOSS_CHARGE: f32 = 0.9;
 const TOSS_MIN: f32 = 3.0;
 /// Long Toss by level: (fully charged speed in m/s, how widely the books scatter).
 const LONG_TOSS: [(f32, f32); 3] = [(12.0, 1.0), (16.0, 0.7), (20.0, 0.45)];
+/// Homing Toss by level: how far from its slot (along the floor, in front of its
+/// shelf) a tossed book may land and still slip into it.
+const HOMING: [f32; 3] = [0.0, 2.0, 3.5];
 
 /// Vertical FOV: `v_deg` on wide windows, widened on narrow ones so the horizontal
 /// FOV never drops below `v_deg` × 85/70 (85° at the default 70°).
@@ -99,6 +105,7 @@ pub enum Upg {
     Broad,
     Fine,
     LongToss,
+    Homing,
     Lodestone,
     Arms,
     Slippers,
@@ -109,10 +116,14 @@ pub enum Upg {
     Courier,
     Wings,
     Glimpse,
+    Gathering,
+    Echo,
+    Summon,
+    Rush,
 }
 
 /// Every skill, in the Grimoire's order within its tier.
-pub const UPGRADES: [Upg; 19] = [
+pub const UPGRADES: [Upg; 24] = [
     Upg::Signposts,
     Upg::Glow,
     Upg::SortSense,
@@ -122,6 +133,7 @@ pub const UPGRADES: [Upg; 19] = [
     Upg::Broad,
     Upg::Fine,
     Upg::LongToss,
+    Upg::Homing,
     Upg::Lodestone,
     Upg::Arms,
     Upg::Slippers,
@@ -132,19 +144,11 @@ pub const UPGRADES: [Upg; 19] = [
     Upg::Courier,
     Upg::Wings,
     Upg::Glimpse,
+    Upg::Gathering,
+    Upg::Echo,
+    Upg::Summon,
+    Upg::Rush,
 ];
-
-/// The spells, in hotbar order: key 1 casts the first.
-pub const SPELLS: [Upg; 1] = [Upg::Glimpse];
-
-/// A spell at a level: (seconds its effect lasts, seconds until it can be cast again).
-pub fn spell_times(u: Upg, level: u32) -> (f32, f32) {
-    match (u, level) {
-        (Upg::Glimpse, 1) => (10.0, 45.0),
-        (Upg::Glimpse, _) => (15.0, 30.0),
-        _ => (0.0, 0.0),
-    }
-}
 
 /// Kindred Glow by level: (reach in metres, strength, glint).
 const GLOW_LEVELS: [[f32; 3]; 4] = [[0.0, 0.0, 0.0], [3.0, 0.45, 0.0], [12.0, 0.8, 0.0], [1.0e4, 1.0, 1.0]];
@@ -198,6 +202,11 @@ pub fn upg_def(u: Upg) -> UpgDef {
             Tier::Moving,
         ),
         Upg::LongToss => ("Long Toss", "Throw harder, and the books scatter less.", Tier::Moving),
+        Upg::Homing => (
+            "Homing Toss",
+            "A book you toss that lands in front of its own shelf, within a couple of metres of its slot, slips into it. The second level reaches further.",
+            Tier::Moving,
+        ),
         Upg::Lodestone => ("Lodestone Grasp", "Take books from piles at a distance.", Tier::Moving),
         Upg::Arms => ("Deeper Arms", "Carry more books at once.", Tier::Filing),
         Upg::Slippers => ("Swift Slippers", "Pad through the stacks faster.", Tier::Filing),
@@ -236,6 +245,26 @@ pub fn upg_def(u: Upg) -> UpgDef {
             "For a few seconds, every series you carry glows wherever it is, and a marker shows each through the walls.",
             Tier::Spells,
         ),
+        Upg::Echo => (
+            "Echo",
+            "A ring sweeps out from you: the heaps holding the kind of book you seek (or else the active book's kind) are marked through the walls for a while.",
+            Tier::Spells,
+        ),
+        Upg::Summon => (
+            "Summon Series",
+            "Loose volumes of the active book's series fly to your arms: from nearby, then from the whole floor, then from anywhere.",
+            Tier::Spells,
+        ),
+        Upg::Rush => (
+            "Shelving Rush",
+            "For a few seconds, every book you carry within a few metres of its slot flies home, as fast as you pass.",
+            Tier::Spells,
+        ),
+        Upg::Gathering => (
+            "Gathering Charm",
+            "Cast at a heap: its books rise and stream to the hub, the heap in the middle of the library. While you seek, only those books go. Each level takes a wider heap and recharges sooner.",
+            Tier::Spells,
+        ),
     };
     UpgDef { name, blurb, tier }
 }
@@ -248,8 +277,13 @@ pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
             Upg::Signposts => &[10],
             Upg::Glow => &[12, 150, 500],
             Upg::Glimpse => &[80, 400],
+            Upg::Echo => &[200, 700],
+            Upg::Summon => &[300, 1000],
+            Upg::Rush => &[400, 1500],
+            Upg::Homing => &[300, 1200],
             Upg::SortSense => &[250, 900],
-            Upg::Wayfinding | Upg::Broad => &[],
+            // Every book starts in its own wing: no rooms to find, nothing to gather in.
+            Upg::Wayfinding | Upg::Broad | Upg::Gathering => &[],
             Upg::Lens => &[150],
             Upg::Sift => &[40, 400],
             Upg::Fine => &[600],
@@ -268,6 +302,11 @@ pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
             Upg::Signposts => &[15],
             Upg::Glow => &[25, 700, 3000],
             Upg::Glimpse => &[200, 2500],
+            Upg::Gathering => &[1200, 4000, 9000],
+            Upg::Echo => &[800, 5000],
+            Upg::Summon => &[1500, 6000, 12000],
+            Upg::Rush => &[2000, 8000],
+            Upg::Homing => &[1500, 7000],
             Upg::SortSense => &[1500, 9000],
             Upg::Wayfinding => &[400],
             Upg::Lens => &[900],
@@ -330,6 +369,8 @@ pub enum BookState {
     Shelved,
     /// Dangling from familiar i.
     Carried(u8),
+    /// Flying to the hub on a Gathering Charm.
+    Streaming,
 }
 
 #[derive(Clone, Copy)]
@@ -572,6 +613,16 @@ pub struct Game {
     /// left, by hotbar slot.
     pub spell_wait: [f32; SPELLS.len()],
     pub spell_left: [f32; SPELLS.len()],
+    /// Books on their way to the hub, and walking distances from it.
+    streams: Vec<Stream>,
+    hub_field: Field,
+    /// Books the player has tossed that have not landed yet, by book.
+    tossed: Vec<bool>,
+    /// Echo: the heaps marked (above their top, how many books of the kind), where
+    /// it rang out from, and the kind.
+    pub echo: Vec<(Vec3, u32)>,
+    pub echo_from: Vec3,
+    pub echo_kind: Option<(Group, usize)>,
     /// Vertical field of view on wide windows, in degrees (a setting).
     pub fov: f32,
     pub dirty_save: bool,
@@ -613,6 +664,7 @@ impl Game {
         }
         let loose = Loose::new(&lib);
         let nav = Nav::new(&lib.world, lib.spawn.0);
+        let hub_field = nav.field();
         let pos = (0..n as u32).map(|b| loose.pose(b).0).collect();
         let rot = (0..n as u32).map(|b| loose.pose(b).1).collect();
         let mut rng = StdRng::seed_from_u64(0x5eed);
@@ -685,6 +737,12 @@ impl Game {
             seek: None,
             spell_wait: [0.0; SPELLS.len()],
             spell_left: [0.0; SPELLS.len()],
+            streams: Vec::new(),
+            hub_field,
+            tossed: vec![false; n],
+            echo: Vec::new(),
+            echo_from: Vec3::ZERO,
+            echo_kind: None,
             fov: 70.0,
             dirty_save: false,
             persist: true,
@@ -849,9 +907,7 @@ impl Game {
             if let Some(slot) = input.cast {
                 self.cast(slot, audio);
             }
-            for t in self.spell_wait.iter_mut().chain(&mut self.spell_left) {
-                *t = (*t - dt).max(0.0);
-            }
+            self.update_spells(dt);
             if input.cycle != 0 && !self.held.is_empty() {
                 let n = self.held.len() as i32;
                 self.active = ((self.active as i32 + input.cycle).rem_euclid(n)) as usize;
@@ -885,6 +941,7 @@ impl Game {
         // After the aura, which may have filed the active book.
         self.sense = self.active_book().and_then(|b| self.sense_for(b));
         self.update_flights(dt, audio);
+        self.update_streams(dt);
         let landings = self.loose.update(dt, &mut self.pos, &mut self.rot);
         self.dirty_save |= !landings.is_empty();
         let eye = self.player.eye();
@@ -895,6 +952,7 @@ impl Game {
                 audio.play(Sfx::Land, v);
             }
         }
+        self.home_tossed(&landings);
         self.update_familiars(dt);
         self.update_particles(dt);
 
@@ -1166,31 +1224,6 @@ impl Game {
         self.dirty_save = true;
     }
 
-    /// Cast the spell in hotbar slot `slot`, if it is learned and has recharged.
-    fn cast(&mut self, slot: usize, audio: &mut Audio) {
-        let Some(&u) = SPELLS.get(slot) else { return };
-        let (lvl, name) = (self.level(u), upg_def(u).name);
-        if lvl == 0 {
-            self.hint = Some((format!("{name} is learned in the Grimoire (Tab)."), 2.0));
-            return;
-        }
-        let wait = self.spell_wait[slot];
-        if wait > 0.0 {
-            audio.play(Sfx::Nope, 0.3);
-            self.hint = Some((format!("{name} returns in {:.0} s.", wait.ceil()), 1.5));
-            return;
-        }
-        let (lasts, recharge) = spell_times(u, lvl);
-        self.spell_left[slot] = lasts;
-        self.spell_wait[slot] = recharge;
-        audio.play(Sfx::Chime, 0.5);
-    }
-
-    /// Spell `u`'s effect is running.
-    pub fn spell_on(&self, u: Upg) -> bool {
-        SPELLS.iter().position(|&x| x == u).is_some_and(|i| self.spell_left[i] > 0.0)
-    }
-
     /// Kindred Glow as drawn (see `Globals::glow`): Glimpse lights at full.
     fn glow(&self) -> [f32; 4] {
         let lvl = if self.spell_on(Upg::Glimpse) { 3 } else { self.level(Upg::Glow) as usize };
@@ -1368,6 +1401,7 @@ impl Game {
         for (i, &b) in group.iter().enumerate() {
             self.flights.retain(|f| f.book != b);
             self.state[b as usize] = BookState::Loose;
+            self.tossed[b as usize] = true;
             let mut j = || self.rng.gen_range(-1.0..1.0f32);
             let scatter = Vec3::new(j(), j(), j()) * (0.06 * speed + 0.3) * spread;
             let spin = Vec3::new(j(), j(), j()) * 9.0;
@@ -1377,6 +1411,57 @@ impl Game {
         audio.play_pitched(Sfx::Whoosh, 0.45, 2);
         self.toss_charge = 0.0;
         self.dirty_save = true;
+    }
+
+    /// Homing Toss: a tossed book that landed in front of its own shelf, near its
+    /// slot, slips into it.
+    pub(super) fn home_tossed(&mut self, landings: &[crate::loose::Landing]) {
+        let reach = HOMING[self.level(Upg::Homing) as usize];
+        for l in landings {
+            let b = l.book as usize;
+            if !std::mem::take(&mut self.tossed[b]) || reach == 0.0 {
+                continue;
+            }
+            let info = &self.lib.books[b];
+            let normal = self.lib.faces[info.face as usize].normal;
+            let rel = l.at - info.slot_pos;
+            let world = &self.lib.world;
+            let home = world.level_at(l.at) == world.level_at(info.slot_pos)
+                && rel.dot(normal) > -0.05
+                && Vec2::new(rel.x, rel.z).length() <= reach;
+            if home && self.loose.is_resting(l.book) {
+                self.loose.take(&[l.book]);
+                self.state[b] = BookState::Filing;
+                self.start_flight(l.book, Dest::Shelf, 0.45, 0.0);
+            }
+        }
+    }
+
+    /// Turn to `target` and set the toss's pitch and charge so it lands as near it as
+    /// a throw from here can; returns how far off that is. For the pacing bot and
+    /// tests.
+    #[cfg(test)]
+    pub(super) fn aim_toss(&mut self, target: Vec3) -> f32 {
+        let flat = Vec2::new(target.x - self.player.pos.x, target.z - self.player.pos.z);
+        self.player.yaw = flat.x.atan2(-flat.y);
+        let mut best = (f32::INFINITY, 0.0, 0.0);
+        let mut arc = Vec::new();
+        for pi in 0..16 {
+            for ci in 1..=5 {
+                self.player.pitch = -0.6 + pi as f32 * 0.09;
+                self.toss_charge = ci as f32 / 5.0;
+                let (from, vel) = self.toss_launch();
+                arc.clear();
+                if let Some(land) = self.loose.predict(from, vel, &mut arc) {
+                    let off = Vec2::new(land.x - target.x, land.z - target.z).length() + (land.y - target.y).abs();
+                    if off < best.0 {
+                        best = (off, self.player.pitch, self.toss_charge);
+                    }
+                }
+            }
+        }
+        (self.player.pitch, self.toss_charge) = (best.1, best.2);
+        best.0
     }
 
     fn start_flight(&mut self, book: u32, dest: Dest, dur: f32, delay: f32) {
@@ -1655,12 +1740,17 @@ impl Game {
         }
     }
 
+    /// Shelving Aura, and Shelving Rush while it lasts (wider, and as fast as you pass):
+    /// carried books near their slots fly home.
     fn update_aura(&mut self, dt: f32) {
-        let lvl = self.level(Upg::Aura);
-        if lvl == 0 {
+        let (mut radius, mut rate) = AURA_LEVELS[self.level(Upg::Aura) as usize];
+        if self.spell_on(Upg::Rush) {
+            radius = radius.max(spells::rush_reach(self.level(Upg::Rush)));
+            rate = spells::RUSH_RATE;
+        }
+        if rate == 0.0 {
             return;
         }
-        let (radius, rate) = AURA_LEVELS[lvl as usize];
         self.aura_budget = (self.aura_budget + rate * dt).min(rate * 0.5 + 1.0);
         let eye = self.player.eye();
         let prev = self.active_book();
@@ -1937,7 +2027,7 @@ impl Game {
             let moving = match st {
                 BookState::Loose => still.is_none(),
                 BookState::Held => in_flight.contains(&bu),
-                BookState::Filing | BookState::Carried(_) => true,
+                BookState::Filing | BookState::Carried(_) | BookState::Streaming => true,
                 BookState::Shelved => false,
             };
             if moving {
@@ -2041,6 +2131,28 @@ impl Game {
                         0,
                     ));
                 }
+            }
+        }
+
+        // Echo: a ring sweeping out across the floor from where it rang.
+        if let Some(t) = self.echo_age()
+            && let Some((group, key)) = self.echo_kind
+        {
+            let r = t * ECHO_SPEED;
+            let col = signal_color(self.group_color(group, key));
+            let n = (r * 2.0).clamp(24.0, 160.0) as usize;
+            let fade = (1.0 - t / 2.0).max(0.0);
+            for k in 0..n {
+                let a = k as f32 / n as f32 * std::f32::consts::TAU;
+                let p = self.echo_from + Vec3::new(a.cos() * r, 0.05, a.sin() * r);
+                dyn_insts.push(Inst::new(
+                    p,
+                    Quat::from_rotation_y(-a),
+                    Vec3::new(0.04, 0.03, 0.35),
+                    kind::EMISSIVE,
+                    [col[0], col[1], col[2], 3.0 * fade],
+                    0,
+                ));
             }
         }
 
@@ -2190,7 +2302,7 @@ impl Game {
             match st {
                 BookState::Shelved => shelved.push(b as u32),
                 BookState::Filing => pending.push(b as u32),
-                BookState::Loose | BookState::Held | BookState::Carried(_) => {}
+                BookState::Loose | BookState::Held | BookState::Carried(_) | BookState::Streaming => {}
             }
         }
         let p = &self.player;
@@ -2220,11 +2332,11 @@ impl Game {
                 .filter(|&(_, l, _)| l > 0)
                 .map(|(b, l, _)| (b, l as u8))
                 .collect(),
-            // Books a familiar carries fall from where they dangle.
+            // Books a familiar carries, or a charm, fall from where they are.
             airborne: (self.loose.airborne())
                 .chain(
                     (0..self.state.len() as u32).filter_map(|b| match self.state[b as usize] {
-                        BookState::Carried(_) => Some((b, self.pos[b as usize])),
+                        BookState::Carried(_) | BookState::Streaming => Some((b, self.pos[b as usize])),
                         _ => None,
                     }),
                 )
@@ -3347,4 +3459,52 @@ mod tests {
         assert!(g.spell_on(Upg::Glimpse));
     }
 
+
+    /// A series tossed at its own shelf with Homing Toss slips into its slots where it
+    /// lands near them; without it, nothing does.
+    #[test]
+    fn homing_toss_files_what_lands_near() {
+        for homing in [0, 2] {
+            let mut g = Game::new(Layout::Hall);
+            let mut audio = crate::audio::Audio::silent();
+            g.upg[upg_index(Upg::Arms)] = 4;
+            g.upg[upg_index(Upg::Homing)] = homing;
+            g.upg[upg_index(Upg::Fine)] = 1;
+            g.group = Group::Series;
+            // A series with several loose volumes, all in the arms.
+            let series = (0..g.lib.series.len() as u32)
+                .find(|&s| {
+                    (0..g.lib.books.len() as u32)
+                        .filter(|&b| g.lib.books[b as usize].series == s && g.loose.is_resting(b))
+                        .count()
+                        >= 4
+                })
+                .unwrap();
+            let books: Vec<u32> = (0..g.lib.books.len() as u32)
+                .filter(|&b| g.lib.books[b as usize].series == series && g.loose.is_resting(b))
+                .collect();
+            for &b in &books {
+                g.loose.take(&[b]);
+                g.state[b as usize] = BookState::Held;
+                g.held.push(b);
+            }
+            // Six metres out in front of the run, tossing at the floor below it.
+            let slot = g.lib.books[books[0] as usize].slot_pos;
+            let normal = g.lib.faces[g.lib.books[books[0] as usize].face as usize].normal;
+            let floor = Vec3::new(slot.x, 0.0, slot.z);
+            g.player.pos = g.nav.standable_near(floor + normal * 6.0);
+            let off = g.aim_toss(floor + normal * 0.6);
+            assert!(off < 1.0, "the toss lands {off:.2} m off");
+            g.toss(&mut audio);
+            for _ in 0..240 {
+                g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
+            }
+            let filed = books.iter().filter(|&&b| g.state[b as usize] == BookState::Shelved).count();
+            if homing == 0 {
+                assert_eq!(filed, 0);
+            } else {
+                assert!(filed * 2 >= books.len(), "{filed} of {} filed", books.len());
+            }
+        }
+    }
 }

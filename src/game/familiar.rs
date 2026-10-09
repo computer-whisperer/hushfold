@@ -3,6 +3,9 @@
 //! carries books lying near its post to where they are wanted: a shelver that can
 //! file them, or else their room. Unposted, a familiar rides on your shoulder.
 //!
+//! A familiar that finds nothing to do for two minutes folds up and comes back to
+//! the shoulder.
+//!
 //! Every trip follows the walking routes of the nav grid from the post (its
 //! `Field`), at flying height, straightened where the line is clear to sight, so a
 //! familiar goes through doorways and up the stairs, or over a railing and across
@@ -13,7 +16,7 @@ use std::collections::HashMap;
 
 /// Familiar Wings by level: (flight speed in m/s, books carried, how far round its
 /// post a familiar takes books from, how far on foot from its post a shelver files).
-const WINGS: [(f32, usize, f32, f32); 3] = [(2.6, 2, 3.0, 8.0), (3.8, 3, 4.0, 10.0), (5.0, 5, 5.0, 12.0)];
+pub(super) const WINGS: [(f32, usize, f32, f32); 3] = [(2.6, 2, 3.0, 8.0), (3.8, 3, 4.0, 10.0), (5.0, 5, 5.0, 12.0)];
 /// Flying height above the floor along a route.
 const FLY_H: f32 = 1.7;
 /// Height of a perch's top above the floor.
@@ -25,6 +28,8 @@ const GRASP: f32 = 0.8;
 /// How near the shelver a courier would take it to a book already lies (a pile set
 /// down there spreads this far).
 const SETTLED: f32 = 2.5;
+/// Seconds a posted familiar finds nothing to do before it comes back to the shoulder.
+const IDLE_HOME: f32 = 120.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
@@ -187,6 +192,17 @@ impl Game {
         f.riding_since = self.time;
     }
 
+    /// Familiar `i` has had nothing to do for a while: it folds up at its post and
+    /// unfolds on the shoulder, riding until it is posted again.
+    fn fold_home(&mut self, i: usize) {
+        let (role, at) = (self.familiars[i].role, self.familiars[i].pos);
+        self.burst(at, 14, role.light(), 0.8);
+        self.recall(i);
+        self.familiars[i].pos = self.player.eye() + self.player.right() * 0.5;
+        let msg = format!("A {} found nothing to do and came back to you (G posts it).", role.name());
+        self.hint = Some((msg, 3.0));
+    }
+
     /// The floor where the crosshair points, within reach, as a free spot a familiar
     /// can be posted at (one a walk away, past no closed gate).
     fn aimed_floor(&self) -> Option<Vec3> {
@@ -234,12 +250,12 @@ impl Game {
         }
     }
 
-    /// The way for a familiar posted with `post` from `from` to `to`: back along its
-    /// field toward the post until the way to `to` branches off, then out to `to`,
-    /// at flying height and straightened where the line is clear. Points in reverse
-    /// (the next last), ending at `to` itself; `None` if the field doesn't reach one
-    /// of the ends.
-    fn plan(&self, post: &Post, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
+    /// The way from `from` to `to` over walking `field` (a familiar's post's, or the
+    /// hub's): back along the field toward its source until the way to `to` branches
+    /// off, then out to `to`, at flying height and straightened where the line is
+    /// clear. Points in reverse (the next last), ending at `to` itself; `None` if the
+    /// field doesn't reach one of the ends.
+    pub(super) fn plan(&self, field: &Field, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
         let key = |p: Vec3| {
             (
                 (p.x * 4.0).round() as i32,
@@ -248,9 +264,9 @@ impl Game {
             )
         };
         let floor_of = |p: Vec3| self.lib.world.ground(Vec2::new(p.x, p.z), p.y + 0.3).unwrap_or(p.y);
-        let back = (self.nav).way_back(&post.field, Vec3::new(from.x, floor_of(from), from.z))?;
-        let out = (self.nav).way_back(&post.field, Vec3::new(to.x, floor_of(to), to.z))?;
-        // Both ways end at the post's cell, so they meet.
+        let back = (self.nav).way_back(field, Vec3::new(from.x, floor_of(from), from.z))?;
+        let out = (self.nav).way_back(field, Vec3::new(to.x, floor_of(to), to.z))?;
+        // Both ways end at the field's source cell, so they meet.
         let on_out: HashMap<_, usize> = out.iter().enumerate().map(|(k, &p)| (key(p), k)).collect();
         let mut way = vec![from];
         for p in back {
@@ -404,6 +420,9 @@ impl Game {
                         None => {
                             self.familiars[i].rest = 1.0;
                             self.familiars[i].idle += 1.0;
+                            if self.familiars[i].idle >= IDLE_HOME {
+                                self.fold_home(i);
+                            }
                         }
                     }
                 }
@@ -452,7 +471,7 @@ impl Game {
             Task::Home => post.at + Vec3::Y * PERCH_H,
             Task::Idle => from,
         };
-        match self.plan(post, from, to) {
+        match self.plan(&post.field, from, to) {
             Some(path) => {
                 let f = &mut self.familiars[i];
                 f.task = task;
@@ -849,5 +868,23 @@ mod tests {
         assert_eq!(g.aim, Aim::Familiar(0));
         g.update(1.0 / 60.0, &g_key, &mut audio, true);
         assert!(g.familiars[0].post.is_none());
+    }
+
+    /// A familiar with nothing to do round its post comes back to the shoulder after
+    /// two minutes, and can be posted again.
+    #[test]
+    fn an_idle_familiar_comes_back() {
+        let mut g = Game::new(Layout::Hall);
+        g.spawn_familiar(Role::Courier);
+        // The reading room's middle is kept clear of piles.
+        let at = g.nav.standable_near(Vec3::new(0.0, 0.0, 3.5));
+        clear_round(&mut g, at, &[]);
+        g.post_familiar(0, at);
+        run(&mut g, IDLE_HOME - 5.0);
+        assert!(g.familiars[0].post.is_some(), "still posted before two minutes");
+        run(&mut g, 10.0);
+        assert!(g.familiars[0].post.is_none(), "back on the shoulder");
+        g.post_familiar(0, at);
+        assert_eq!(g.familiars[0].idle, 0.0);
     }
 }

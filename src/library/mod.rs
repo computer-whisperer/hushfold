@@ -173,6 +173,8 @@ pub struct Library {
     pub lanterns: Vec<(usize, Vec3)>,
     /// Where a new game starts: (feet, yaw).
     pub spawn: (Vec3, f32),
+    /// The heap in the middle of the library that the Gathering Charm sends books to.
+    pub hub: Vec3,
 }
 
 impl Library {
@@ -201,6 +203,7 @@ impl Library {
             category_center: vec![Vec3::ZERO; n],
             lanterns: Vec::new(),
             spawn: (Vec3::ZERO, 0.0),
+            hub: Vec3::ZERO,
         };
         match layout {
             Layout::Hall => hall::build(&mut lib, &mut rng),

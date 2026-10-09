@@ -165,6 +165,8 @@ pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
     }
     (lib.world.raised_roofs).push((STOREYS - 1, Vec2::splat(-WELL), Vec2::splat(WELL), SKY));
     lib.spawn = (Vec3::new(0.0, 0.0, 6.5), 0.0);
+    // The great heap on the atrium floor, under the well.
+    lib.hub = Vec3::ZERO;
     // Newel posts already placed, so railings that meet share one.
     let mut newels = Vec::new();
     lib.build_floors();

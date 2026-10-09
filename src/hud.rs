@@ -1,7 +1,7 @@
 //! egui HUD: crosshair, armful, active-book card, world labels, toasts, Grimoire.
 
 use crate::catalog;
-use crate::game::{Aim, Cheat, Game, Group, SPELLS, Tier, UPGRADES, Upg, spell_times, upg_costs, upg_def};
+use crate::game::{Aim, Cheat, ECHO_SPEED, Game, Group, SPELLS, Tier, UPGRADES, Upg, spell_times, upg_costs, upg_def};
 use crate::library::{LabelKind, Layout, ROWS};
 use crate::settings::Settings;
 use egui::{Align2, Color32, FontFamily, FontId, Pos2, Rect, RichText, Stroke, Vec2};
@@ -306,6 +306,26 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 p + Vec2::new(-r, 0.0),
             ];
             painter.add(egui::Shape::convex_polygon(pts, col, Stroke::new(1.0_f32, Color32::from_black_alpha(170))));
+        }
+    }
+
+    // ---- Echo: a ring on each heap holding the kind listened for, once the sweep has
+    // reached it, with how many lie there (dimmer on other floors).
+    if let Some(t) = g.echo_age()
+        && let Some((group, key)) = g.echo_kind
+    {
+        let col = bright(g.group_color(group, key));
+        for &(p, n) in &g.echo {
+            if p.distance(g.echo_from) > t * ECHO_SPEED {
+                continue;
+            }
+            let Some(q) = project(&vp, p, screen) else { continue };
+            let other_floor = g.lib.world.level_at(p) != here;
+            let col = col.gamma_multiply(if other_floor { 0.45 } else { 1.0 });
+            painter.circle_stroke(q, 7.0, Stroke::new(2.0_f32, col));
+            if n > 1 {
+                painter.text(q + Vec2::new(0.0, 9.0), Align2::CENTER_TOP, n.to_string(), serif(12.0), col);
+            }
         }
     }
 

@@ -105,16 +105,35 @@ Sense I–II (compass and exact-slot pulse: in the book's room, then anywhere),
 Wayfinding (the compass points to the book's room), the Seeker's Lens. With none
 of these, a player reads: the signs in view, the letter ranges on shelf edges,
 the title the crosshair tip gives a run. Saves from before reading was earned
-keep the guide signs and the full glow they had free. Moving: Sifting Touch I–IV (0.9–3.6 m), Broad Strokes and Fine
-Fingers (sort by department, by series), Long Toss I–II (harder, tighter
-throws), Lodestone Grasp (long reach, hold to pull). Filing: Deeper Arms I–IV,
+keep the guide signs and the full glow they had free. Moving: Sifting Touch I–IV (seeking; the scoop's reach 0.9–3.6 m), Broad
+Strokes and Fine Fingers (seek and toss by department, by series), Long Toss
+I–II (harder, tighter throws), Homing Toss I–II (a tossed book landing in front
+of its own shelf within 2 / 3.5 m of its slot, along the floor, slips into it;
+`Game::aim_toss` sets pitch and charge to land on a point, for the bot and
+tests), Lodestone Grasp (long reach). Filing: Deeper Arms I–IV,
 Swift Slippers I–II, Tidy Arms (stack sorted by slot, active = nearest target),
 Series Bundle (place whole series at once), Shelving Aura I–III (books float to
 nearby slots on their own). Familiars: shelvers and couriers, bought one at a time,
 and Familiar Wings I–II (faster, carry more, reach further). Spells, cast with the
 number keys from a hotbar that shows each one's recharge: Glimpse I–II (for 10–15
 s every carried series glows everywhere and a marker shows each run through the
-walls; recharge 45–30 s). Each department has a room (the Hall's are its wings) with
+walls; recharge 45–30 s), the Gathering Charm I–III (Great Library only: cast at
+a heap up to 14 m off, its books within 2.5 / 3.5 / 5 m, up to 150 / 300 / 600 and
+only the group sought while seeking, stream to the hub, the great heap on the
+atrium floor; recharge 120 / 90 / 60 s; in the Hall every book starts in its own
+wing, so there is nothing for it to fix), Echo I–II (a ring sweeps out 30 m/s;
+heaps within 25 / 50 m holding the kind sought, or the active book's kind, are
+marked through the walls with how many lie there, marks within 3 m merged; 20 /
+30 s, recharge 60 / 45 s), Summon Series I–III (the active book's series' loose
+volumes within 15 m, on the floor, anywhere, nearest first, dissolve where they lie
+and fly to the arms; recharge 90 / 75 / 60 s), Shelving Rush I–II (for 10 / 15 s
+carried books within 6 / 8 m of their slots fly home at 30 a second; recharge 60
+/ 45 s). Spells live in `game/spells.rs`.
+Charmed books rise from the heap, fly a way planned over a walking field from the
+hub the way a crane's is, a little beside its line (a ribbon, 0.25 m), and drop
+from above the heap's top thrown out over a disc, so the hub's heap grows as a
+mound; a charm of 440 books makes one ~0.8 m high and ~1.7 m across (dropped from
+a fixed height they built a 6.7 m tower). Each department has a room (the Hall's are its wings) with
 a doorway, which Sort Sense I and Wayfinding use.
 
 Familiars (`game/familiar.rs`) are paper cranes that ride on the player's
@@ -127,7 +146,10 @@ Each post keeps a walking-distance field from it (`nav::Field`); a trip follows
 the field's way back toward the post until it meets the way out to the target,
 at flying height, straightened wherever the line is clear to sight, so cranes
 use doorways and stairs, or cross the well over a railing, and never pass
-through a wall or floor (checked frame by frame in the familiar tests).
+through a wall or floor (checked frame by frame in the familiar tests). A posted
+familiar that finds nothing to do for two minutes folds up and comes back to the
+shoulder (a burst where it was, a hint saying so), so a post that runs dry costs
+no walk back to it.
 
 "Nearest" means nearest on foot: `nav.rs` keeps a Dijkstra distance field from
 the player over a 0.5 m grid per level (furniture inflated by the player's
@@ -149,14 +171,18 @@ Pacing is tuned with the pacing bot (`game/pacing.rs`; `cargo test --release
 pacing -- --ignored --nocapture`), which plays with the real mechanisms: it walks
 on the nav field to the pile with the most books per second of walking; a plain
 click takes the top of the pile whatever it is (books it can't file yet go back
-down where it stands); with Sifting Touch it sifts the coarsest group it has with
-the most books in reach, and clicks again only at piles it can see; it files
-nearest slot first, as Tidy Arms picks (a click per book, or per series with
-Bundle, the aura at its rate); it walks to post familiars (couriers at heaps of
-books far from home, shelvers at cases with books piling up near them), and to
-move one idle two minutes, and runs their real code over each trip; and it buys
-the cheapest skill it can afford. It never tosses and reads nothing, so those are upside it
-doesn't count. Between slots it charges the straight line (no less than the
+down where it stands); with Sifting Touch it seeks the coarsest group it has with
+the most books in reach (an F when the group changes) and scoops only it, and
+scoops again only at piles it can see; with the Gathering Charm ready, it sends
+what is left where it gathered to the hub when most of it belongs in other rooms;
+it reads (time per series and category by reading skill, nothing while Sort Sense
+or Glimpse shows the way, Glimpse cast whenever ready); it files nearest slot
+first, as Tidy Arms picks (a click per book, or per series with Bundle, the aura
+at its rate); it walks to post the familiars riding with it (couriers round the
+hub or at heaps of books far from home, shelvers at cases with books piling up
+near them; idle ones come back by themselves) and runs their real code over each
+trip; and it buys the cheapest skill it can afford. It never tosses, so that is
+upside it doesn't count. Between slots it charges the straight line (no less than the
 difference of their walks from where filing began): right once the aura files
 through a case, optimistic before it. The late-game engine is Deeper Arms IV ×
 Shelving Aura, so the aura's books-per-second rate is the main dial. History:

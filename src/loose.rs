@@ -91,6 +91,7 @@ impl Rest {
 }
 
 pub struct Landing {
+    pub book: u32,
     pub at: Vec3,
     pub speed: f32,
 }
@@ -1327,6 +1328,7 @@ impl Loose {
         for (b, lv, p, v, r) in landed {
             self.land(b, lv, p, v, r);
             landings.push(Landing {
+                book: b,
                 at: p,
                 speed: v.length(),
             });
