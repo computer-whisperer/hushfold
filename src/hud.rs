@@ -105,7 +105,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
     }
     // Gather first so guide signs can be drawn last and clear the space under them.
     let mut plain: Vec<(Pos2, &str, FontId, Color32, Align2)> = Vec::new();
-    let mut guides: Vec<(Pos2, &str, f32, f32)> = Vec::new();
+    let mut guides: Vec<(Pos2, &str, f32, f32, bool)> = Vec::new();
     for l in &g.lib.labels {
         let to_eye = eye - l.pos;
         let d = to_eye.length();
@@ -131,7 +131,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
         let fade = ((max_d - d) / (max_d * 0.3)).clamp(0.0, 1.0);
         if guide {
             let pulse = (0.8 + 0.2 * (g.time * 3.0).sin()) * if seen { 1.0 } else { 0.55 };
-            guides.push((p, &l.text, size.max(16.0), pulse));
+            guides.push((p, &l.text, size.max(16.0), pulse, facing));
         } else if l.is_sign {
             let done = g.category_shelved[l.category] == g.lib.category_books[l.category];
             let col = if done { Color32::from_rgb(255, 236, 190) } else { INK };
@@ -149,14 +149,24 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
     for (p, text, font, col, align) in plain {
         if guides
             .iter()
-            .any(|(gp, _, size, _)| (gp.x - p.x).abs() < size * 5.0 && (gp.y - p.y).abs() < size * 1.6)
+            .any(|(gp, _, size, _, _)| (gp.x - p.x).abs() < size * 5.0 && (gp.y - p.y).abs() < size * 1.6)
         {
             continue;
         }
         painter.text(p, align, text, font, col);
     }
-    for (p, text, size, pulse) in guides {
+    for (p, text, size, pulse, facing) in guides {
         painter.text(p, Align2::CENTER_CENTER, text, serif(size), GOLD.gamma_multiply(pulse));
+        if !facing {
+            // Cases are double-sided: say when the shelves are round the back.
+            painter.text(
+                p + Vec2::new(0.0, size * 0.75),
+                Align2::CENTER_TOP,
+                "other side",
+                serif(size * 0.6),
+                GOLD.gamma_multiply(pulse * 0.8),
+            );
+        }
         painter.text(
             p + Vec2::new(0.0, -size),
             Align2::CENTER_BOTTOM,
@@ -438,7 +448,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
             let m = if music_on { "on" } else { "off" };
             ui.label(
                 RichText::new(format!(
-                    "Click gather/file · Scroll cycle · Tab Grimoire · M music ({m}) · Esc menu"
+                    "Click gather/file · Scroll cycle · Tab Grimoire · M music ({m}) · Esc pause"
                 ))
                 .font(serif(12.0))
                 .color(DIM.gamma_multiply(0.8)),

@@ -27,7 +27,7 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | Tab | the Grimoire (upgrades) |
 | M | music on/off |
 | F3 | performance overlay |
-| F11 | fullscreen |
+| F11 | fullscreen (remembered) |
 | F12 | screenshot to `~/Pictures` (`%USERPROFILE%\Pictures` on Windows) |
 | Esc | pause: settings (look speed, invert, field of view, volumes) and save-and-quit |
 
@@ -38,7 +38,8 @@ Windows (delete it to start over); settings sit beside it in `settings.json`.
 ## How filing works
 
 - Each category owns three bookcases on one side of an aisle; the sign and
-  lantern above the middle case name it. Lanterns brighten with progress and
+  lantern above the middle case name it. Signs of categories you carry show
+  through the stacks, marked "other side" when their shelves face away from you. Lanterns brighten with progress and
   burn in the category's colour once it is complete.
 - Within a category, series are alphabetical (ignoring leading articles), top
   shelf to bottom, left to right. Shelf edges carry their letter ranges.

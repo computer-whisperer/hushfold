@@ -20,9 +20,10 @@ pub enum Sfx {
     Nope,
     Tick,
     Purchase,
+    Step,
 }
 
-const SFX_COUNT: usize = 8;
+const SFX_COUNT: usize = 9;
 
 fn sfx_index(s: Sfx) -> usize {
     s as usize
@@ -105,6 +106,7 @@ impl Audio {
             banks[sfx_index(Sfx::Thunk)].push(thunk(&mut rng, p).into());
             banks[sfx_index(Sfx::Rustle)].push(rustle(&mut rng).into());
             banks[sfx_index(Sfx::Whoosh)].push(whoosh(&mut rng, p).into());
+            banks[sfx_index(Sfx::Step)].push(step(&mut rng, p).into());
         }
         // Chime variants are indexed by pitch step.
         for step in 0..13 {
@@ -285,6 +287,26 @@ fn thunk(rng: &mut StdRng, pitch: f32) -> Vec<f32> {
         out[i] = body + knock + click;
     }
     normalize(&mut out, 0.8);
+    out
+}
+
+/// A soft footfall on old floorboards: a low thump under a short, muffled scuff.
+fn step(rng: &mut StdRng, pitch: f32) -> Vec<f32> {
+    let n = secs(0.22);
+    let mut scuff: Vec<f32> = (0..n).map(|_| rng.gen_range(-1.0..1.0)).collect();
+    lowpass(&mut scuff, 700.0 * pitch);
+    highpass(&mut scuff, 120.0);
+    let mut out = vec![0.0; n];
+    let mut ph = 0.0f32;
+    for (i, o) in out.iter_mut().enumerate() {
+        let t = i as f32 / SR as f32;
+        ph += (62.0 + 40.0 * (-t * 50.0).exp()) * pitch / SR as f32;
+        let thump = (ph * std::f32::consts::TAU).sin() * (-t * 32.0).exp();
+        let scuff_env = (t / 0.004).min(1.0) * (-t * 55.0).exp();
+        *o = thump + scuff[i] * scuff_env * 1.6;
+    }
+    reverb(&mut out, 0.12);
+    normalize(&mut out, 0.5);
     out
 }
 
@@ -559,6 +581,7 @@ mod tests {
         check("thunk", &thunk(&mut rng, 1.0));
         check("rustle", &rustle(&mut rng));
         check("whoosh", &whoosh(&mut rng, 1.0));
+        check("step", &step(&mut rng, 1.0));
         for s in 0..13 {
             check("chime", &chime(s));
         }

@@ -138,12 +138,12 @@ impl Running {
             KeyCode::KeyM => self.audio.toggle_music(),
             KeyCode::F3 => self.hud.show_stats = !self.hud.show_stats,
             KeyCode::F11 => {
-                let w = &self.renderer.window;
-                if w.fullscreen().is_some() {
-                    w.set_fullscreen(None);
-                } else {
-                    w.set_fullscreen(Some(Fullscreen::Borderless(None)));
-                }
+                let full = self.renderer.window.fullscreen().is_none();
+                self.renderer
+                    .window
+                    .set_fullscreen(full.then_some(Fullscreen::Borderless(None)));
+                self.hud.settings.fullscreen = full;
+                self.save_settings();
             }
             KeyCode::KeyQ => self.input.cycle -= 1,
             KeyCode::KeyE => self.input.cycle += 1,
@@ -362,9 +362,17 @@ impl ApplicationHandler for App {
         if self.run.is_some() {
             return;
         }
+        let scripted = std::env::var_os("HUSHFOLD_SCRIPT").is_some();
+        // Scripted runs use default settings so they are reproducible.
+        let settings = if scripted {
+            Settings::default()
+        } else {
+            Settings::load()
+        };
         let attrs = Window::default_attributes()
             .with_title("Hushfold Library")
-            .with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0));
+            .with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0))
+            .with_fullscreen(settings.fullscreen.then_some(Fullscreen::Borderless(None)));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let mut renderer = Renderer::new(window.clone());
         let t0 = Instant::now();
@@ -390,11 +398,6 @@ impl ApplicationHandler for App {
             if loaded { " (save loaded)" } else { "" }
         );
         renderer.set_static(&game.lib.static_insts);
-        let settings = if script.is_none() {
-            Settings::load()
-        } else {
-            Settings::default()
-        };
         let egui_ctx = egui::Context::default();
         hud::install_fonts(&egui_ctx);
         egui_ctx.set_visuals(egui::Visuals::dark());

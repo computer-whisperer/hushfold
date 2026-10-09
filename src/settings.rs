@@ -12,6 +12,8 @@ pub struct Settings {
     pub fov: f32,
     pub music_volume: f32,
     pub effects_volume: f32,
+    /// Toggled with F11; restored at launch.
+    pub fullscreen: bool,
 }
 
 impl Default for Settings {
@@ -22,6 +24,7 @@ impl Default for Settings {
             fov: 70.0,
             music_volume: 0.8,
             effects_volume: 1.0,
+            fullscreen: false,
         }
     }
 }
