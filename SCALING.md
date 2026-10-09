@@ -439,3 +439,64 @@ What the playtest found:
   of magic instead of a recharge per spell.
 - Then re-cost the tree so a new kind of ability arrives every ~30–45 min in the
   Great Library and every ~8 min in the Hall.
+
+### Built, and measured (2026-10-09)
+
+Steps 1–4 are built as above, with these differences:
+- The Gathering Charm is offered only in the Great Library: every book in the
+  Hall starts in its own wing, so there is nothing for it to fix (in the Great
+  Library ~14% of pile books start in another room and ~21% in the atrium).
+  Dropped from a fixed height over the hub the heap grew a 6.7 m tower; books now
+  drop from above the heap's top, thrown out over a disc (440 books: a mound
+  ~0.8 m high, ~1.7 m across).
+- A familiar idle two minutes folds up and reappears on the shoulder (no flight
+  back, which would need a route to a moving player). The shelver's reach was
+  left as it was (8–12 m on foot from its post), not widened to a whole category.
+- Fewer familiars: 5 shelvers and 4 couriers in the Great Library, 3 and 2 in
+  the Hall.
+
+**Re-costing.** Costs are fitted to purchase schedules (`tuning/*.schedule`: the
+order the cheapest-first bot should buy in and the minute of each) with
+`tuning/retune.py`, a few rounds of running the bot and scaling each cost by
+target over actual. Lessons on the way:
+- Costing straight from an earning curve overshoots both ways: cheaper skills
+  arrive sooner, which raises earning, which brings everything sooner still (the
+  Hall went 1.89 h → 1.04 h in one round). Scaling cost by target/actual
+  settles in two or three rounds.
+- The schedule decides the length as much as the costs: with the engines
+  (Kindred Glow III, Deeper Arms IV, the aura) early, the Hall ends in ~1.2 h
+  whatever the later costs. The schedules spread them to the end, and put what
+  the bot doesn't use (Echo, the Lens, Long Toss, Lodestone, Fine Fingers, Wings)
+  earlier.
+- In the Great Library the first ~4 h shelve ~10% of the books (reading and a
+  click a book until Glow III and the aura); moving Glow III to ~2 h and the
+  aura to ~1.7 h brought it from 10.4 h to 9.6 h.
+
+Result (cheapest-first): the Hall **~1.7 h**, a new kind of skill every ~5 min
+to ~80 min, the last purchase at ~96 min; the Great Library **~9.7 h**, a new
+kind every ~11–25 min to ~5.5 h, the last purchase at ~8.3 h. The trees cost
+about what the libraries pay by their last purchase.
+
+**Paths** (the bot favouring one tech path, the skills off it counted three
+times dearer):
+
+| Path | Hall | Great Library |
+|---|---|---|
+| none (cheapest first) | 1.72 h | 9.66 h |
+| filing | 1.59 h | 8.52 h |
+| reading | 1.77 h | 11.47 h |
+| familiars | 1.79 h | ~13 h (stopped at 10 h, 67% shelved) |
+| hands | 2.20 h | 13.14 h |
+
+With Deeper Arms, Swift Slippers, Signposts and Kindred Glow at face value for
+every path (`HUSHFOLD_BASICS`): the Hall 1.37 h (filing), 1.64 h (familiars), 1.82
+h (reading), 1.85 h (hands); the Great Library 8.17 h (filing), 11.30 h (reading),
+11.56 h (hands), 11.74 h (familiars). The imbalance is not the basics. In the bot's model the time goes to
+filing (and, early, reading), so the filing skills are the engine and no other
+path has one: gathering is a few seconds a trip, tossing home is a series at a
+time, familiars shelve ~6–10%.
+
+**Found and fixed on the way:** a book that ended a flight step inside a solid
+came out by the nearer face, so at long frames (a hitch; the bot's 0.05 s steps)
+a hard throw could pass the middle of an outer wall and come to rest on its top,
+outside the building, out of reach. Steps now never move a book more than 5 cm.

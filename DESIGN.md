@@ -57,7 +57,10 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
   hold them). They land on the heightfield and skid a little, never through a
   wall, case or gate. A flight rises into the level above through a hole in its
   floor and falls through holes to the level below; a book that slides off an
-  edge falls too.
+  edge falls too. A book that ends a flight step inside a solid comes out by the
+  nearer face, so no step moves a book more than 5 cm (more steps at speed): at
+  long frames (a hitch, the pacing bot's 0.05 s) a hard throw used to pass the
+  middle of an outer wall and land on its top, outside the building.
 - Gathering takes only books with no wall, case or closed gate between them and
   the aim point.
 - Generation picks drop points per pile; dropping them through the same code
@@ -181,8 +184,9 @@ first, as Tidy Arms picks (a click per book, or per series with Bundle, the aura
 at its rate); it walks to post the familiars riding with it (couriers round the
 hub or at heaps of books far from home, shelvers at cases with books piling up
 near them; idle ones come back by themselves) and runs their real code over each
-trip; and it buys the cheapest skill it can afford. It never tosses, so that is
-upside it doesn't count. Between slots it charges the straight line (no less than the
+trip; and it buys the cheapest skill it can afford, or favours one tech path
+(`HUSHFOLD_PATH`). Costs are fitted to the purchase schedules in `tuning/`
+(`tuning/retune.py`). Between slots it charges the straight line (no less than the
 difference of their walks from where filing began): right once the aura files
 through a case, optimistic before it. The late-game engine is Deeper Arms IV ×
 Shelving Aura, so the aura's books-per-second rate is the main dial. History:
@@ -199,6 +203,12 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   by ~5.5 h. Familiars shelve ~6% of the Great Library and carry ~8% to their
   rooms, about what walking to post them costs, while taking about half the
   lumens; the bot spends ~4% of its time on stairs.
+- After the first playtest (tap and scoop, seeking, earned reading, spells,
+  Homing Toss; costs fitted to purchase schedules in `tuning/`): the Hall ~1.7 h,
+  the Great Library ~9.7 h, a new kind of skill every ~5 min and every ~11–25
+  min respectively until near the end. Favouring one tech path, the Great
+  Library takes 8.5 h (filing) to 13.1 h (hands): no path but filing has an
+  engine of its own yet.
 
 ## Rendering
 Box-only geometry, per-instance `kind` selects procedural material in WGSL

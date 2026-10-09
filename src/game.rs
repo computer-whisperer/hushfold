@@ -274,55 +274,55 @@ pub fn upg_def(u: Upg) -> UpgDef {
 pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
     match layout {
         Layout::Hall => match u {
-            Upg::Signposts => &[10],
-            Upg::Glow => &[12, 150, 500],
-            Upg::Glimpse => &[80, 400],
-            Upg::Echo => &[200, 700],
-            Upg::Summon => &[300, 1000],
-            Upg::Rush => &[400, 1500],
-            Upg::Homing => &[300, 1200],
-            Upg::SortSense => &[250, 900],
+            Upg::Signposts => &[6],
+            Upg::Glow => &[10, 97, 360],
+            Upg::Arms => &[18, 51, 130, 410],
+            Upg::Sift => &[24, 171],
+            Upg::Slippers => &[42, 1101],
+            Upg::Glimpse => &[52, 241],
+            Upg::Tidy => &[57],
+            Upg::Bundle => &[86],
+            Upg::Lens => &[93],
+            Upg::Shelver => &[120, 220, 1100],
+            Upg::Summon => &[121, 480],
+            Upg::Courier => &[160, 400],
+            Upg::Echo => &[170, 960],
+            Upg::LongToss => &[190],
+            Upg::Aura => &[191, 430, 1300],
+            Upg::Fine => &[240],
+            Upg::Rush => &[260, 1200],
+            Upg::SortSense => &[280, 1301],
+            Upg::Homing => &[281, 1201],
+            Upg::Wings => &[380, 1400],
+            Upg::Lodestone => &[500],
             // Every book starts in its own wing: no rooms to find, nothing to gather in.
             Upg::Wayfinding | Upg::Broad | Upg::Gathering => &[],
-            Upg::Lens => &[150],
-            Upg::Sift => &[40, 400],
-            Upg::Fine => &[600],
-            Upg::LongToss => &[200],
-            Upg::Lodestone => &[300],
-            Upg::Arms => &[20, 80, 250, 700],
-            Upg::Slippers => &[30, 400],
-            Upg::Tidy => &[90],
-            Upg::Bundle => &[120],
-            Upg::Aura => &[500, 1500, 3000],
-            Upg::Shelver => &[250, 600, 1200, 2200, 3200],
-            Upg::Courier => &[800, 1800],
-            Upg::Wings => &[800, 2000],
         },
         Layout::Great => match u {
-            Upg::Signposts => &[15],
-            Upg::Glow => &[25, 700, 3000],
-            Upg::Glimpse => &[200, 2500],
-            Upg::Gathering => &[1200, 4000, 9000],
-            Upg::Echo => &[800, 5000],
-            Upg::Summon => &[1500, 6000, 12000],
-            Upg::Rush => &[2000, 8000],
-            Upg::Homing => &[1500, 7000],
-            Upg::SortSense => &[1500, 9000],
-            Upg::Wayfinding => &[400],
-            Upg::Lens => &[900],
-            Upg::Sift => &[80, 1800, 7000, 14000],
-            Upg::Broad => &[2500],
-            Upg::Fine => &[8000],
-            Upg::LongToss => &[2000, 10000],
-            Upg::Lodestone => &[4000],
-            Upg::Arms => &[20, 150, 800, 3000],
-            Upg::Slippers => &[40, 4000],
-            Upg::Tidy => &[250],
-            Upg::Bundle => &[500],
-            Upg::Aura => &[1500, 3500, 6000],
-            Upg::Shelver => &[600, 2200, 4500, 7000, 9000, 11000, 13000, 15000],
-            Upg::Courier => &[1000, 3000, 6000, 8000, 10000, 12000],
-            Upg::Wings => &[5000, 11000],
+            Upg::Signposts => &[9],
+            Upg::Glow => &[16, 240, 780],
+            Upg::Arms => &[30, 99, 420, 4100],
+            Upg::Sift => &[58, 800, 7800, 9002],
+            Upg::Slippers => &[66, 7801],
+            Upg::Glimpse => &[120, 1500],
+            Upg::Tidy => &[170],
+            Upg::Bundle => &[230],
+            Upg::Lens => &[231],
+            Upg::Wayfinding => &[260],
+            Upg::Shelver => &[290, 1100, 6200, 9000, 9101],
+            Upg::Summon => &[360, 4200, 8901],
+            Upg::Aura => &[490, 4101, 4600],
+            Upg::Courier => &[580, 2000, 7803, 9100],
+            Upg::Gathering => &[820, 3100, 7805],
+            Upg::LongToss => &[880, 8800],
+            Upg::Broad => &[990],
+            Upg::Fine => &[1400],
+            Upg::Rush => &[1501, 7802],
+            Upg::SortSense => &[1600, 5000],
+            Upg::Homing => &[1800, 7804],
+            Upg::Echo => &[1900, 9001],
+            Upg::Wings => &[2300, 8902],
+            Upg::Lodestone => &[8900],
         },
     }
 }
@@ -3505,6 +3505,30 @@ mod tests {
             } else {
                 assert!(filed * 2 >= books.len(), "{filed} of {} filed", books.len());
             }
+        }
+    }
+
+    /// A book thrown hard at a wall during long frames (a hitch, or the pacing bot's
+    /// steps) bounces off it rather than coming out the far side.
+    #[test]
+    fn hard_throws_stay_inside_at_long_frames() {
+        let mut g = Game::new(Layout::Great);
+        let mut audio = crate::audio::Audio::silent();
+        g.open_all_gates();
+        // In a room on the ground floor, thrown level at its outer wall (x = 32) from
+        // across one step's travel, so some throw reaches the wall mid-step.
+        let books: Vec<u32> = (0..g.lib.books.len() as u32).filter(|&b| g.loose.is_resting(b)).take(10).collect();
+        g.loose.take(&books);
+        for (k, &b) in books.iter().enumerate() {
+            let from = Vec3::new(29.0 + k as f32 * 0.04, 1.5, 0.5 + k as f32 * 0.3);
+            g.loose.throw(b, from, Vec3::new(22.0, 0.0, 0.0), Quat::IDENTITY, Vec3::ZERO, 0.0);
+        }
+        for _ in 0..200 {
+            g.update(0.05, &Input::default(), &mut audio, false);
+        }
+        for b in books {
+            let p = g.loose.pose(b).0;
+            assert!(g.loose.is_resting(b) && p.x < 31.8, "book {b} came to rest at {p}");
         }
     }
 }

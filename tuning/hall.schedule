@@ -1,0 +1,44 @@
+# The Hall, in the order the cheapest-first pacing bot should buy, with the minute each
+# should come: a new kind every ~5 min to ~80 min; what speeds the work most (Kindred
+# Glow, Deeper Arms, the aura, Sort Sense, Rush) spread to the end. Fit the costs to it
+# with tuning/retune.py.
+Signposts 1
+Glow 2
+Arms 3.5
+Sift 5
+Slippers 7
+Arms 9
+Glimpse 11
+Tidy 13
+Bundle 16
+Lens 19
+Glow 22
+Shelver 25
+Summon 28
+Arms 31
+Courier 34
+Echo 37
+Sift 40
+LongToss 43
+Aura 46
+Shelver 49
+Fine 52
+Glimpse 55
+Rush 58
+SortSense 61
+Homing 64
+Glow 67
+Wings 70
+Courier 73
+Arms 76
+Aura 79
+Summon 81
+Lodestone 83
+Echo 85
+Shelver 87
+Slippers 89
+Rush 91
+Homing 93
+Aura 95
+SortSense 97
+Wings 99

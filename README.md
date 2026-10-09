@@ -9,7 +9,7 @@ books wherever you post them.
 Two libraries, each with its own save (switch on the pause screen):
 - **The Hall**: one storey, ~11,700 books in ~2,300 series, two wings.
 - **The Great Library** (in development): three storeys round a skylit atrium,
-  twelve department rooms opened one by one, ~118,000 books, about nine hours.
+  twelve department rooms opened one by one, ~118,000 books, about ten hours.
 
 Prebuilt Linux and Windows binaries are on the
 [releases page](https://github.com/computer-whisperer/hushfold/releases), or build it yourself:
@@ -132,6 +132,12 @@ that fit it.
 - `cargo test --release`: generation invariants, pile physics (nothing floats or
   sinks after books are pulled out; tosses land in the open), save round-trip,
   audio sanity.
+- Pacing: `cargo test --release pacing -- --ignored --nocapture` plays each
+  library headless with the pacing bot (`HUSHFOLD_PATH=reading|hands|familiars|filing`
+  makes it favour one tech path; `HUSHFOLD_BASICS=1` lets every path buy carrying,
+  walking and the reading basics at face value). Skill costs are fitted to the purchase schedules
+  in `tuning/` (the order and minute each purchase should come) with
+  `tuning/retune.py`; see its header.
 - Scripted runs for screenshots and smoke tests:
   `HUSHFOLD_UNPACED=1 HUSHFOLD_SCRIPT=script.txt HUSHFOLD_SHOT_DIR=out cargo run --release`.
   Scripted runs use a fixed 60 Hz step and never touch the real save; they start

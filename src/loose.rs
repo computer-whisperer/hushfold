@@ -35,6 +35,10 @@ pub const GRAVITY: f32 = 9.0;
 /// A flying book's collision radius.
 const FLY_R: f32 = 0.05;
 const SUBSTEPS: usize = 3;
+/// The furthest a flying book moves in one step: a book that ends a step inside a
+/// solid comes out by the nearer face, so a step must never carry it past the
+/// middle of a wall or a railing (at long frames it would come out the far side).
+const MAX_STEP: f32 = 0.05;
 /// A support change smaller than this leaves a resting book exactly where it was.
 const KEEP_EPS: f32 = 0.003;
 /// Heightfield value where a level has no floor.
@@ -1280,13 +1284,17 @@ impl Loose {
     pub fn predict(&self, from: Vec3, vel: Vec3, out: &mut Vec<Vec3>) -> Option<Vec3> {
         let (mut p, mut v) = (from, vel);
         let mut lv = self.airspace(from);
-        let dt = 1.0 / 60.0 / SUBSTEPS as f32;
-        for i in 0..60 * 4 * SUBSTEPS {
-            if self.step(&mut lv, &mut p, &mut v, dt) {
-                let at = Vec2::new(p.x, p.z);
-                return Some(Vec3::new(p.x, self.grids[lv].height(at), p.z));
+        // Frames of 1/60 s, stepped as `update` steps them.
+        let dt = 1.0 / 60.0;
+        for frame in 0..60 * 4 {
+            let steps = ((v.length() * dt / MAX_STEP).ceil() as usize).max(SUBSTEPS);
+            for _ in 0..steps {
+                if self.step(&mut lv, &mut p, &mut v, dt / steps as f32) {
+                    let at = Vec2::new(p.x, p.z);
+                    return Some(Vec3::new(p.x, self.grids[lv].height(at), p.z));
+                }
             }
-            if i % (3 * SUBSTEPS) == 0 {
+            if frame % 3 == 0 {
                 out.push(p);
             }
         }
@@ -1297,7 +1305,6 @@ impl Loose {
     pub fn update(&mut self, dt: f32, pos: &mut [Vec3], rot: &mut [Quat]) -> Vec<Landing> {
         let mut landed = Vec::new();
         let mut flying = std::mem::take(&mut self.flying);
-        let sub = dt / SUBSTEPS as f32;
         flying.retain_mut(|f| {
             if f.delay > 0.0 {
                 // Waiting its turn in the stream, at the launch point.
@@ -1308,7 +1315,9 @@ impl Loose {
             }
             f.age += dt;
             let mut down = false;
-            for _ in 0..SUBSTEPS {
+            let steps = ((f.vel.length() * dt / MAX_STEP).ceil() as usize).max(SUBSTEPS);
+            let sub = dt / steps as f32;
+            for _ in 0..steps {
                 if self.step(&mut f.level, &mut f.pos, &mut f.vel, sub) {
                     down = true;
                     break;

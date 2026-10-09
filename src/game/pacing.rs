@@ -24,7 +24,9 @@
 //! them; one idle two minutes comes back by itself), running their real code over
 //! each trip. It buys the cheapest skill it can afford, or with `HUSHFOLD_PATH`
 //! (reading, hands, familiars, filing) favours that tech path, counting the skills
-//! off it as three times dearer. Other tosses, and Echo (it knows where every book
+//! off it as three times dearer (with `HUSHFOLD_BASICS`, all but Deeper Arms,
+//! Swift Slippers, Signposts and Kindred Glow, which every path then buys at face
+//! value). Other tosses, and Echo (it knows where every book
 //! lies), are upside it doesn't count.
 //!
 //! Run with `cargo test --release pacing -- --ignored --nocapture`.
@@ -56,6 +58,9 @@ const TOSS_REACH: f32 = 14.0;
 const TOSS: f32 = 1.2;
 /// A preferred path makes the skills off it look this much dearer.
 const OFF_PATH: u64 = 3;
+/// What every path buys at face value with `HUSHFOLD_BASICS` set: carrying, walking,
+/// and finding where books go.
+const BASICS: [Upg; 4] = [Upg::Arms, Upg::Slippers, Upg::Signposts, Upg::Glow];
 
 /// A preferred tech path (`HUSHFOLD_PATH`): the skills it favours.
 fn path_skills(path: &str) -> &'static [Upg] {
@@ -117,8 +122,13 @@ struct Bot {
     /// Books tossed at their shelves, and Summon Series cast.
     tossed: u32,
     summons: u32,
-    /// The skills it favours (none: it buys the cheapest).
+    /// The skills it favours (none: it buys the cheapest), and whether every path
+    /// buys the basics at face value.
     path: &'static [Upg],
+    basics: bool,
+    /// What last moved each book the bot moved other than to its arms (to explain
+    /// any left behind).
+    moved_by: HashMap<u32, &'static str>,
 }
 
 impl Bot {
@@ -311,6 +321,9 @@ impl Bot {
                 .filter(|&&b| here != Some(g.lib.dept_of(g.lib.category_of_book(b))))
                 .count();
             if away >= 20 && away * 2 >= left.len() && g.charm_heap(lv, c, charm) {
+                for &b in &left {
+                    self.moved_by.insert(b, "charmed");
+                }
                 self.commit(Upg::Gathering);
                 self.charms += 1;
             }
@@ -336,11 +349,14 @@ impl Bot {
                 }
             }
         }
-        // What can't be filed yet goes back down where the bot stands.
+        // What can't be filed yet goes back down where the bot stands, within its
+        // cell's clearance (dropped from past the middle of a wall, a book would
+        // come out on its far side).
         if !aside.is_empty() {
             for (k, &b) in aside.iter().enumerate() {
+                self.moved_by.insert(b, "set aside");
                 let a = k as f32 * 2.4;
-                let from = self.pos + Vec3::new(a.cos(), 1.0, a.sin()) * 0.6;
+                let from = self.pos + Vec3::new(a.cos() * 0.15, 1.0, a.sin() * 0.15);
                 self.g.loose.throw(b, from, Vec3::ZERO, Quat::IDENTITY, Vec3::ZERO, 0.0);
             }
             self.t += 1.0;
@@ -430,7 +446,7 @@ impl Bot {
                 let target = Vec3::new(front.x, ground(front), front.z);
                 let eye = stand + Vec3::Y * EYE;
                 if target.distance(stand) < TOSS_REACH && g.lib.world.line_of_sight(eye, target + Vec3::Y * 0.3) {
-                    let (group, before) = (g.group, g.held.len());
+                    let (group, before) = (g.group, g.held.clone());
                     g.player.pos = stand;
                     g.group = Group::Series;
                     g.active = i;
@@ -438,8 +454,11 @@ impl Bot {
                         g.toss(&mut self.audio);
                     }
                     g.group = group;
-                    if g.held.len() < before {
-                        self.tossed += (before - g.held.len()) as u32;
+                    if g.held.len() < before.len() {
+                        for b in before.into_iter().filter(|b| !g.held.contains(b)) {
+                            self.moved_by.insert(b, "tossed");
+                            self.tossed += 1;
+                        }
                         self.t += TOSS;
                         self.spent[3] += TOSS;
                         continue;
@@ -575,7 +594,8 @@ impl Bot {
         loop {
             let g = &self.g;
             // On a preferred path, the skills off it count as dearer.
-            let weight = |u: Upg| if self.path.is_empty() || self.path.contains(&u) { 1 } else { OFF_PATH };
+            let favoured = |u: Upg| self.path.is_empty() || self.path.contains(&u) || (self.basics && BASICS.contains(&u));
+            let weight = |u: Upg| if favoured(u) { 1 } else { OFF_PATH };
             let cheapest = (UPGRADES.iter().copied())
                 .filter_map(|u| g.next_cost(u).map(|c| (c * weight(u), c, u)))
                 .min_by_key(|x| x.0);
@@ -618,6 +638,8 @@ pub(super) fn simulate(layout: Layout) -> f32 {
         tossed: 0,
         summons: 0,
         path: path_skills(&std::env::var("HUSHFOLD_PATH").unwrap_or_default()),
+        basics: std::env::var("HUSHFOLD_BASICS").is_ok(),
+        moved_by: HashMap::new(),
         posts: 0,
         charms: 0,
     };
@@ -694,6 +716,26 @@ pub(super) fn simulate(layout: Layout) -> f32 {
         100.0 * bot.climbing / bot.t,
         bot.empty_scoops
     );
+    // Any left behind, and why the bot couldn't get at them.
+    let left: Vec<u32> = (0..g.lib.books.len() as u32)
+        .filter(|&b| g.state[b as usize] != BookState::Shelved)
+        .take(5)
+        .collect();
+    if !left.is_empty() {
+        let start = Loose::new(&g.lib);
+        for b in left {
+            let p = g.pos[b as usize];
+            println!(
+                "left: book {b} {:?} at {p} (resting {}, flying {}, reachable {}); last moved by the bot: {}, starts at {}",
+                g.state[b as usize],
+                g.loose.is_resting(b),
+                g.loose.is_flying(b),
+                g.nav.distance(&g.walk, bot.pos, p).is_finite(),
+                bot.moved_by.get(&b).unwrap_or(&"nothing"),
+                start.pose(b).0
+            );
+        }
+    }
     bot.t / 3600.0
 }
 

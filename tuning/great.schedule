@@ -1,0 +1,57 @@
+# The Great Library, in the order the cheapest-first pacing bot should buy, with the
+# minute each should come: a new kind every ~11-25 min to ~5.5 h; Kindred Glow III and
+# the aura by ~2 h, the rest of what speeds the work (Arms, the aura, Sort Sense, Rush)
+# spread to ~8.3 h. Fit the costs to it with tuning/retune.py.
+Signposts 1.8
+Glow 3.6
+Arms 6.3
+Sift 9.9
+Slippers 13.5
+Arms 18
+Glimpse 23.4
+Tidy 29.7
+Bundle 36.9
+Lens 45
+Glow 54
+Wayfinding 63
+Shelver 72
+Summon 82.8
+Arms 93.6
+Aura 104.4
+Courier 115.2
+Glow 126
+Sift 135
+Gathering 144
+LongToss 154.8
+Broad 165.6
+Shelver 176.4
+Fine 187.2
+Glimpse 198
+Rush 208.8
+SortSense 219.6
+Homing 230.4
+Echo 241.2
+Courier 252
+Wings 262.8
+Gathering 273.6
+Arms 284.4
+Aura 295.2
+Summon 306
+Aura 316.8
+SortSense 327.6
+Shelver 338.4
+Sift 349.2
+Slippers 360
+Rush 370.8
+Courier 381.6
+Homing 392.4
+Gathering 403.2
+LongToss 414
+Lodestone 424.8
+Summon 435.6
+Wings 446.4
+Shelver 457.2
+Echo 468
+Sift 477
+Courier 486
+Shelver 495
