@@ -75,7 +75,14 @@ fn path_skills(path: &str) -> &'static [Upg] {
             Upg::Echo,
             Upg::Summon,
         ],
-        "hands" => &[Upg::Sift, Upg::Broad, Upg::Fine, Upg::LongToss, Upg::Homing, Upg::Lodestone],
+        "hands" => &[
+            Upg::Sift,
+            Upg::Broad,
+            Upg::Fine,
+            Upg::LongToss,
+            Upg::Homing,
+            Upg::Lodestone,
+        ],
         "familiars" => &[Upg::Shelver, Upg::Courier, Upg::Wings, Upg::Gathering],
         "filing" => &[Upg::Arms, Upg::Slippers, Upg::Tidy, Upg::Bundle, Upg::Aura, Upg::Rush],
         _ => &[],
@@ -342,7 +349,11 @@ impl Bot {
             if let Some((n, s)) = best
                 && n >= 3
             {
-                g.active = g.held.iter().position(|&b| g.lib.books[b as usize].series == s).unwrap();
+                g.active = g
+                    .held
+                    .iter()
+                    .position(|&b| g.lib.books[b as usize].series == s)
+                    .unwrap();
                 if g.summon(summon, &mut self.audio) {
                     self.commit(Upg::Summon);
                     self.summons += 1;
@@ -424,9 +435,8 @@ impl Bot {
             let s = g.lib.books[b as usize].series;
             let cat = g.lib.category_of_book(b);
             let sense = g.level(Upg::SortSense);
-            let shown = sense >= 2
-                || (sense == 1 && g.lib.room_at(here) == Some(g.lib.dept_of(cat)))
-                || self.t < glimpse_until;
+            let shown =
+                sense >= 2 || (sense == 1 && g.lib.room_at(here) == Some(g.lib.dept_of(cat))) || self.t < glimpse_until;
             let glow = g.level(Upg::Glow) as usize;
             let mut read = 0.0;
             if !shown && found_series.insert(s) {
@@ -579,7 +589,8 @@ impl Bot {
                 continue;
             }
             let lib = &g.lib;
-            let far = |b: u32| fileable[b as usize] && lib.rooms[lib.dept_of(lib.category_of_book(b))].drop.distance(c) > 8.0;
+            let far =
+                |b: u32| fileable[b as usize] && lib.rooms[lib.dept_of(lib.category_of_book(b))].drop.distance(c) > 8.0;
             let n = g.loose.near(lv, Vec2::new(c.x, c.z), reach, far).len();
             if n >= 4 && best.is_none_or(|(bn, _)| n > bn) {
                 best = Some((n, c));
@@ -594,7 +605,8 @@ impl Bot {
         loop {
             let g = &self.g;
             // On a preferred path, the skills off it count as dearer.
-            let favoured = |u: Upg| self.path.is_empty() || self.path.contains(&u) || (self.basics && BASICS.contains(&u));
+            let favoured =
+                |u: Upg| self.path.is_empty() || self.path.contains(&u) || (self.basics && BASICS.contains(&u));
             let weight = |u: Upg| if favoured(u) { 1 } else { OFF_PATH };
             let cheapest = (UPGRADES.iter().copied())
                 .filter_map(|u| g.next_cost(u).map(|c| (c * weight(u), c, u)))

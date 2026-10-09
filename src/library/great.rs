@@ -524,7 +524,11 @@ impl Library {
                 .collect();
             let mut earlier = 0;
             for unit in self.series_units(rng, &books) {
-                let (own, atrium) = if self.whole_set(&unit) { (0.85, 0.15) } else { (0.65, 0.2) };
+                let (own, atrium) = if self.whole_set(&unit) {
+                    (0.85, 0.15)
+                } else {
+                    (0.65, 0.2)
+                };
                 let x = rng.gen_range(0.0..1.0f32);
                 if x < own {
                     room_pool[d].push(unit);

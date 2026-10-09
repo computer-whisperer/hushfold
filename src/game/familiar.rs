@@ -16,7 +16,9 @@ use std::collections::HashMap;
 
 /// Familiar Wings by level: (flight speed in m/s, books carried, how far round its
 /// post a familiar takes books from, how far on foot from its post a shelver files).
-pub(super) const WINGS: [(f32, usize, f32, f32); 3] = [(2.6, 2, 3.0, 8.0), (3.8, 3, 4.0, 10.0), (5.0, 5, 5.0, 12.0)];
+/// Doubled from the first cut (2.6 m/s and 2 books at first), under which familiars
+/// shelved ~6% of the Great Library and the familiars path was the slowest.
+pub(super) const WINGS: [(f32, usize, f32, f32); 3] = [(3.5, 4, 4.0, 10.0), (4.8, 6, 5.0, 12.0), (6.0, 10, 6.0, 14.0)];
 /// Flying height above the floor along a route.
 const FLY_H: f32 = 1.7;
 /// Height of a perch's top above the floor.
@@ -199,7 +201,10 @@ impl Game {
         self.burst(at, 14, role.light(), 0.8);
         self.recall(i);
         self.familiars[i].pos = self.player.eye() + self.player.right() * 0.5;
-        let msg = format!("A {} found nothing to do and came back to you (G posts it).", role.name());
+        let msg = format!(
+            "A {} found nothing to do and came back to you (G posts it).",
+            role.name()
+        );
         self.hint = Some((msg, 3.0));
     }
 
@@ -488,8 +493,11 @@ impl Game {
         }
     }
 
-    /// Familiar `i` has reached the end of its path: do what it came to do.
+    /// Familiar `i` has reached the end of its path: do what it came to do. It stops
+    /// there, so it sets off on the next leg from still (carried on, its speed would
+    /// swing it off a line that may pass close by a case).
     fn arrive(&mut self, i: usize) {
+        self.familiars[i].vel = Vec3::ZERO;
         match self.familiars[i].task {
             Task::Fetch { at, goal } => {
                 self.take_up(i, at, goal);
@@ -698,30 +706,34 @@ mod tests {
     /// post, and leaves alone those whose shelves are far away.
     #[test]
     fn a_shelver_files_what_lies_near_it() {
-        let mut g = Game::new(Layout::Hall);
-        let cat = 0;
-        let face = (0..g.lib.faces.len()).find(|&f| g.lib.faces[f].category == cat && g.lib.faces[f].case_idx == 1);
-        let face = &g.lib.faces[face.unwrap()];
-        let post = g.nav.standable_near(face.center + face.normal * 1.2);
-        let ours: Vec<u32> = (0..g.lib.books.len() as u32)
-            .filter(|&b| g.lib.category_of_book(b) == cat && g.loose.is_resting(b))
-            .take(8)
-            .collect();
-        // The East Wing's books are far from these cases (and veiled).
-        let far: Vec<u32> = (0..g.lib.books.len() as u32)
-            .filter(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == 1 && g.loose.is_resting(b))
-            .take(4)
-            .collect();
-        drop_round(&mut g, &[ours.clone(), far.clone()].concat(), post);
-        g.spawn_familiar(Role::Shelver);
-        g.post_familiar(0, post);
-        run(&mut g, 40.0);
-        let filed = ours
-            .iter()
-            .filter(|&&b| g.state[b as usize] == BookState::Shelved)
-            .count();
-        assert_eq!(filed, ours.len(), "{filed} of {} filed", ours.len());
-        assert!(far.iter().all(|&b| g.state[b as usize] == BookState::Loose));
+        // At the slowest wings and the fastest.
+        for wings in [0, 2] {
+            let mut g = Game::new(Layout::Hall);
+            g.upg[upg_index(Upg::Wings)] = wings;
+            let cat = 0;
+            let face = (0..g.lib.faces.len()).find(|&f| g.lib.faces[f].category == cat && g.lib.faces[f].case_idx == 1);
+            let face = &g.lib.faces[face.unwrap()];
+            let post = g.nav.standable_near(face.center + face.normal * 1.2);
+            let ours: Vec<u32> = (0..g.lib.books.len() as u32)
+                .filter(|&b| g.lib.category_of_book(b) == cat && g.loose.is_resting(b))
+                .take(8)
+                .collect();
+            // The East Wing's books are far from these cases (and veiled).
+            let far: Vec<u32> = (0..g.lib.books.len() as u32)
+                .filter(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == 1 && g.loose.is_resting(b))
+                .take(4)
+                .collect();
+            drop_round(&mut g, &[ours.clone(), far.clone()].concat(), post);
+            g.spawn_familiar(Role::Shelver);
+            g.post_familiar(0, post);
+            run(&mut g, 40.0);
+            let filed = ours
+                .iter()
+                .filter(|&&b| g.state[b as usize] == BookState::Shelved)
+                .count();
+            assert_eq!(filed, ours.len(), "{filed} of {} filed", ours.len());
+            assert!(far.iter().all(|&b| g.state[b as usize] == BookState::Loose));
+        }
     }
 
     /// A courier posted at the great heap carries the Observatory's books through its
@@ -729,53 +741,59 @@ mod tests {
     /// who files them; veiled departments' books stay where they are.
     #[test]
     fn a_courier_carries_books_to_their_room() {
-        let mut g = Game::new(Layout::Great);
-        let heap = g.nav.standable_near(Vec3::new(0.0, 0.0, 3.2));
-        let room = &g.lib.rooms[0];
-        let drop = room.drop;
-        let n = g.lib.books.len() as u32;
-        let dept = |g: &Game, b: u32| g.lib.dept_of(g.lib.category_of_book(b));
-        // A shelver at the cases of the room's first category.
-        let cat = g.lib.catalog.departments[0].categories.start;
-        let face = (0..g.lib.faces.len()).find(|&f| g.lib.faces[f].category == cat && g.lib.faces[f].case_idx == 2);
-        let face = &g.lib.faces[face.unwrap()];
-        let perch = g.nav.standable_near(face.center + face.normal * 1.2);
-        g.spawn_familiar(Role::Shelver);
-        g.post_familiar(0, perch);
-        let to_shelver: Vec<u32> = (0..n).filter(|&b| g.lib.category_of_book(b) == cat).take(4).collect();
-        let to_room: Vec<u32> = (0..n)
-            .filter(|&b| dept(&g, b) == 0 && g.lib.category_of_book(b) != cat)
-            .take(4)
-            .collect();
-        let veiled: Vec<u32> = (0..n).filter(|&b| dept(&g, b) == 5).take(4).collect();
-        let near_heap = |g: &Game, b: u32| g.loose.pose(b).0.distance(heap) < 4.0;
-        drop_round(
-            &mut g,
-            &[to_shelver.clone(), to_room.clone(), veiled.clone()].concat(),
-            heap,
-        );
-        // Clear everything else from round the post, so the courier has just these.
-        clear_round(
-            &mut g,
-            heap,
-            &[to_shelver.clone(), to_room.clone(), veiled.clone()].concat(),
-        );
-        g.spawn_familiar(Role::Courier);
-        g.post_familiar(1, heap);
-        run(&mut g, 180.0);
-        let shelved = to_shelver
-            .iter()
-            .filter(|&&b| g.state[b as usize] == BookState::Shelved)
-            .count();
-        assert_eq!(shelved, to_shelver.len(), "the shelver filed {shelved}");
-        for &b in &to_room {
-            let p = g.loose.pose(b).0;
-            assert!(
-                g.loose.is_resting(b) && p.distance(drop) < 2.5,
-                "book {b} at {p}, the room's drop at {drop}"
+        // At the slowest wings and the fastest.
+        for wings in [0, 2] {
+            let mut g = Game::new(Layout::Great);
+            g.upg[upg_index(Upg::Wings)] = wings;
+            let heap = g.nav.standable_near(Vec3::new(0.0, 0.0, 3.2));
+            let room = &g.lib.rooms[0];
+            let drop = room.drop;
+            let n = g.lib.books.len() as u32;
+            let dept = |g: &Game, b: u32| g.lib.dept_of(g.lib.category_of_book(b));
+            // A shelver at the cases of the room's first category.
+            let cat = g.lib.catalog.departments[0].categories.start;
+            let face = (0..g.lib.faces.len()).find(|&f| g.lib.faces[f].category == cat && g.lib.faces[f].case_idx == 2);
+            let face = &g.lib.faces[face.unwrap()];
+            let perch = g.nav.standable_near(face.center + face.normal * 1.2);
+            g.spawn_familiar(Role::Shelver);
+            g.post_familiar(0, perch);
+            let to_shelver: Vec<u32> = (0..n).filter(|&b| g.lib.category_of_book(b) == cat).take(4).collect();
+            // Books of the room the shelver can't file (beyond its reach on foot).
+            let shelver = g.familiars[0].post.as_ref().unwrap();
+            let to_room: Vec<u32> = (0..n)
+                .filter(|&b| dept(&g, b) == 0 && !g.shelver_files(shelver, b))
+                .take(4)
+                .collect();
+            let veiled: Vec<u32> = (0..n).filter(|&b| dept(&g, b) == 5).take(4).collect();
+            let near_heap = |g: &Game, b: u32| g.loose.pose(b).0.distance(heap) < 4.0;
+            drop_round(
+                &mut g,
+                &[to_shelver.clone(), to_room.clone(), veiled.clone()].concat(),
+                heap,
             );
+            // Clear everything else from round the post, so the courier has just these.
+            clear_round(
+                &mut g,
+                heap,
+                &[to_shelver.clone(), to_room.clone(), veiled.clone()].concat(),
+            );
+            g.spawn_familiar(Role::Courier);
+            g.post_familiar(1, heap);
+            run(&mut g, 180.0);
+            let shelved = to_shelver
+                .iter()
+                .filter(|&&b| g.state[b as usize] == BookState::Shelved)
+                .count();
+            assert_eq!(shelved, to_shelver.len(), "the shelver filed {shelved}");
+            for &b in &to_room {
+                let p = g.loose.pose(b).0;
+                assert!(
+                    g.loose.is_resting(b) && p.distance(drop) < 2.5,
+                    "book {b} at {p}, the room's drop at {drop}"
+                );
+            }
+            assert!(veiled.iter().all(|&b| near_heap(&g, b)));
         }
-        assert!(veiled.iter().all(|&b| near_heap(&g, b)));
     }
 
     /// A shelver posted at the end case of a row files the books whose slots are on
@@ -783,8 +801,10 @@ mod tests {
     /// (regression: the way out joined from the near side of the case).
     #[test]
     fn a_shelver_flies_round_to_the_back_of_its_case() {
-        for layout in Layout::ALL {
+        // At the slowest wings and the fastest.
+        for (layout, wings) in Layout::ALL.into_iter().flat_map(|l| [(l, 0), (l, 2)]) {
             let mut g = Game::new(layout);
+            g.upg[upg_index(Upg::Wings)] = wings;
             g.open_all_gates();
             let nf = g.lib.faces.len();
             let mut tried = 0;
@@ -812,7 +832,7 @@ mod tests {
                     .iter()
                     .filter(|&&b| g.state[b as usize] == BookState::Shelved)
                     .count();
-                assert_eq!(filed, books.len(), "{layout:?} face {fi}");
+                assert_eq!(filed, books.len(), "{layout:?} face {fi} wings {wings}");
                 g.recall(i);
                 tried += 1;
             }

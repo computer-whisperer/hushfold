@@ -41,9 +41,6 @@ fn echo_reach(level: u32) -> f32 {
 }
 /// How fast Echo's ring sweeps out (m/s).
 pub const ECHO_SPEED: f32 = 30.0;
-/// Summon Series at level I calls volumes from this near; at II from the floor, at
-/// III from anywhere.
-const SUMMON_NEAR: f32 = 15.0;
 
 /// Gathering Charm by level: (how far round the aim it takes books, most books, recharge
 /// in seconds).
@@ -119,14 +116,19 @@ impl Game {
 
     /// Spell `u`'s effect is running.
     pub fn spell_on(&self, u: Upg) -> bool {
-        SPELLS.iter().position(|&x| x == u).is_some_and(|i| self.spell_left[i] > 0.0)
+        SPELLS
+            .iter()
+            .position(|&x| x == u)
+            .is_some_and(|i| self.spell_left[i] > 0.0)
     }
 
     /// Echo: mark the heaps within reach holding books of the kind sought, or else of
     /// the active book's kind; nearby marks merge. False, with a hint, if there is no
     /// kind to listen for.
     fn echo(&mut self, lvl: u32) -> bool {
-        let kind = self.sought().or_else(|| self.active_book().map(|b| (self.group, self.group_of(b))));
+        let kind = self
+            .sought()
+            .or_else(|| self.active_book().map(|b| (self.group, self.group_of(b))));
         let Some((group, key)) = kind else {
             self.hint = Some(("Seek a kind of book first (F), or hold one.".into(), 2.0));
             return false;
@@ -141,7 +143,9 @@ impl Game {
                 .filter(|&&b| group.of(&self.lib, b) == key)
                 .map(|&b| self.loose.pose(b).0)
                 .collect();
-            let Some(top) = kin.iter().copied().max_by(|a, b| a.y.total_cmp(&b.y)) else { continue };
+            let Some(top) = kin.iter().copied().max_by(|a, b| a.y.total_cmp(&b.y)) else {
+                continue;
+            };
             let n = kin.len() as u32;
             match marks.iter_mut().find(|(p, _)| p.distance(top) < 3.0) {
                 Some(m) => {
@@ -196,14 +200,18 @@ impl Game {
     }
 
     /// The loose volumes of `series` Summon Series of level `lvl` reaches from where
-    /// the player stands, nearest first.
+    /// the player stands, nearest first: at I those in the room you are in (in the
+    /// atrium, on its floor of the atrium), at II on your floor, at III anywhere.
     pub(super) fn summonable(&self, series: u32, lvl: u32) -> Vec<u32> {
         let here = self.player.pos;
-        let floor = self.lib.world.level_at(here);
+        let (floor, room) = (self.lib.world.level_at(here), self.lib.room_at(here));
         let mut books: Vec<u32> = (self.lib.series_books[series as usize].iter().copied())
             .filter(|&b| self.loose.is_resting(b))
             .filter(|&b| match lvl {
-                1 => self.loose.pose(b).0.distance(here) <= SUMMON_NEAR,
+                1 => {
+                    self.lib.room_at(self.loose.pose(b).0) == room
+                        && (room.is_some() || self.loose.level_of(b) == floor)
+                }
                 2 => self.loose.level_of(b) == floor,
                 _ => true,
             })
@@ -266,7 +274,11 @@ impl Game {
         let hub = self.lib.hub;
         let books = self.charmed(lv, at, lvl);
         if books.is_empty() {
-            let msg = if self.at_hub(at) { "Those books are at the hub already." } else { "Nothing there to send." };
+            let msg = if self.at_hub(at) {
+                "Those books are at the hub already."
+            } else {
+                "Nothing there to send."
+            };
             self.hint = Some((msg.into(), 2.0));
             return false;
         }
@@ -347,7 +359,11 @@ impl Game {
             let p = a + (c - a).normalize_or_zero() * left;
             // Closer to the line near the end, so the heap gathers.
             let to_end = way.len() - 2 - seg;
-            let squeeze = if to_end == 0 { (c.distance(p) / 2.0).min(1.0) } else { 1.0 };
+            let squeeze = if to_end == 0 {
+                (c.distance(p) / 2.0).min(1.0)
+            } else {
+                1.0
+            };
             self.pos[b] = p + s.off * squeeze;
             self.rot[b] = rot;
             k += 1;
@@ -405,12 +421,20 @@ mod tests {
             }
         }
         assert!(g.streams.is_empty(), "{} books still on their way", g.streams.len());
-        assert!(deepest.0 <= RIBBON + 0.05, "a book {:.2} m inside something at {}", deepest.0, deepest.1);
+        assert!(
+            deepest.0 <= RIBBON + 0.05,
+            "a book {:.2} m inside something at {}",
+            deepest.0,
+            deepest.1
+        );
         let hub = g.lib.hub;
         for &b in &sent {
             let p = g.loose.pose(b).0;
             assert!(g.loose.is_resting(b) && g.loose.level_of(b) == 0, "book {b} at {p}");
-            assert!(Vec2::new(p.x - hub.x, p.z - hub.z).length() < HUB_R + 2.0, "book {b} at {p}");
+            assert!(
+                Vec2::new(p.x - hub.x, p.z - hub.z).length() < HUB_R + 2.0,
+                "book {b} at {p}"
+            );
         }
         assert_eq!(g.loose.heightfield_errors(), 0);
     }
@@ -434,7 +458,9 @@ mod tests {
                 .filter(|&b| g.lib.books[b as usize].series == s && g.loose.is_resting(b))
                 .collect()
         };
-        let series = (0..g.lib.series.len() as u32).find(|&s| loose_of(&g, s).len() >= 4).unwrap();
+        let series = (0..g.lib.series.len() as u32)
+            .find(|&s| loose_of(&g, s).len() >= 4)
+            .unwrap();
         let books = loose_of(&g, series);
         hold(&mut g, books[0]);
         assert!(g.summon(3, &mut audio));
@@ -460,7 +486,9 @@ mod tests {
         for &b in &books {
             hold(&mut g, b);
         }
-        let face = (g.lib.faces.iter()).find(|f| f.category == cat && f.case_idx == 1).unwrap();
+        let face = (g.lib.faces.iter())
+            .find(|f| f.category == cat && f.case_idx == 1)
+            .unwrap();
         g.player.pos = Vec3::new(face.center.x, 0.0, face.center.z) + face.normal * 1.5;
         let near: Vec<u32> = (books.iter().copied())
             .filter(|&b| g.lib.books[b as usize].slot_pos.distance(g.player.eye()) < rush_reach(1))
@@ -486,7 +514,9 @@ mod tests {
         let mut g = Game::new(Layout::Great);
         let mut audio = Audio::silent();
         g.upg[upg_index(Upg::Sift)] = 1;
-        let aimed = (0..g.lib.books.len() as u32).find(|&b| g.loose.is_resting(b) && g.loose.level_of(b) == 0).unwrap();
+        let aimed = (0..g.lib.books.len() as u32)
+            .find(|&b| g.loose.is_resting(b) && g.loose.level_of(b) == 0)
+            .unwrap();
         g.aim = Aim::Loose {
             book: aimed,
             point: g.loose.pose(aimed).0,
@@ -497,10 +527,17 @@ mod tests {
         let (group, key) = g.sought().unwrap();
         let eye = g.player.eye();
         let within: u32 = (0..g.lib.books.len() as u32)
-            .filter(|&b| g.loose.is_resting(b) && group.of(&g.lib, b) == key && g.loose.pose(b).0.distance(eye) < echo_reach(1) - 1.0)
+            .filter(|&b| {
+                g.loose.is_resting(b)
+                    && group.of(&g.lib, b) == key
+                    && g.loose.pose(b).0.distance(eye) < echo_reach(1) - 1.0
+            })
             .count() as u32;
         let marked: u32 = g.echo.iter().map(|m| m.1).sum();
-        assert!(!g.echo.is_empty() && marked >= within, "{marked} marked, {within} within reach");
+        assert!(
+            !g.echo.is_empty() && marked >= within,
+            "{marked} marked, {within} within reach"
+        );
         assert!(g.echo.iter().all(|m| m.0.distance(eye) < echo_reach(1) + 2.0));
     }
 }

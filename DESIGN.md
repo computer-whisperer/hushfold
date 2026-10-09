@@ -131,7 +131,7 @@ wing, so there is nothing for it to fix), Echo I–II (a ring sweeps out 30 m/s;
 heaps within 25 / 50 m holding the kind sought, or the active book's kind, are
 marked through the walls with how many lie there, marks within 3 m merged; 20 /
 30 s, recharge 60 / 45 s), Summon Series I–III (the active book's series' loose
-volumes within 15 m, on the floor, anywhere, nearest first, dissolve where they lie
+volumes in the room you are in (in the atrium, on its floor), on your floor, anywhere, nearest first, dissolve where they lie
 and fly to the arms; recharge 90 / 75 / 60 s), Shelving Rush I–II (for 10 / 15 s
 carried books within 6 / 8 m of their slots fly home at 30 a second; recharge 60
 / 45 s). Spells live in `game/spells.rs`.

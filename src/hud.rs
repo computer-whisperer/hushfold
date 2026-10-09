@@ -295,9 +295,12 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             if !marked.insert(info.series) {
                 continue;
             }
-            let Some(p) = project(&vp, info.slot_pos, screen) else { continue };
+            let Some(p) = project(&vp, info.slot_pos, screen) else {
+                continue;
+            };
             let other_floor = g.lib.world.level_at(info.slot_pos) != here;
-            let col = bright(g.lib.series[info.series as usize].color).gamma_multiply(if other_floor { 0.45 } else { 1.0 });
+            let col =
+                bright(g.lib.series[info.series as usize].color).gamma_multiply(if other_floor { 0.45 } else { 1.0 });
             let r = 6.0;
             let pts = vec![
                 p + Vec2::new(0.0, -r),
@@ -305,7 +308,11 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 p + Vec2::new(0.0, r),
                 p + Vec2::new(-r, 0.0),
             ];
-            painter.add(egui::Shape::convex_polygon(pts, col, Stroke::new(1.0_f32, Color32::from_black_alpha(170))));
+            painter.add(egui::Shape::convex_polygon(
+                pts,
+                col,
+                Stroke::new(1.0_f32, Color32::from_black_alpha(170)),
+            ));
         }
     }
 
@@ -324,7 +331,13 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             let col = col.gamma_multiply(if other_floor { 0.45 } else { 1.0 });
             painter.circle_stroke(q, 7.0, Stroke::new(2.0_f32, col));
             if n > 1 {
-                painter.text(q + Vec2::new(0.0, 9.0), Align2::CENTER_TOP, n.to_string(), serif(12.0), col);
+                painter.text(
+                    q + Vec2::new(0.0, 9.0),
+                    Align2::CENTER_TOP,
+                    n.to_string(),
+                    serif(12.0),
+                    col,
+                );
             }
         }
     }
@@ -566,7 +579,11 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                         panel_frame().show(ui, |ui| {
                             let ready = wait <= 0.0 || left > 0.0;
                             let name = format!("{}  {}", i + 1, upg_def(u).name);
-                            ui.label(RichText::new(name).font(serif(14.0)).color(if ready { INK } else { DIM }));
+                            ui.label(
+                                RichText::new(name)
+                                    .font(serif(14.0))
+                                    .color(if ready { INK } else { DIM }),
+                            );
                             let (rect, _) = ui.allocate_exact_size(Vec2::new(96.0, 4.0), egui::Sense::hover());
                             let (frac, col) = if left > 0.0 {
                                 (left / lasts, GOLD)

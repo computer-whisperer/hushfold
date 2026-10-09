@@ -10,8 +10,8 @@ pub use cheats::Cheat;
 use familiar::Familiar;
 pub use familiar::Role;
 mod spells;
-pub use spells::{ECHO_SPEED, SPELLS, spell_times};
 use spells::Stream;
+pub use spells::{ECHO_SPEED, SPELLS, spell_times};
 
 use crate::audio::{Audio, Sfx};
 use crate::catalog;
@@ -252,7 +252,7 @@ pub fn upg_def(u: Upg) -> UpgDef {
         ),
         Upg::Summon => (
             "Summon Series",
-            "Loose volumes of the active book's series fly to your arms: from nearby, then from the whole floor, then from anywhere.",
+            "Loose volumes of the active book's series fly to your arms: from the room you are in, then from the whole floor, then from anywhere.",
             Tier::Spells,
         ),
         Upg::Rush => (
@@ -285,11 +285,11 @@ pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
             Upg::Lens => &[93],
             Upg::Shelver => &[120, 220, 1100],
             Upg::Summon => &[121, 480],
-            Upg::Courier => &[160, 400],
+            Upg::Fine => &[160],
             Upg::Echo => &[170, 960],
             Upg::LongToss => &[190],
             Upg::Aura => &[191, 430, 1300],
-            Upg::Fine => &[240],
+            Upg::Courier => &[240, 400],
             Upg::Rush => &[260, 1200],
             Upg::SortSense => &[280, 1301],
             Upg::Homing => &[281, 1201],
@@ -308,7 +308,7 @@ pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
             Upg::Tidy => &[170],
             Upg::Bundle => &[230],
             Upg::Lens => &[231],
-            Upg::Wayfinding => &[260],
+            Upg::Fine => &[260],
             Upg::Shelver => &[290, 1100, 6200, 9000, 9101],
             Upg::Summon => &[360, 4200, 8901],
             Upg::Aura => &[490, 4101, 4600],
@@ -316,7 +316,7 @@ pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
             Upg::Gathering => &[820, 3100, 7805],
             Upg::LongToss => &[880, 8800],
             Upg::Broad => &[990],
-            Upg::Fine => &[1400],
+            Upg::Wayfinding => &[1400],
             Upg::Rush => &[1501, 7802],
             Upg::SortSense => &[1600, 5000],
             Upg::Homing => &[1800, 7804],
@@ -1226,7 +1226,11 @@ impl Game {
 
     /// Kindred Glow as drawn (see `Globals::glow`): Glimpse lights at full.
     fn glow(&self) -> [f32; 4] {
-        let lvl = if self.spell_on(Upg::Glimpse) { 3 } else { self.level(Upg::Glow) as usize };
+        let lvl = if self.spell_on(Upg::Glimpse) {
+            3
+        } else {
+            self.level(Upg::Glow) as usize
+        };
         let [reach, strength, glint] = GLOW_LEVELS[lvl];
         [reach, strength, glint, 0.0]
     }
@@ -1269,7 +1273,10 @@ impl Game {
     /// sought; aimed at no book, stop, or seek the active book's group.
     fn press_seek(&mut self, audio: &mut Audio) {
         if self.level(Upg::Sift) == 0 {
-            self.hint = Some(("Seeking is learned with Sifting Touch, in the Grimoire (Tab).".into(), 2.0));
+            self.hint = Some((
+                "Seeking is learned with Sifting Touch, in the Grimoire (Tab).".into(),
+                2.0,
+            ));
             return;
         }
         let sought = self.sought().map(|(_, key)| key);
@@ -1391,7 +1398,10 @@ impl Game {
         };
         if group.is_empty() {
             audio.play(Sfx::Nope, 0.3);
-            self.hint = Some(("You carry none of what you seek (F at nothing stops seeking).".into(), 2.5));
+            self.hint = Some((
+                "You carry none of what you seek (F at nothing stops seeking).".into(),
+                2.5,
+            ));
             self.toss_charge = 0.0;
             return;
         }
@@ -3465,7 +3475,6 @@ mod tests {
         assert!(g.spell_on(Upg::Glimpse));
     }
 
-
     /// A series tossed at its own shelf with Homing Toss slips into its slots where it
     /// lands near them; without it, nothing does.
     #[test]
@@ -3503,7 +3512,10 @@ mod tests {
             for _ in 0..240 {
                 g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
             }
-            let filed = books.iter().filter(|&&b| g.state[b as usize] == BookState::Shelved).count();
+            let filed = books
+                .iter()
+                .filter(|&&b| g.state[b as usize] == BookState::Shelved)
+                .count();
             if homing == 0 {
                 assert_eq!(filed, 0);
             } else {
@@ -3521,11 +3533,15 @@ mod tests {
         g.open_all_gates();
         // In a room on the ground floor, thrown level at its outer wall (x = 32) from
         // across one step's travel, so some throw reaches the wall mid-step.
-        let books: Vec<u32> = (0..g.lib.books.len() as u32).filter(|&b| g.loose.is_resting(b)).take(10).collect();
+        let books: Vec<u32> = (0..g.lib.books.len() as u32)
+            .filter(|&b| g.loose.is_resting(b))
+            .take(10)
+            .collect();
         g.loose.take(&books);
         for (k, &b) in books.iter().enumerate() {
             let from = Vec3::new(29.0 + k as f32 * 0.04, 1.5, 0.5 + k as f32 * 0.3);
-            g.loose.throw(b, from, Vec3::new(22.0, 0.0, 0.0), Quat::IDENTITY, Vec3::ZERO, 0.0);
+            g.loose
+                .throw(b, from, Vec3::new(22.0, 0.0, 0.0), Quat::IDENTITY, Vec3::ZERO, 0.0);
         }
         for _ in 0..200 {
             g.update(0.05, &Input::default(), &mut audio, false);
