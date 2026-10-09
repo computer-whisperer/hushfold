@@ -188,7 +188,9 @@ impl Running {
         }
         let k = |c| self.keys.contains(&c);
         let playing = self.playing();
-        if playing {
+        if self.script.is_some() {
+            // Scripted runs drive movement themselves (`walk`).
+        } else if playing {
             self.input.forward = (k(KeyCode::KeyW) as i32 - k(KeyCode::KeyS) as i32) as f32;
             self.input.strafe = (k(KeyCode::KeyD) as i32 - k(KeyCode::KeyA) as i32) as f32;
             self.input.sprint = k(KeyCode::ShiftLeft) || k(KeyCode::ShiftRight);

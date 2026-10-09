@@ -353,8 +353,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
                     );
                 }
                 if !g.east_unlocked {
-                    let need = (g.wing_total[0] as f32 * 0.6).ceil() as u32;
-                    let left = need.saturating_sub(g.wing_shelved[0]);
+                    let left = g.veil_books_left();
                     ui.label(
                         RichText::new(format!("{left} more to lift the veil"))
                             .font(serif(12.0))
@@ -476,13 +475,10 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
         });
     if let Some((h, t)) = &g.hint {
         let a = t.min(1.0);
-        painter.text(
-            c + Vec2::new(0.0, 60.0),
-            Align2::CENTER_TOP,
-            h,
-            serif(15.0),
-            DIM.gamma_multiply(a),
-        );
+        let galley = painter.layout_no_wrap(h.clone(), serif(15.0), INK.gamma_multiply(a));
+        let r = Rect::from_center_size(c + Vec2::new(0.0, 70.0), galley.size() + Vec2::new(14.0, 6.0));
+        painter.rect_filled(r, 4.0, Color32::from_rgba_unmultiplied(10, 8, 6, (150.0 * a) as u8));
+        painter.galley(r.min + Vec2::new(7.0, 3.0), galley, INK);
     }
 
     if hud.show_stats {

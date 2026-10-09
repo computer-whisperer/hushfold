@@ -450,6 +450,12 @@ impl Game {
         });
     }
 
+    /// West Wing books still to shelve before the veil lifts (at 60%).
+    pub fn veil_books_left(&self) -> u32 {
+        let need = (self.wing_total[0] as f32 * 0.6).ceil() as u32;
+        need.saturating_sub(self.wing_shelved[0])
+    }
+
     pub fn wing_unlocked(&self, wing: usize) -> bool {
         wing == 0 || self.east_unlocked
     }
@@ -590,12 +596,21 @@ impl Game {
         }
         np.x = np.x.clamp(-HALL_X + PLAYER_R + 0.1, HALL_X - PLAYER_R - 0.1);
         np.z = np.z.clamp(-HALL_Z + PLAYER_R + 0.1, HALL_Z - PLAYER_R - 0.1);
+        let veil_x = VEIL_X - PLAYER_R - 0.2;
+        let at_veil = !self.east_unlocked && np.x > veil_x && wish.x > 0.3;
         if !self.east_unlocked {
-            np.x = np.x.min(VEIL_X - PLAYER_R - 0.2);
+            np.x = np.x.min(veil_x);
         }
         let moved = Vec2::new(np.x - p.pos.x, np.z - p.pos.z).length();
         p.bob += moved * 1.4;
         p.pos = np;
+        if at_veil && self.hint.is_none() {
+            let left = self.veil_books_left();
+            self.hint = Some((
+                format!("The veil holds. Shelve {left} more West Wing books to lift it."),
+                2.5,
+            ));
+        }
     }
 
     /// True if nothing that blocks rays lies between `a` and `b`.
@@ -902,7 +917,7 @@ impl Game {
             let center = self.lib.category_center[cat];
             self.burst(center + Vec3::Y * 1.5, 120, [c[0] * 4.0, c[1] * 4.0, c[2] * 4.0], 2.0);
         }
-        if !self.east_unlocked && self.wing_shelved[0] as f32 >= self.wing_total[0] as f32 * 0.6 {
+        if !self.east_unlocked && self.veil_books_left() == 0 {
             self.east_unlocked = true;
             audio.play(Sfx::Fanfare, 0.8);
             self.toast("The veil over the East Wing lifts…".into(), [0.75, 0.6, 1.0], true);
