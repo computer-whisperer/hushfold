@@ -6,6 +6,7 @@ use crate::gfx::{Globals, GpuLight, Inst, MAX_LIGHTS, kind};
 use crate::library::*;
 use crate::loose::{Loose, Rest};
 use crate::nav::{Nav, Route};
+use crate::scene::Scene;
 use glam::{Mat4, Quat, Vec2, Vec3};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -344,6 +345,10 @@ pub struct Game {
     pub dyn_insts: Vec<Inst>,
     pub trans_insts: Vec<Inst>,
     pub held_insts: Vec<Inst>,
+    /// Books lying still and slot ghosts, by chunk.
+    pub scene: Scene,
+    /// Gate states the scene's ghosts were drawn with.
+    scene_gates: Vec<bool>,
     pub loose: Loose,
     nav: Nav,
     /// Sort Sense: the way to the active book's slot.
@@ -353,6 +358,15 @@ pub struct Game {
     pub dirty_save: bool,
     /// False in scripted runs so they never touch the player's save.
     pub persist: bool,
+}
+
+/// True (and `seen` updated) if the gates have changed since `seen`.
+fn scene_gates_changed(seen: &mut Vec<bool>, now: &[bool]) -> bool {
+    if seen.as_slice() == now {
+        return false;
+    }
+    *seen = now.to_vec();
+    true
 }
 
 /// A highlight colour with the series' hue at a fixed brightness: the colour is
@@ -436,9 +450,15 @@ impl Game {
             lantern_glow: vec![0.0; lib.catalog.categories.len()],
             rng,
             hint: None,
-            dyn_insts: Vec::with_capacity(n + 2048),
-            trans_insts: Vec::with_capacity(n + 64),
+            dyn_insts: Vec::with_capacity(4096),
+            trans_insts: Vec::with_capacity(256),
             held_insts: Vec::new(),
+            scene: Scene::new(
+                (lib.books.iter().enumerate()).map(|(b, i)| (b as u32, i.slot_pos)),
+                |b| lib.books[b as usize].series,
+                lib.series.len(),
+            ),
+            scene_gates: vec![false; lib.gates.len()],
             loose,
             nav: Nav::new(&lib),
             sense_route: None,
@@ -1639,62 +1659,49 @@ impl Game {
         held_insts.clear();
 
         let in_flight: std::collections::HashSet<u32> = self.flights.iter().map(|f| f.book).collect();
-        let held_series: std::collections::HashSet<u32> =
-            self.held.iter().map(|&b| self.lib.books[b as usize].series).collect();
-        let active = self.active_book();
-        let sense = self.level(Upg::SortSense) > 0;
-        let hover_series = match self.aim {
-            Aim::Shelf { run: Some(r), .. } => Some(r.series),
-            _ => None,
-        };
-
+        let mut scene = std::mem::take(&mut self.scene);
+        // Books lying still are drawn from their chunks; books on the move each frame.
         for b in 0..self.lib.books.len() {
-            let st = self.state[b];
-            let info = &self.lib.books[b];
-            match st {
-                BookState::Loose | BookState::Filing | BookState::Shelved | BookState::Carried(_) => {
-                    dyn_insts.push(self.book_inst(b, self.pos[b], self.rot[b], 0));
-                }
-                BookState::Held => {
-                    if in_flight.contains(&(b as u32)) {
-                        dyn_insts.push(self.book_inst(b, self.pos[b], self.rot[b], 0));
-                    }
-                }
+            let (st, bu) = (self.state[b], b as u32);
+            let still = match st {
+                BookState::Shelved => Some(self.lib.books[b].slot_pos),
+                BookState::Loose if self.loose.settled(bu) => Some(self.loose.pose(bu).0),
+                _ => None,
+            };
+            if scene.place(bu, st, self.loose.version(bu), still) {
+                scene.ghost_changed(self.lib.books[b].slot_pos);
             }
-            // Ghost slot for anything not yet home.
-            if st != BookState::Shelved {
-                if !self.dept_open(self.lib.dept_of(self.lib.series[info.series as usize].category)) {
-                    continue;
-                }
-                let c = self.lib.series[info.series as usize].color;
-                let hover = hover_series == Some(info.series);
-                // Ghost levels (see fs_trans): waiting, carried series, active slot.
-                let level = if sense && active == Some(b as u32) {
-                    2
-                } else if held_series.contains(&info.series) {
-                    1
-                } else {
-                    0
-                };
-                let (col, mut a) = if level == 0 {
-                    let boost = 1.0 + 0.6 / (c[0] + c[1] + c[2] + 0.2);
-                    (c.map(|x| x * boost), if hover { 0.135 } else { 0.035 })
-                } else {
-                    (signal_color(c), if hover { 1.3 } else { 1.0 })
-                };
-                if st == BookState::Filing {
-                    a *= 0.5;
-                }
-                trans.push(Inst::new(
-                    info.slot_pos,
-                    info.slot_rot,
-                    info.size * 0.995,
-                    kind::GHOST,
-                    [col[0], col[1], col[2], a],
-                    level,
-                ));
+            let moving = match st {
+                BookState::Loose => still.is_none(),
+                BookState::Held => in_flight.contains(&bu),
+                BookState::Filing | BookState::Carried(_) => true,
+                BookState::Shelved => false,
+            };
+            if moving {
+                dyn_insts.push(self.book_inst(b, self.pos[b], self.rot[b], 0));
             }
         }
+        // Ghosts: the series you carry glow, the one you aim at brightens, and with
+        // Sort Sense the active book's slot pulses.
+        let mut lit = std::collections::HashMap::new();
+        for &b in &self.held {
+            lit.insert(self.lib.books[b as usize].series, (1, false));
+        }
+        if let Aim::Shelf { run: Some(r), .. } = self.aim {
+            lit.entry(r.series).or_insert((0, false)).1 = true;
+        }
+        scene.highlight(lit);
+        let active = self.active_book().filter(|_| self.level(Upg::SortSense) > 0);
+        scene.set_active(active.map(|b| (b, self.lib.books[b as usize].slot_pos)));
+        if scene_gates_changed(&mut self.scene_gates, &self.gate_open) {
+            scene.redraw_all();
+        }
+        for c in 0..scene.chunks.len() {
+            if scene.chunks[c].rebuild {
+                self.rebuild_chunk(&mut scene, c);
+            }
+        }
+        self.scene = scene;
 
         // Held stack in view.
         let (window, layout) = self.held_layout();
@@ -1862,6 +1869,57 @@ impl Game {
         self.dyn_insts = dyn_insts;
         self.trans_insts = trans;
         self.held_insts = held_insts;
+    }
+
+    /// Rebuild chunk `c`'s instances: its books lying still, and the ghosts of its
+    /// empty slots in open departments.
+    fn rebuild_chunk(&self, scene: &mut Scene, c: usize) {
+        let mut opaque = std::mem::take(&mut scene.chunks[c].opaque);
+        let mut ghosts = std::mem::take(&mut scene.chunks[c].trans);
+        opaque.clear();
+        ghosts.clear();
+        for &b in scene.books(c) {
+            let (p, q) = match self.state[b as usize] {
+                BookState::Shelved => (self.lib.books[b as usize].slot_pos, self.lib.books[b as usize].slot_rot),
+                _ => self.loose.pose(b),
+            };
+            opaque.push(self.book_inst(b as usize, p, q, 0));
+        }
+        let active = scene.active();
+        for &b in &scene.chunks[c].ghosts {
+            let st = self.state[b as usize];
+            let info = &self.lib.books[b as usize];
+            let series = &self.lib.series[info.series as usize];
+            if st == BookState::Shelved || !self.dept_open(self.lib.dept_of(series.category)) {
+                continue;
+            }
+            let (lit, hover) = scene.lit(info.series);
+            // Ghost levels (see fs_trans): waiting, carried series, active slot.
+            let level = if active == Some(b) { 2 } else { lit };
+            let c = series.color;
+            let (col, mut a) = if level == 0 {
+                let boost = 1.0 + 0.6 / (c[0] + c[1] + c[2] + 0.2);
+                (c.map(|x| x * boost), if hover { 0.135 } else { 0.035 })
+            } else {
+                (signal_color(c), if hover { 1.3 } else { 1.0 })
+            };
+            if st == BookState::Filing {
+                a *= 0.5;
+            }
+            ghosts.push(Inst::new(
+                info.slot_pos,
+                info.slot_rot,
+                info.size * 0.995,
+                kind::GHOST,
+                [col[0], col[1], col[2], a],
+                level,
+            ));
+        }
+        let chunk = &mut scene.chunks[c];
+        chunk.opaque = opaque;
+        chunk.trans = ghosts;
+        chunk.rebuild = false;
+        chunk.upload = true;
     }
 
     // -------------------------------------------------------------- save / load
@@ -2542,6 +2600,65 @@ mod tests {
             );
             assert!(!r.direct && r.waypoint.y < 0.5, "{r:?}");
         }
+    }
+
+    /// Chunks hold exactly the books lying still (in piles or on shelves), each where
+    /// it lies, through gathering, tossing, landing and filing.
+    #[test]
+    fn chunks_hold_the_still_books() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = crate::audio::Audio::silent();
+        let check = |g: &mut Game| {
+            g.build_instances();
+            let mut seen = vec![0u32; g.lib.books.len()];
+            for c in 0..g.scene.chunks.len() {
+                let ch = &g.scene.chunks[c];
+                assert!(!ch.rebuild);
+                assert_eq!(ch.opaque.len(), g.scene.books(c).len());
+                for &b in g.scene.books(c) {
+                    seen[b as usize] += 1;
+                    let at = match g.state[b as usize] {
+                        BookState::Shelved => g.lib.books[b as usize].slot_pos,
+                        _ => g.loose.pose(b).0,
+                    };
+                    assert!(at.cmpge(ch.min).all() && at.cmple(ch.max).all(), "book {b} outside its chunk");
+                }
+            }
+            for b in 0..g.lib.books.len() as u32 {
+                let still = match g.state[b as usize] {
+                    BookState::Shelved => true,
+                    BookState::Loose => g.loose.settled(b),
+                    _ => false,
+                };
+                assert_eq!(seen[b as usize], still as u32, "book {b} {:?}", g.state[b as usize]);
+            }
+        };
+        check(&mut g);
+        g.upg[upg_index(Upg::Arms)] = 3;
+        g.script_face_pile();
+        for _ in 0..3 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
+            g.interact(&mut audio, true);
+        }
+        check(&mut g);
+        assert!(g.held.len() > 10, "gathered {}", g.held.len());
+        // Toss some, file one, and check mid-flight and after everything has landed.
+        g.toss_charge = 0.6;
+        g.toss(&mut audio);
+        if let Some(b) = g.active_book() {
+            g.leave_hand(&[b]);
+            g.held.retain(|&h| h != b);
+            g.state[b as usize] = BookState::Filing;
+            g.start_flight(b, Dest::Shelf, 0.42, 0.0);
+        }
+        for k in 0..240 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
+            if k % 20 == 0 {
+                check(&mut g);
+            }
+        }
+        check(&mut g);
+        assert!(g.total_shelved() >= 1);
     }
 
     #[test]

@@ -1,8 +1,9 @@
 # Hushfold — design notes
 
 A first-person "tidy the magical library" game. Rust, wgpu 29 + winit 0.30 + egui 0.34.
-Performance is a design pillar: the whole book population (~11.7k) is one instanced
-draw, re-uploaded each frame; nothing scales per-object on the CPU beyond a copy.
+Performance is a design pillar: books lying still are kept in chunks of space on
+the GPU and re-uploaded only when something in a chunk changes; per frame the CPU
+only compares each book's state with what its chunk was built from.
 
 ## Fantasy
 A moonlit, dust-mote library. Two wings of freestanding double-sided bookcases
@@ -98,8 +99,18 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
 ## Rendering
 Box-only geometry, per-instance `kind` selects procedural material in WGSL
 (wood, book, floor, stone, rug, emissive, plaque). Forward lighting with up to
-64 point lights, hemisphere ambient, fog. 4x MSAA HDR -> bloom -> ACES tonemap
+64 point lights (the player's candle, familiars, then the library's lights
+nearest the eye), hemisphere ambient, fog. 4x MSAA HDR -> bloom -> ACES tonemap
 -> egui. Held books are drawn in a second pass with cleared depth.
+
+`scene.rs` keeps books lying still (in piles or shelved) and the ghosts of empty
+slots in 8 × 6 × 8 m chunks with their own GPU buffers. Each frame every book's
+state and Loose's draw version (bumped when a book comes to rest, leaves its rest,
+or starts or ends a fall) are compared with what its chunk was built from; only
+changed chunks are rebuilt and uploaded. Books on the move (flying, falling,
+filing, carried, flying to the hand) are drawn per frame. Chunks outside the view
+frustum are skipped; the rest are drawn after the walls and floors, nearest
+first. F3 shows GPU time from timestamp queries where the adapter has them.
 
 ## Persistence
 Deterministic world from a seed; save = seed + shelved/held/in-flight ids +

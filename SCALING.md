@@ -140,16 +140,25 @@ the implementation's own choices, revisable at the phase boundary.
   is settled.
 
 ### Rendering
-- Chunks: static geometry, resting and shelved books, and ghosts live in
-  per-chunk (level, 4 m tile) persistent buffers, rebuilt only when something in
-  them changes (Loose and Game report which books moved). Moving things (flying,
-  falling, held, carried, familiars, particles) stay in the per-frame buffer.
-- Culling: chunks outside the frustum are skipped. No occlusion culling yet (the
-  kill-test says the GPU has room).
-- Lights: every light in a storage buffer, refreshed each frame; a static world
-  grid (per level, 4 m cells) lists the lights that reach each cell; the shader
-  loops only those, plus the player's candle and familiars. Timestamp queries
-  measure GPU time.
+- Chunks: resting and shelved books and ghosts live in persistent per-chunk
+  buffers (8 × 6 × 8 m boxes of space, not per level and 4 m tile: boxes need no
+  notion of level), rebuilt only when something in them changes. Loose bumps a
+  per-book draw version; Game compares state and version per book each frame
+  (~0.1 ms for 118k). Static geometry stays one buffer (a few thousand boxes).
+  Moving things (flying, falling, held, carried, familiars, particles) stay in
+  the per-frame buffer.
+- Culling: chunks outside the frustum are skipped; walls and floors are drawn
+  first so they hide rooms of books behind them. No occlusion culling (the GPU
+  has room).
+- Lights: **the 64 lights nearest the eye** (by distance minus reach), after the
+  player's candle and familiars. Chose because every room lit correctly in
+  screenshots with no shader change; the planned per-cell light grid (storage
+  buffers, a list per 4 m cell) is rejected for now and stays the fallback if
+  lights visibly pop at the edge of the 64.
+- Measured 2026-10-09, same session, alternating builds (unpaced, RX 6900 XT):
+  per-frame rebuild 128 fps in the Great Library (CPU 2.5 ms), chunks 185 fps
+  (CPU 0.75 ms); the Hall 315 → 360 fps. GPU time is read from timestamp
+  queries (F3); the old wait-for-the-GPU timer swung with the GPU's clocks.
 
 ### The Great Library (first cut)
 - Three levels 6 m apart. A 28 m square atrium whose 18 m well is open from the

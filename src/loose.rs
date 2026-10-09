@@ -388,6 +388,11 @@ pub struct Loose {
     gate_boxes: Vec<(usize, Vec3, Vec3)>,
     flying: Vec<Flying>,
     easing: Vec<Ease>,
+    /// In `easing`.
+    eased: Vec<bool>,
+    /// Bumped whenever how a book is drawn may have changed (it came to rest, left
+    /// its rest, or began or ended a fall), so the renderer can redraw just those.
+    version: Vec<u32>,
     mark: Vec<u32>,
     stamp: u32,
 }
@@ -415,6 +420,8 @@ impl Loose {
             gate_boxes: lib.gates.iter().map(|g| (g.level, g.min, g.max)).collect(),
             flying: Vec::new(),
             easing: Vec::new(),
+            eased: vec![false; n],
+            version: vec![0; n],
             mark: vec![0; n],
             stamp: 0,
         };
@@ -520,9 +527,38 @@ impl Loose {
         &self.grids[self.level[b as usize]]
     }
 
+    /// Changes whenever how book `b` is drawn may have.
+    pub fn version(&self, b: u32) -> u32 {
+        self.version[b as usize]
+    }
+
+    /// Resting and drawn where it rests (not partway through a fall).
+    pub fn settled(&self, b: u32) -> bool {
+        self.resting[b as usize] && !self.eased[b as usize]
+    }
+
+    fn touch(&mut self, b: u32) {
+        let v = &mut self.version[b as usize];
+        *v = v.wrapping_add(1);
+    }
+
+    fn start_ease(&mut self, e: Ease) {
+        self.eased[e.book as usize] = true;
+        self.touch(e.book);
+        self.easing.push(e);
+    }
+
+    fn stop_ease(&mut self, b: u32) -> Option<Ease> {
+        let i = self.easing.iter().position(|e| e.book == b)?;
+        self.eased[b as usize] = false;
+        self.touch(b);
+        Some(self.easing.swap_remove(i))
+    }
+
     /// Add a book at its `rest` (on its `level`) to the index and the heightfield.
     fn index(&mut self, b: u32) {
         let bi = b as usize;
+        self.touch(b);
         self.resting[bi] = true;
         self.pose[bi] = self.rest[bi].pose(self.size[bi]);
         let (mn, mx) = self.footprint(b);
@@ -539,6 +575,7 @@ impl Loose {
         if !self.resting[b as usize] {
             return;
         }
+        self.touch(b);
         self.resting[b as usize] = false;
         let (mn, mx) = self.footprint(b);
         let g = &mut self.grids[self.level[b as usize]];
@@ -552,7 +589,7 @@ impl Loose {
     /// A book leaves the piles for good (taken or forgotten): stop drawing its fall.
     fn release(&mut self, b: u32) {
         self.unindex(b);
-        self.easing.retain(|e| e.book != b);
+        self.stop_ease(b);
     }
 
     /// Raise the heightfield to a book's top, on the cells it covers (only those in the
@@ -870,8 +907,7 @@ impl Loose {
     /// Where a book is drawn now: its rest, or partway through a fall.
     fn drawn(&mut self, b: u32) -> (Vec3, Quat) {
         let mut at = self.pose[b as usize];
-        if let Some(i) = self.easing.iter().position(|e| e.book == b) {
-            let e = self.easing.swap_remove(i);
+        if let Some(e) = self.stop_ease(b) {
             let k = e.t.min(1.0);
             at = (e.from_pos.lerp(at.0, k * k), e.from_rot.slerp(at.1, k));
         }
@@ -908,7 +944,7 @@ impl Loose {
             // Falls take the time a short drop would.
             let fall = (old.c.y - self.rest[bi].c.y).max(0.02);
             let dur = (2.0 * fall / GRAVITY).sqrt().clamp(0.08, 0.5);
-            self.easing.push(Ease {
+            self.start_ease(Ease {
                 book: b,
                 from_pos: from.0,
                 from_rot: from.1,
@@ -1272,15 +1308,21 @@ impl Loose {
             });
         }
 
-        self.easing.retain_mut(|e| {
+        let mut done = Vec::new();
+        for e in &mut self.easing {
             e.t += dt / e.dur;
             let b = e.book as usize;
             let (to_pos, to_rot) = self.pose[b];
             let k = e.t.min(1.0);
             pos[b] = e.from_pos.lerp(to_pos, k * k);
             rot[b] = e.from_rot.slerp(to_rot, k);
-            e.t < 1.0
-        });
+            if e.t >= 1.0 {
+                done.push(e.book);
+            }
+        }
+        for b in done {
+            self.stop_ease(b);
+        }
         landings
     }
 
@@ -1307,7 +1349,7 @@ impl Loose {
             Ok(r) => {
                 self.rest[bi] = r;
                 self.level[bi] = lv;
-                self.easing.push(Ease {
+                self.start_ease(Ease {
                     book: b,
                     from_pos: p,
                     from_rot: rot,

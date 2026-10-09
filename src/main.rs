@@ -10,6 +10,7 @@ mod library;
 mod loose;
 mod nav;
 mod platform;
+mod scene;
 mod settings;
 
 use audio::Audio;
@@ -112,6 +113,7 @@ impl Running {
             if loaded { " (save loaded)" } else { "" }
         );
         self.renderer.set_static(&self.game.lib.static_insts);
+        self.renderer.clear_chunks();
         self.apply_settings();
         self.hud.confirm_restart = false;
         self.hud.menu_open = false;
@@ -210,14 +212,16 @@ impl Running {
     fn frame(&mut self) {
         let now = Instant::now();
         let frame_start = now;
-        // Scripted runs step a fixed 60 Hz so `wait N` means N/60 s of game time.
+        // Scripted runs step a fixed 60 Hz so `wait N` means N/60 s of game time; the
+        // frame rate shown is real either way.
+        let real = (now - self.last).as_secs_f32();
         let dt = if self.script.is_some() {
             1.0 / 60.0
         } else {
-            (now - self.last).as_secs_f32().min(0.05)
+            real.min(0.05)
         };
         self.last = now;
-        self.fps_acc.0 += dt;
+        self.fps_acc.0 += real;
         self.fps_acc.1 += 1;
         if self.fps_acc.0 >= 0.5 {
             self.hud.fps = self.fps_acc.1 as f32 / self.fps_acc.0;
@@ -289,6 +293,7 @@ impl Running {
         let prims = self.egui_ctx.tessellate(out.shapes, out.pixels_per_point);
 
         let globals = self.game.globals(aspect);
+        self.renderer.sync_chunks(&mut self.game.scene.chunks);
         let cpu_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
         let render_start = Instant::now();
         self.renderer.sync_gpu = self.hud.show_stats;
@@ -390,12 +395,15 @@ impl Running {
                     return;
                 }
                 Some("print") => eprintln!(
-                    "script: fps {:.0} cpu {:.2}ms render {:.2}ms (acquire {:.2} gpu {:.2}) | shelved {} held {} lumens {} aim {:?} pos {:?} toss lands {:?}",
+                    "script: fps {:.0} cpu {:.2}ms render {:.2}ms (acquire {:.2} gpu {:.2} scene {:.2} chunks {} up {}) | shelved {} held {} lumens {} aim {:?} pos {:?} toss lands {:?}",
                     self.hud.fps,
                     self.hud.cpu_ms,
                     self.hud.render_ms,
                     self.renderer.acquire_ms,
                     self.renderer.gpu_ms,
+                    self.renderer.gpu_scene_ms,
+                    self.renderer.drawn_chunks,
+                    self.renderer.uploaded_chunks,
                     self.game.total_shelved(),
                     self.game.held.len(),
                     self.game.lumens,

@@ -1,7 +1,7 @@
 //! wgpu renderer: one instanced box pipeline (opaque + translucent), bloom, tonemap, egui.
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3, Vec4};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
@@ -165,6 +165,36 @@ impl GrowBuf {
     }
 }
 
+/// GPU timestamps around the scene pass and the whole frame (when the adapter has them).
+struct Timer {
+    set: wgpu::QuerySet,
+    resolve: wgpu::Buffer,
+    read: wgpu::Buffer,
+    period: f32,
+}
+
+/// A scene chunk's instances on the GPU, and its bounds for culling.
+struct ChunkGpu {
+    opaque: GrowBuf,
+    trans: GrowBuf,
+    min: Vec3,
+    max: Vec3,
+}
+
+/// The planes of a view frustum (inside where `dot(xyz, p) + w >= 0`).
+fn frustum(view_proj: Mat4) -> [Vec4; 6] {
+    let r = |i| view_proj.row(i);
+    [r(3) + r(0), r(3) - r(0), r(3) + r(1), r(3) - r(1), r(2), r(3) - r(2)]
+}
+
+fn box_visible(planes: &[Vec4; 6], min: Vec3, max: Vec3) -> bool {
+    planes.iter().all(|p| {
+        // The corner furthest along the plane's normal.
+        let far = Vec3::select(p.truncate().cmpge(Vec3::ZERO), max, min);
+        p.truncate().dot(far) + p.w >= 0.0
+    })
+}
+
 struct Targets {
     msaa_color: wgpu::TextureView,
     depth: wgpu::TextureView,
@@ -199,15 +229,23 @@ pub struct Renderer {
     dyn_buf: GrowBuf,
     trans_buf: GrowBuf,
     held_buf: GrowBuf,
+    chunks: Vec<ChunkGpu>,
+    timer: Option<Timer>,
     targets: Targets,
     pub egui: egui_wgpu::Renderer,
     /// When set, the next frame is also written to this PNG path.
     pub capture: Option<std::path::PathBuf>,
     can_capture: bool,
-    /// Diagnostics: time blocked acquiring the swapchain image, and GPU time when `sync_gpu`.
+    /// Diagnostics: time blocked acquiring the swapchain image, and when `sync_gpu`, GPU
+    /// time for the frame and for its scene pass (from timestamps where the adapter
+    /// has them, else the wait for the frame to finish).
     pub acquire_ms: f32,
     pub gpu_ms: f32,
+    pub gpu_scene_ms: f32,
     pub sync_gpu: bool,
+    /// Scene chunks drawn, and uploaded, last frame.
+    pub drawn_chunks: usize,
+    pub uploaded_chunks: usize,
 }
 
 pub struct FrameInput<'a> {
@@ -239,7 +277,7 @@ impl Renderer {
         eprintln!("hushfold: using {:?}", adapter.get_info().name);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("hushfold"),
-            required_features: wgpu::Features::empty(),
+            required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
             required_limits: wgpu::Limits::default(),
             ..Default::default()
         }))
@@ -501,6 +539,27 @@ impl Renderer {
         });
 
         let targets = Self::make_targets(&device, &config, &chain_layout, &tonemap_layout, &sampler, &post_buf);
+        let timer = device.features().contains(wgpu::Features::TIMESTAMP_QUERY).then(|| {
+            let buf = |label, usage| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: 3 * 8,
+                    usage,
+                    mapped_at_creation: false,
+                })
+            };
+            use wgpu::BufferUsages as U;
+            Timer {
+                set: device.create_query_set(&wgpu::QuerySetDescriptor {
+                    label: Some("timestamps"),
+                    ty: wgpu::QueryType::Timestamp,
+                    count: 3,
+                }),
+                resolve: buf("timestamps", U::QUERY_RESOLVE | U::COPY_SRC),
+                read: buf("timestamps read", U::MAP_READ | U::COPY_DST),
+                period: queue.get_timestamp_period(),
+            }
+        });
         let egui = egui_wgpu::Renderer::new(
             &device,
             format,
@@ -515,6 +574,8 @@ impl Renderer {
             dyn_buf: GrowBuf::new(&device, "dynamic", 16384),
             trans_buf: GrowBuf::new(&device, "trans", 16384),
             held_buf: GrowBuf::new(&device, "held", 256),
+            chunks: Vec::new(),
+            timer,
             window,
             surface,
             device,
@@ -540,7 +601,10 @@ impl Renderer {
             can_capture,
             acquire_ms: 0.0,
             gpu_ms: 0.0,
+            gpu_scene_ms: 0.0,
             sync_gpu: false,
+            drawn_chunks: 0,
+            uploaded_chunks: 0,
         }
     }
 
@@ -696,6 +760,34 @@ impl Renderer {
         self.static_buf.upload(&self.device, &self.queue, insts);
     }
 
+    /// Upload the scene chunks that have changed (and forget any beyond them).
+    pub fn sync_chunks(&mut self, chunks: &mut [crate::scene::Chunk]) {
+        self.chunks.truncate(chunks.len());
+        while self.chunks.len() < chunks.len() {
+            self.chunks.push(ChunkGpu {
+                opaque: GrowBuf::new(&self.device, "chunk", 64),
+                trans: GrowBuf::new(&self.device, "chunk ghosts", 64),
+                min: Vec3::ZERO,
+                max: Vec3::ZERO,
+            });
+        }
+        self.uploaded_chunks = 0;
+        for (g, c) in self.chunks.iter_mut().zip(chunks) {
+            if c.upload {
+                self.uploaded_chunks += 1;
+                g.opaque.upload(&self.device, &self.queue, &c.opaque);
+                g.trans.upload(&self.device, &self.queue, &c.trans);
+                (g.min, g.max) = (c.min, c.max);
+                c.upload = false;
+            }
+        }
+    }
+
+    /// Drop every chunk (a different library is coming).
+    pub fn clear_chunks(&mut self) {
+        self.chunks.clear();
+    }
+
     pub fn render(&mut self, f: FrameInput) {
         let t_acquire = std::time::Instant::now();
         let frame = match self.surface.get_current_texture() {
@@ -716,8 +808,26 @@ impl Renderer {
         self.trans_buf.upload(&self.device, &self.queue, f.trans);
         self.held_buf.upload(&self.device, &self.queue, f.held);
 
+        // Chunks in view, nearest first (so near books hide far ones early).
+        let planes = frustum(Mat4::from_cols_array_2d(&f.globals.view_proj));
+        let eye = Vec3::from_slice(&f.globals.cam_pos[..3]);
+        let mut visible: Vec<(f32, usize)> = (self.chunks.iter().enumerate())
+            .filter(|(_, c)| (c.opaque.len > 0 || c.trans.len > 0) && box_visible(&planes, c.min, c.max))
+            .map(|(i, c)| (((c.min + c.max) * 0.5).distance_squared(eye), i))
+            .collect();
+        visible.sort_by(|a, b| a.0.total_cmp(&b.0));
+        self.drawn_chunks = visible.len();
+
         let mut enc = self.device.create_command_encoder(&Default::default());
         let t = &self.targets;
+        let timer = self.timer.as_ref().filter(|_| self.sync_gpu);
+        let stamp = |begin, end| {
+            timer.map(|tm| wgpu::RenderPassTimestampWrites {
+                query_set: &tm.set,
+                beginning_of_pass_write_index: begin,
+                end_of_pass_write_index: end,
+            })
+        };
         {
             let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),
@@ -743,7 +853,7 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: stamp(Some(0), Some(1)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -751,16 +861,21 @@ impl Renderer {
             rp.set_vertex_buffer(0, self.box_vb.slice(..));
             rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
             rp.set_pipeline(&self.scene_pipe);
-            for b in [&self.static_buf, &self.dyn_buf] {
+            // Walls and floors first: they hide whole rooms of books behind them.
+            let opaque = visible.iter().map(|&(_, i)| &self.chunks[i].opaque);
+            for b in std::iter::once(&self.static_buf).chain(opaque).chain([&self.dyn_buf]) {
                 if b.len > 0 {
                     rp.set_vertex_buffer(1, b.buf.slice(..));
                     rp.draw_indexed(0..36, 0, 0..b.len);
                 }
             }
-            if self.trans_buf.len > 0 {
-                rp.set_pipeline(&self.trans_pipe);
-                rp.set_vertex_buffer(1, self.trans_buf.buf.slice(..));
-                rp.draw_indexed(0..36, 0, 0..self.trans_buf.len);
+            rp.set_pipeline(&self.trans_pipe);
+            let ghosts = visible.iter().rev().map(|&(_, i)| &self.chunks[i].trans);
+            for b in ghosts.chain([&self.trans_buf]) {
+                if b.len > 0 {
+                    rp.set_vertex_buffer(1, b.buf.slice(..));
+                    rp.draw_indexed(0..36, 0, 0..b.len);
+                }
             }
         }
         {
@@ -867,7 +982,7 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: stamp(None, Some(2)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -905,15 +1020,32 @@ impl Renderer {
             );
             (buf, row)
         });
+        if let Some(tm) = timer {
+            enc.resolve_query_set(&tm.set, 0..3, &tm.resolve, 0);
+            enc.copy_buffer_to_buffer(&tm.resolve, 0, &tm.read, 0, 3 * 8);
+        }
         let t_gpu = std::time::Instant::now();
         self.queue
             .submit(extra.into_iter().chain(std::iter::once(enc.finish())));
         if self.sync_gpu {
+            if let Some(tm) = &self.timer {
+                tm.read.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+            }
             let _ = self.device.poll(wgpu::PollType::Wait {
                 submission_index: None,
                 timeout: None,
             });
             self.gpu_ms = t_gpu.elapsed().as_secs_f32() * 1000.0;
+            if let Some(tm) = &self.timer {
+                let ticks: Vec<u64> = {
+                    let data = tm.read.slice(..).get_mapped_range();
+                    bytemuck::cast_slice::<u8, u64>(&data).to_vec()
+                };
+                tm.read.unmap();
+                let ms = |a: u64, b: u64| b.saturating_sub(a) as f32 * tm.period / 1e6;
+                self.gpu_ms = ms(ticks[0], ticks[2]);
+                self.gpu_scene_ms = ms(ticks[0], ticks[1]);
+            }
         }
         if let (Some(path), Some((buf, row))) = (capture, readback) {
             self.save_capture(&path, &buf, row);
