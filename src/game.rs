@@ -1837,10 +1837,12 @@ impl Game {
         for (i, &(base, ph)) in self.motes.iter().enumerate() {
             let t = self.time * 0.05 + ph;
             let mut p = base + Vec3::new((t * 1.3).sin() * 0.8, (t * 0.7).sin() * 0.6, (t * 1.1).cos() * 0.8);
-            // Keep motes near the player by wrapping into a 24m box around them.
+            // Keep motes near the player by wrapping into a 24m box around them, at the
+            // height of the floor they stand on.
             let rel = p - eye;
             p.x = eye.x + (rel.x + 12.0).rem_euclid(24.0) - 12.0;
             p.z = eye.z + (rel.z + 12.0).rem_euclid(24.0) - 12.0;
+            p.y += self.player.pos.y;
             let tw = 0.5 + 0.5 * (self.time * 0.8 + i as f32).sin();
             dyn_insts.push(Inst::new(
                 p,
