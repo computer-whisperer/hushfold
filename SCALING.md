@@ -95,7 +95,8 @@ over 8 h; the player's own Toss and Sift stay the fastest coarse tools.
    landing, Sift filters, carts, restorable lifts and chutes), staging (labelled
    tables), filing (hands, Bundle, Tidy Arms, a weaker aura), familiar roles.
    Ideas parked for it: a toss that lands on its own series run files itself.
-   Design below (Phase 3 design).
+   Design below (Phase 3 design). **Built; awaiting playtest.** The bot: the
+   Great Library ~9.0 h, the Hall ~1.6 h.
 4. The Great Library: content and balance. The pacing bot measures mechanism
    throughput with the real code; playtests judge whether the logistics are fun.
 
@@ -261,8 +262,12 @@ both. The Grimoire groups them by what they act on.
     II, anywhere.
   - *Wayfinding* (department; Great only): when Sort Sense doesn't reach, the
     compass points the walk to the active book's room instead.
-  - *Department Lens* (department; Great only): V tints every loose book with
-    its department's colour, flat and bright, so a heap reads at a glance.
+  - *Seeker's Lens* (both libraries): V lights every loose book of the active
+    (or aimed) book's group, department, category or series, and dims the rest.
+    Chose this over the sketch's tint by department colour because twelve hue
+    families can't all be told apart, and the highlight follows R to whatever
+    level you are working at. Done in the shader from ids each book carries, so
+    toggling it rebuilds nothing.
 - **Moving** (coarse)
   - *Sorting by*: toss throws, and sift draws, every book of the active (or
     aimed) book's *group*, which R cycles: category (from the start), department
@@ -273,8 +278,10 @@ both. The Grimoire groups them by what they act on.
   - *Long Toss I–II*: harder throws (12 → 16 → 20 m/s) that scatter less.
   - *Lodestone Grasp*: as before (long reach, hold to keep gathering).
 - **Filing** (precise): *Deeper Arms I–IV*, *Swift Slippers I–II*, *Tidy Arms*,
-  *Series Bundle* as before; *Shelving Aura I–III* weaker than 0.1's (the bot
-  sets the numbers).
+  *Series Bundle* as before; *Shelving Aura I–III* at 0.1.1's gentler numbers
+  (2/4/8 books/s, 3/4.5/6 m). The sketch said "a weaker aura"; the bot says the
+  Great Library's late game is bound by filing clicks without it (~1 book/s), so
+  it stays the engine, gated by cost to the middle of the game.
 - **Familiars**: bought one at a time by role, plus *Familiar Wings I–II*
   (faster, carry more, reach further from their post).
 
@@ -304,8 +311,9 @@ decision; none does the whole job.
 ### Deferred, with the reason
 
 - *Carts*: Arms IV and Toss already carry in bulk; push physics is a new system.
-- *Lifts and chutes*: the well already carries books down; whether carrying up
-  the stairs is a chore is for the bot (time on stairs) and a playtest to say.
+- *Lifts and chutes*: the well already carries books down, and the bot spends
+  ~2% of its time on stairs, so a lift would save little; a playtest may still
+  find carrying up the stairs a chore.
 - *Sorters* (a familiar that splits a pile by destination): couriers and the
   Broad Strokes sift cover the bucket pass; revisit if heaps feel like a chore.
 
@@ -319,3 +327,17 @@ the categories piling up near them, and runs the real familiar code over each
 trip. It still never tosses toward a destination, so tossing is upside it
 doesn't count. Targets: the Great Library in 8–10 h with the last purchase late
 in the game; the Hall in 1.5–2 h.
+
+Measured 2026-10-09 (`game/pacing.rs`): the Great Library ~9.0 h, 40 purchases
+about one every 12 minutes, the last at ~8.2 h, every department open by ~5.5 h,
+peak ~26k books an hour around hour six; the Hall ~1.6 h. Familiars shelve
+8–11%. Findings on the way:
+- With today's skills the late game was bound by filing clicks (~0.8 s a book),
+  not walking or gathering; the aura's cost, not its strength, was the dial.
+- The bot's filing route matters as much as any skill: visiting slots in rings
+  of distance from where filing began zigzagged across rooms (~25 s a trip
+  walking); nearest-from-here, as Tidy Arms picks, takes ~3 s. Between slots it
+  charges the straight line, right once the aura files through a case and
+  optimistic before it, so the first hour or two are flattered.
+- Costs: the first cut summed to more lumens than the library pays (~246k);
+  now ~196k.

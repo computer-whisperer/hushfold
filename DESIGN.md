@@ -123,12 +123,19 @@ shelved to a fraction: the East Wing opens at 60% of the West. A closed gate is
 a solid to walking, throwing, gathering, aiming and routes; gate states follow
 from what is shelved, so saves don't store them.
 
-Pacing is tuned with ignored tests (`--ignored --nocapture`): `familiar_throughput`
-runs the real familiar code headless to measure books/s per Wings level, and
-`pacing_simulation` (the Hall) and `pacing_great_library` play an idealised bot
-(the pile with the least walking per book, clicking until its arms are full,
-nearest slot, cheapest upgrade, walking measured on the nav field; it never
-tosses or sifts, and picks up only books whose shelves are open) using those rates. The late-game engine is Deeper Arms IV ×
+Pacing is tuned with the pacing bot (`game/pacing.rs`; `cargo test --release
+pacing -- --ignored --nocapture`), which plays with the real mechanisms: it walks
+on the nav field to the pile with the most books per second of walking; a plain
+click takes the top of the pile whatever it is (books it can't file yet go back
+down where it stands); with Sifting Touch it sifts the coarsest group it has with
+the most books in reach; it files nearest slot first, as Tidy Arms picks (a click
+per book, or per series with Bundle, the aura at its rate); it posts familiars
+(couriers at heaps of books far from home, shelvers at cases with books piling
+up near them) and runs their real code over each trip; and it buys the cheapest
+skill it can afford. It never tosses and reads nothing, so those are upside it
+doesn't count. Between slots it charges the straight line (no less than the
+difference of their walks from where filing began): right once the aura files
+through a case, optimistic before it. The late-game engine is Deeper Arms IV ×
 Shelving Aura, so the aura's books-per-second rate is the main dial. History:
 - 0.1.0 (aura 6/15/40 books/s, 11 m at III): ~1.0 h, the whole East Wing in ~16 min.
 - 0.1.1: ~1.4 h, the East Wing the last ~30 min, last upgrade affordable at ~86% shelved.
@@ -138,6 +145,10 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
 - The Great Library with the Hall's skills: ~16.6 h; every upgrade bought by
   2.8 h, every department open by ~7 h, then a flat ~6–7k books an hour. The
   skills run out in the first sixth; phase 3 rebuilds them for this.
+- Phase 3 (skills by level, familiars at posts, the bot above): the Hall ~1.6 h,
+  the Great Library ~9.0 h with 40 purchases about one every 12 min (the last at
+  ~8.2 h) and every department open by ~5.5 h. Familiars shelve 8–11% of the
+  books; the Great Library's bot spends ~2% of its time on stairs.
 
 ## Rendering
 Box-only geometry, per-instance `kind` selects procedural material in WGSL

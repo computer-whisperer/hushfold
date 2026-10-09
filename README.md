@@ -3,13 +3,13 @@
 A cozy first-person "tidy the magical library" game in Rust: books lie in piles
 across a moonlit library. Gather armfuls, find each book's category, series and
 volume slot, and file it. Lumens earned from filing buy abilities that make the
-work progressively smoother, up to paper-crane familiars that shelve on their own.
+work progressively smoother, up to paper-crane familiars that carry and shelve
+books wherever you post them.
 
 Two libraries, each with its own save (switch on the pause screen):
 - **The Hall**: one storey, ~11,700 books in ~2,300 series, two wings.
 - **The Great Library** (in development): three storeys round a skylit atrium,
-  twelve department rooms opened one by one, ~118,000 books. Its skills and
-  balance are still those of the Hall.
+  twelve department rooms opened one by one, ~118,000 books, about nine hours.
 
 Prebuilt Linux and Windows binaries are on the
 [releases page](https://github.com/computer-whisperer/hushfold/releases), or build it yourself:
@@ -28,8 +28,11 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | WASD / Shift | walk / hurry |
 | Mouse | look |
 | Left click | gather the top of a pile · file onto a series run |
-| Right mouse (hold) | charge a toss, with an arc showing where it lands; release to throw every book you carry of the active book's category |
-| F | sift: draw only books of the aimed book's category out of a pile (an upgrade) |
+| Right mouse (hold) | charge a toss, with an arc showing where it lands; release to throw every book you carry of the active book's group |
+| F | sift: draw only books of the aimed book's group out of a pile (an upgrade) |
+| R | what toss and sift take: the active book's category, or with upgrades its department or series |
+| V | the Seeker's Lens: loose books of the active book's group glow (an upgrade) |
+| G | post a familiar riding with you at the floor you aim at, or take a posted one back |
 | Scroll, Q / E | cycle the active book |
 | Tab | the Grimoire (upgrades) |
 | M | music on/off (remembered) |
@@ -67,11 +70,22 @@ pause screen replaces the current library's save with a fresh one (settings, in
 
 ## Upgrades
 
-Deeper Arms (6 → 96 books), Swift Slippers, Sort Sense (exact-slot pulse and
-compass), Sifting Touch I–II (sift a category out of a pile), Tidy Arms (self-sorting armful, nearest home first), Series Bundle
-(file a whole series at once), Lodestone Grasp (long reach, hold to gather),
-Paper Familiar ×5, Shelving Aura I–III (books drift home as you pass),
-Familiar Wings.
+The Grimoire groups them by what they help with; each library offers the ones
+that fit it.
+
+- **Reading**: Sort Sense (the exact slot pulses and a compass points the way:
+  in the book's room, then anywhere), Wayfinding (the way to the book's room),
+  the Seeker's Lens.
+- **Moving**: Sifting Touch (sift a group out of a pile, reaching wider with
+  each level), Broad Strokes and Fine Fingers (sort by department, by series),
+  Long Toss, Lodestone Grasp (long reach, hold to gather).
+- **Filing**: Deeper Arms (6 → 96 books), Swift Slippers, Tidy Arms
+  (self-sorting armful, nearest home first), Series Bundle (file a whole series
+  at once), Shelving Aura (books drift home as you pass).
+- **Familiars**: paper cranes that ride with you until you post them. A shelver
+  files the books lying near its post whose shelves are close by; a courier
+  carries books lying near its post to a shelver that can file them, or to
+  their room. Familiar Wings makes them faster and stronger.
 
 ## Technical notes
 

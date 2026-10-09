@@ -1038,30 +1038,36 @@ impl Loose {
     /// rates lowest, given the level, the cell's centre at floor height and the books
     /// lying in it (`None` rules a cell out). Returns the level and the top.
     pub fn best_pile(&self, mut score: impl FnMut(usize, Vec3, &[u32]) -> Option<f32>) -> Option<(usize, Vec3)> {
-        let mut best: Option<(f32, usize, usize)> = None;
-        for (lv, g) in self.grids.iter().enumerate() {
-            for (k, bucket) in g.buckets.iter().enumerate() {
-                if bucket.is_empty() {
-                    continue;
-                }
-                let c = Vec3::new(
-                    g.min.x + ((k % g.bw) as f32 + 0.5) * BUCKET,
-                    g.y,
-                    g.min.y + ((k / g.bw) as f32 + 0.5) * BUCKET,
-                );
-                if let Some(s) = score(lv, c, bucket)
-                    && best.is_none_or(|(bs, _, _)| s < bs)
-                {
-                    best = Some((s, lv, k));
-                }
+        let mut best: Option<(f32, usize, Vec3)> = None;
+        for (lv, c, books) in self.piles() {
+            if let Some(s) = score(lv, c, books)
+                && best.is_none_or(|(bs, _, _)| s < bs)
+            {
+                let top = books
+                    .iter()
+                    .map(|&b| self.pose[b as usize].0)
+                    .max_by(|a, b| a.y.total_cmp(&b.y));
+                best = Some((s, lv, top.unwrap_or(c)));
             }
         }
-        let (_, lv, k) = best?;
-        let top = self.grids[lv].buckets[k]
-            .iter()
-            .map(|&b| self.pose[b as usize].0)
-            .max_by(|a, b| a.y.total_cmp(&b.y))?;
-        Some((lv, top))
+        best.map(|(_, lv, top)| (lv, top))
+    }
+
+    /// Every 0.5 m cell holding books: its level, its centre at floor height, and
+    /// the books lying in it.
+    pub fn piles(&self) -> impl Iterator<Item = (usize, Vec3, &[u32])> + '_ {
+        (self.grids.iter().enumerate()).flat_map(|(lv, g)| {
+            (g.buckets.iter().enumerate())
+                .filter(|(_, bucket)| !bucket.is_empty())
+                .map(move |(k, bucket)| {
+                    let c = Vec3::new(
+                        g.min.x + ((k % g.bw) as f32 + 0.5) * BUCKET,
+                        g.y,
+                        g.min.y + ((k / g.bw) as f32 + 0.5) * BUCKET,
+                    );
+                    (lv, c, bucket.as_slice())
+                })
+        })
     }
 
     /// The nearest resting book a ray from `o` along `d` hits within `max_t`.

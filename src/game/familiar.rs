@@ -82,6 +82,8 @@ pub(super) struct Familiar {
     rest: f32,
     /// Game time it last took to the shoulder; the longest riding is posted first.
     riding_since: f32,
+    /// Seconds it has sat at its post finding nothing to do.
+    pub(super) idle: f32,
 }
 
 impl Familiar {
@@ -116,6 +118,7 @@ impl Game {
             phase: self.rng.gen_range(0.0..10.0f32),
             rest: 0.5,
             riding_since: self.time,
+            idle: 0.0,
         });
     }
 
@@ -160,6 +163,7 @@ impl Game {
         let f = &mut self.familiars[i];
         f.post = Some(Post { at, level, field });
         f.rest = 0.0;
+        f.idle = 0.0;
         self.set_course(i, Task::Home);
     }
 
@@ -372,8 +376,14 @@ impl Game {
                 self.familiars[i].rest -= dt;
                 if self.familiars[i].task == Task::Idle && self.familiars[i].rest <= 0.0 {
                     match self.find_work(i) {
-                        Some(task) => self.set_course(i, task),
-                        None => self.familiars[i].rest = 1.0,
+                        Some(task) => {
+                            self.familiars[i].idle = 0.0;
+                            self.set_course(i, task);
+                        }
+                        None => {
+                            self.familiars[i].rest = 1.0;
+                            self.familiars[i].idle += 1.0;
+                        }
                     }
                 }
                 self.carry_dangle(i);
