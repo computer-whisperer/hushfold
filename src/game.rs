@@ -487,7 +487,9 @@ impl Game {
 
     pub fn update(&mut self, dt: f32, input: &Input, audio: &mut Audio, can_play: bool) {
         self.time += dt;
-        self.play_time += dt as f64;
+        if can_play {
+            self.play_time += dt as f64;
+        }
         let bob_before = self.player.bob;
         self.update_player(dt, input);
         // A soft footfall each time the walking bob touches down.
