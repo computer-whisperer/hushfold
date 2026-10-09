@@ -672,7 +672,7 @@ impl Renderer {
         let mut pixels = Vec::with_capacity((w * h * 4) as usize);
         for y in 0..h {
             let line = &data[(y * row) as usize..(y * row + w * 4) as usize];
-            for px in line.chunks_exact(4) {
+            for px in line.as_chunks::<4>().0 {
                 if bgra {
                     pixels.extend_from_slice(&[px[2], px[1], px[0], 255]);
                 } else {

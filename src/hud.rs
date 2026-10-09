@@ -82,7 +82,7 @@ fn project(vp: &Mat4, p: Vec3, size: Vec2) -> Option<Pos2> {
 fn panel_frame() -> egui::Frame {
     egui::Frame::new()
         .fill(Color32::from_rgba_unmultiplied(18, 12, 10, 200))
-        .stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(200, 160, 90, 90)))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(200, 160, 90, 90)))
         .corner_radius(6.0)
         .inner_margin(10.0)
 }
@@ -183,7 +183,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
                 painter.add(egui::Shape::convex_polygon(
                     pts,
                     Color32::TRANSPARENT,
-                    Stroke::new(2.0, col),
+                    Stroke::new(2.0_f32, col),
                 ));
                 if dist > 3.0 {
                     painter.text(
@@ -230,7 +230,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
     let mut tip: Option<(String, Color32)> = None;
     match g.aim {
         Aim::Heap { heap, .. } => {
-            painter.circle_stroke(c, 7.0, Stroke::new(1.5, GOLD));
+            painter.circle_stroke(c, 7.0, Stroke::new(1.5_f32, GOLD));
             let n = g.lib.heaps[heap as usize].books.len();
             let room = g.capacity().saturating_sub(g.held.len());
             let t = if room == 0 {
@@ -252,7 +252,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
                         .count();
                     let done = g.series_shelved[r.series as usize];
                     let col = if have > 0 { GOLD } else { INK };
-                    painter.circle_stroke(c, 6.0, Stroke::new(1.5, col));
+                    painter.circle_stroke(c, 6.0, Stroke::new(1.5_f32, col));
                     let extra = if have > 0 {
                         format!(" · file {have}")
                     } else {
@@ -390,7 +390,12 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
                             Rect::from_min_size(Pos2::new(x, rect.min.y + 4.0), Vec2::new((w - 1.0).max(1.0), 20.0));
                         p.rect_filled(r, 1.0, bright(hs.color).gamma_multiply(0.8));
                         if i == g.active {
-                            p.rect_stroke(r.expand(1.5), 1.0, Stroke::new(1.5, GOLD), egui::StrokeKind::Outside);
+                            p.rect_stroke(
+                                r.expand(1.5),
+                                1.0,
+                                Stroke::new(1.5_f32, GOLD),
+                                egui::StrokeKind::Outside,
+                            );
                         }
                     }
                 } else {
