@@ -426,7 +426,7 @@ impl Game {
             category_shelved: vec![0; lib.catalog.categories.len()],
             dept_shelved: vec![0; dept_total.len()],
             dept_total,
-            gate_fade: vec![1.0; lib.world.gates.len()],
+            gate_fade: vec![1.0; lib.world.gates().len()],
             familiars: Vec::new(),
             particles: Vec::new(),
             motes,
@@ -452,7 +452,7 @@ impl Game {
                 |b| lib.books[b as usize].series,
                 lib.series.len(),
             ),
-            scene_gates: vec![false; lib.world.gates.len()],
+            scene_gates: vec![false; lib.world.gates().len()],
             loose,
             nav: Nav::new(&lib.world, lib.spawn.0),
             sense_route: None,
@@ -543,7 +543,7 @@ impl Game {
 
     /// Books of the departments gate `g` counts still to shelve before it lifts.
     pub fn gate_books_left(&self, g: usize) -> u32 {
-        let gate = &self.lib.world.gates[g];
+        let gate = &self.lib.world.gates()[g];
         let total: u32 = gate.counts.iter().map(|&d| self.dept_total[d]).sum();
         let done: u32 = gate.counts.iter().map(|&d| self.dept_shelved[d]).sum();
         let need = (total as f32 * gate.need).ceil() as u32;
@@ -552,7 +552,7 @@ impl Game {
 
     /// The first gate still closed.
     pub fn next_gate(&self) -> Option<usize> {
-        self.lib.world.open.iter().position(|&o| !o)
+        self.lib.world.gates_open().iter().position(|&o| !o)
     }
 
     /// A department is open once the gate before it has lifted.
@@ -561,18 +561,18 @@ impl Game {
     }
 
     fn open_gate(&mut self, g: usize) {
-        self.lib.world.open[g] = true;
+        self.lib.world.open_gate(g);
         self.loose.set_gate(g, false);
         self.nav.set_gate(g, false);
     }
 
     /// Lift every gate whose departments are shelved far enough.
     fn check_gates(&mut self, audio: &mut Audio) {
-        for g in 0..self.lib.world.gates.len() {
-            if !self.lib.world.open[g] && self.gate_books_left(g) == 0 {
+        for g in 0..self.lib.world.gates().len() {
+            if !self.lib.world.gates_open()[g] && self.gate_books_left(g) == 0 {
                 self.open_gate(g);
                 audio.play(Sfx::Fanfare, 0.8);
-                let name = &self.lib.catalog.departments[self.lib.world.gates[g].opens].name;
+                let name = &self.lib.catalog.departments[self.lib.world.gates()[g].opens].name;
                 self.toast(format!("The veil over the {name} lifts…"), [0.75, 0.6, 1.0], true);
             }
         }
@@ -580,7 +580,7 @@ impl Game {
 
     /// Script aid: lift every gate.
     pub fn open_all_gates(&mut self) {
-        for g in 0..self.lib.world.gates.len() {
+        for g in 0..self.lib.world.gates().len() {
             self.open_gate(g);
         }
     }
@@ -664,7 +664,7 @@ impl Game {
             };
             self.lantern_glow[c] += (target - self.lantern_glow[c]) * (1.0 - (-dt * 1.5).exp());
         }
-        for (f, &open) in self.gate_fade.iter_mut().zip(&self.lib.world.open) {
+        for (f, &open) in self.gate_fade.iter_mut().zip(self.lib.world.gates_open()) {
             if open {
                 *f = (*f - dt * 0.25).max(0.0);
             }
@@ -963,8 +963,8 @@ impl Game {
     /// Where a toss at the current charge leaves the hand, and how fast.
     fn toss_launch(&self) -> (Vec3, Vec3) {
         let (mut hand, _) = self.hand_xform(0);
-        // Flush against something books can't pass (furniture, a closed gate) the hand
-        // is inside it; leave from just short of it.
+        // Flush against something books can't pass (furniture, a closed gate, a floor
+        // or stair) the hand is inside it; leave from just short of it.
         let eye = self.player.eye();
         let reach = hand - eye;
         let dir = reach.normalize();
@@ -1659,7 +1659,7 @@ impl Game {
         scene.highlight(lit);
         let active = self.active_book().filter(|_| self.level(Upg::SortSense) > 0);
         scene.set_active(active.map(|b| (b, self.lib.books[b as usize].slot_pos)));
-        if scene_gates_changed(&mut self.scene_gates, &self.lib.world.open) {
+        if scene_gates_changed(&mut self.scene_gates, self.lib.world.gates_open()) {
             scene.redraw_all();
         }
         for c in 0..scene.chunks.len() {
@@ -1814,7 +1814,7 @@ impl Game {
 
         // Moonbeams and veils.
         trans.extend_from_slice(&self.lib.static_trans);
-        for (gate, &fade) in self.lib.world.gates.iter().zip(&self.gate_fade) {
+        for (gate, &fade) in self.lib.world.gates().iter().zip(&self.gate_fade) {
             if fade > 0.0 {
                 let size = gate.max - gate.min;
                 // Drawn thinner than the solid it is.
@@ -1989,7 +1989,7 @@ impl Game {
             }
         }
         // Gates follow from what is shelved; lift them before anything is laid down.
-        for g in 0..self.lib.world.gates.len() {
+        for g in 0..self.lib.world.gates().len() {
             if self.gate_books_left(g) == 0 {
                 self.open_gate(g);
                 self.gate_fade[g] = 0.0;
@@ -2555,7 +2555,7 @@ mod tests {
         assert_eq!(g.loose.heightfield_errors(), 0);
         let depts = g.lib.catalog.departments.len();
         for d in 0..depts {
-            if let Some(gate) = g.lib.world.gates.iter().position(|gate| gate.opens == d) {
+            if let Some(gate) = g.lib.world.gates().iter().position(|gate| gate.opens == d) {
                 g.open_gate(gate);
             }
             let stranded = (0..n)
@@ -2623,7 +2623,7 @@ mod tests {
         let (lv, top) = g.loose.best_pile(|l, c, _| (l == 0).then(|| c.length())).unwrap();
         let books = g.loose.gather(lv, Vec2::new(top.x, top.z), 1.5, 40, |_| true);
         assert_eq!(books.len(), 40);
-        let flights = g.lib.world.flights.clone();
+        let flights = g.lib.world.stairs().to_vec();
         for (i, &b) in books.iter().enumerate() {
             let r = &flights[i % flights.len()];
             let (c, half) = ((r.min + r.max) * 0.5, (r.max - r.min) * 0.5);
@@ -2946,12 +2946,12 @@ mod tests {
         for &b in &first {
             g.on_shelved(b, &mut audio, &mut thunks);
         }
-        assert!(g.lib.world.open[0] && !g.lib.world.open[1]);
+        assert!(g.lib.world.gates_open()[0] && !g.lib.world.gates_open()[1]);
         g.save();
         let mut l = Game::new(Layout::Great);
         assert!(l.load());
         assert_eq!(l.total_shelved(), g.total_shelved());
-        assert_eq!(l.lib.world.open, g.lib.world.open);
+        assert_eq!(l.lib.world.gates_open(), g.lib.world.gates_open());
         assert_eq!(l.loose.heightfield_errors(), 0);
         for b in 0..g.lib.books.len() as u32 {
             if g.loose.is_resting(b) {

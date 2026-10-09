@@ -13,7 +13,7 @@ pub use hall::{HALL_X, HALL_Z, VEIL_X};
 
 use crate::catalog::{self, Catalogue, Series};
 use crate::gfx::{Inst, kind};
-use crate::world::{Flight, Gate, Level, NOSING, SLAB, Slab, Stops, World};
+use crate::world::{Gate, Level, NOSING, SLAB, Slab, Stairs, Stops, World};
 use glam::{Mat3, Quat, Vec2, Vec3};
 use rand::prelude::*;
 use std::collections::HashSet;
@@ -204,7 +204,7 @@ impl Library {
 
     /// The departments a gate counts, by name ("West Wing", "Astronomy and Botany").
     pub fn gate_counts_names(&self, g: usize) -> String {
-        let names: Vec<&str> = (self.world.gates[g].counts.iter())
+        let names: Vec<&str> = (self.world.gates()[g].counts.iter())
             .map(|&d| self.catalog.departments[d].name.as_str())
             .collect();
         match names.as_slice() {

@@ -38,7 +38,7 @@ pub struct Slab {
 /// rising from `y0` at its low end to `y1` along `axis` (a unit axis direction)
 /// across its rectangle. Bodies walk it as a smooth slope; books rest on its treads.
 #[derive(Clone, Copy)]
-pub struct Flight {
+pub struct Stairs {
     pub level: usize,
     pub min: Vec2,
     pub max: Vec2,
@@ -48,7 +48,7 @@ pub struct Flight {
     pub steps: usize,
 }
 
-impl Flight {
+impl Stairs {
     pub fn contains(&self, p: Vec2) -> bool {
         p.cmpge(self.min).all() && p.cmple(self.max).all()
     }
@@ -104,7 +104,7 @@ impl Flight {
     }
 }
 
-/// What a solid is in the way of.
+/// What a solid is in the way of: any of bodies, books and sight.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Stops(u8);
 
@@ -116,6 +116,7 @@ impl Stops {
     pub const RAIL: Stops = Stops(1 | 2);
     pub const ALL: Stops = Stops(1 | 2 | 4);
 
+    /// True if it stops every kind of thing in `what`.
     pub fn has(self, what: Stops) -> bool {
         self.0 & what.0 == what.0
     }
@@ -128,12 +129,12 @@ impl BitOr for Stops {
     }
 }
 
-/// A box standing on a level's floor (furniture, a wall, a railing's guard).
+/// A box in the way of what `stops` says (furniture, a wall, a railing's guard). One
+/// that stops bodies or books stands on a floor; it may rise through the floor above.
 #[derive(Clone, Copy)]
 pub struct Solid {
     pub min: Vec3,
     pub max: Vec3,
-    pub level: usize,
     pub stops: Stops,
 }
 
@@ -153,13 +154,13 @@ pub struct Gate {
 pub struct World {
     pub levels: Vec<Level>,
     pub slabs: Vec<Slab>,
-    pub flights: Vec<Flight>,
-    pub solids: Vec<Solid>,
+    stairs: Vec<Stairs>,
+    solids: Vec<Solid>,
     /// Where a level's space reaches higher than its roof: (level, min, max, height).
     pub raised_roofs: Vec<(usize, Vec2, Vec2, f32)>,
-    pub gates: Vec<Gate>,
+    gates: Vec<Gate>,
     /// Which gates are open (all closed to begin with).
-    pub open: Vec<bool>,
+    open: Vec<bool>,
 }
 
 /// True if a box from `mn` to `mx` is in the way of a body standing at `feet`: it
@@ -187,21 +188,67 @@ impl World {
             .unwrap_or(0)
     }
 
-    /// A solid on the level its underside is on. One that stops books stands on the
-    /// floor: books know a level as a heightfield under its roof, so they can't pass
-    /// beneath a solid.
+    /// A solid. One that stops books must stand on a floor: books know a level as a
+    /// heightfield under its roof, so nothing can stop them from above.
     pub fn add_solid(&mut self, min: Vec3, max: Vec3, stops: Stops) {
-        let level = self.level_below(min.y);
-        debug_assert!(
-            !stops.has(Stops::BOOKS) || (min.y - self.levels[level].y).abs() < 1e-3,
+        let floor = self.levels[self.level_below(min.y)].y;
+        assert!(
+            !stops.has(Stops::BOOKS) || (min.y - floor).abs() < 1e-3,
             "a solid that stops books off the floor, at {min}"
         );
-        self.solids.push(Solid { min, max, level, stops });
+        self.solids.push(Solid { min, max, stops });
+    }
+
+    /// A flight of stairs. Its stone stands on its level's floor; it rises from `y0`.
+    pub fn add_stairs(&mut self, s: Stairs) {
+        let unit_axis = (s.axis.abs() - Vec2::X).length() < 1e-6 || (s.axis.abs() - Vec2::Y).length() < 1e-6;
+        assert!(unit_axis && s.steps > 0, "stairs along {} in {} steps", s.axis, s.steps);
+        assert!(
+            s.y0 >= self.levels[s.level].y - 1e-3,
+            "stairs starting below their floor"
+        );
+        self.stairs.push(s);
+    }
+
+    pub fn stairs(&self) -> &[Stairs] {
+        &self.stairs
+    }
+
+    pub fn solids(&self) -> &[Solid] {
+        &self.solids
+    }
+
+    /// The solids in level `l`'s space (above its floor, below the next), each as it
+    /// stands there: one rising through the floor from the level below stands on it.
+    pub fn solids_on(&self, l: usize) -> impl Iterator<Item = Solid> + '_ {
+        let floor = self.levels[l].y;
+        let next = self.levels.get(l + 1).map_or(f32::MAX, |n| n.y);
+        (self.solids.iter())
+            .filter(move |s| s.min.y < next - 1e-3 && s.max.y > floor + 1e-3)
+            .map(move |s| Solid {
+                min: Vec3::new(s.min.x, s.min.y.max(floor), s.min.z),
+                ..*s
+            })
     }
 
     pub fn add_gate(&mut self, gate: Gate) {
         self.gates.push(gate);
         self.open.push(false);
+    }
+
+    pub fn gates(&self) -> &[Gate] {
+        &self.gates
+    }
+
+    /// Which gates are open, by index.
+    pub fn gates_open(&self) -> &[bool] {
+        &self.open
+    }
+
+    /// Open gate `g` here. `Loose` and `Nav` keep their own account of the gates;
+    /// `Game::open_gate` tells all three.
+    pub fn open_gate(&mut self, g: usize) {
+        self.open[g] = true;
     }
 
     pub fn closed_gates(&self) -> impl Iterator<Item = (usize, &Gate)> {
@@ -214,10 +261,10 @@ impl World {
         let slabs = (self.slabs.iter())
             .filter(move |s| on(s.level) && p.cmpge(s.min).all() && p.cmple(s.max).all())
             .map(|s| self.levels[s.level].y);
-        let flights = (self.flights.iter())
+        let stairs = (self.stairs.iter())
             .filter(move |f| on(f.level) && f.contains(p))
             .map(move |f| f.height(p));
-        slabs.chain(flights)
+        slabs.chain(stairs)
     }
 
     /// The highest floor or stair surface under `p` that is no higher than `below`.
@@ -240,7 +287,7 @@ impl World {
         let slab = (self.slabs.iter())
             .filter(|s| p.cmpge(s.min).all() && p.cmple(s.max).all())
             .any(|s| (feet + STEP_UP..feet + BODY_H).contains(&self.levels[s.level].y));
-        let stairs = (self.flights.iter())
+        let stairs = (self.stairs.iter())
             .any(|f| f.contains(p) && f.height(p) > feet + STEP_UP && self.levels[f.level].y < feet + BODY_H);
         slab || stairs
     }
@@ -258,8 +305,8 @@ impl World {
     }
 
     /// How far a ray from `o` along unit `d` goes (up to `max_t`) before something
-    /// that stops `what` (sight, say) is in its way: solids that do, floors, stair
-    /// stone and closed gates.
+    /// that stops `what` (sight, say; see `Stops::has`) is in its way: solids that do,
+    /// floors, stair stone and closed gates.
     pub fn ray(&self, o: Vec3, d: Vec3, max_t: f32, what: Stops) -> f32 {
         let solids = (self.solids.iter())
             .filter(|s| s.stops.has(what))
@@ -272,7 +319,7 @@ impl World {
         let boxes = (solids.chain(gates).chain(floors))
             .filter_map(|(mn, mx)| ray_box(o, d, mn, mx))
             .fold(max_t, f32::min);
-        let stairs = (self.flights.iter())
+        let stairs = (self.stairs.iter())
             .filter_map(|f| {
                 let floor = self.levels[f.level].y;
                 let bounds = (Vec3::new(f.min.x, floor, f.min.y), Vec3::new(f.max.x, f.y1, f.max.y));
@@ -299,8 +346,30 @@ impl World {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::library::{Layout, Library};
-    use glam::Vec3;
+
+    /// A solid rising through the floor above stands on that floor too; one that
+    /// stops at it does not.
+    #[test]
+    fn solids_rising_through_a_floor_stand_on_it() {
+        let mut w = World::default();
+        for y in [0.0, 6.0] {
+            let (min, max) = (Vec2::splat(-5.0), Vec2::splat(5.0));
+            w.levels.push(Level {
+                y,
+                roof: y + 5.6,
+                min,
+                max,
+            });
+        }
+        w.add_solid(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 7.0, 1.0), Stops::RAIL);
+        w.add_solid(Vec3::new(2.0, 0.0, 0.0), Vec3::new(3.0, 6.0, 1.0), Stops::ALL);
+        let up: Vec<Solid> = w.solids_on(1).collect();
+        assert_eq!(up.len(), 1);
+        assert_eq!((up[0].min.y, up[0].max.y), (6.0, 7.0));
+        assert_eq!(w.solids_on(0).count(), 2);
+    }
 
     /// A sight line through the stone of a flight of stairs is blocked; one along
     /// the open floor beside it is not.

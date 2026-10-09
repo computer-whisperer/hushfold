@@ -422,7 +422,7 @@ impl Library {
     }
 
     fn pile_spot_ok(&self, p: Vec2, r: f32, spots: &[Vec2]) -> bool {
-        for o in self.world.solids.iter().filter(|o| o.stops.has(Stops::BODIES)) {
+        for o in self.world.solids().iter().filter(|o| o.stops.has(Stops::BODIES)) {
             let q = Vec2::new(p.x.clamp(o.min.x, o.max.x), p.y.clamp(o.min.z, o.max.z));
             if q.distance(p) < r + 1.1 {
                 return false;

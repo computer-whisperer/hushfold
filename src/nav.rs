@@ -108,9 +108,7 @@ impl Nav {
                     layer.surf[i] = y;
                 }
             }
-            let solids: Vec<_> = (world.solids.iter())
-                .filter(|o| o.level == l && o.stops.has(Stops::BODIES))
-                .collect();
+            let solids: Vec<_> = (world.solids_on(l)).filter(|o| o.stops.has(Stops::BODIES)).collect();
             layer.boxes = solids
                 .iter()
                 .map(|o| (Vec2::new(o.min.x, o.min.z), Vec2::new(o.max.x, o.max.z)))
@@ -160,11 +158,11 @@ impl Nav {
                 }
             }
         }
-        let gates = (world.gates.iter())
+        let gates = (world.gates().iter())
             .map(|g| (g.level, Vec2::new(g.min.x, g.min.z), Vec2::new(g.max.x, g.max.z)))
             .collect::<Vec<_>>();
         let mut nav = Nav {
-            closed: world.open.iter().map(|&open| !open).collect(),
+            closed: world.gates_open().iter().map(|&open| !open).collect(),
             gates,
             gated: vec![false; nodes],
             region: vec![false; nodes],
@@ -534,10 +532,15 @@ mod tests {
         for (x, z) in spots {
             let p = Vec3::new(x, 0.0, z);
             // Only spots the player's collision actually allows.
-            let ok = lib.world.solids.iter().filter(|o| o.stops.has(Stops::BODIES)).all(|o| {
-                let q = Vec2::new(x.clamp(o.min.x, o.max.x), z.clamp(o.min.z, o.max.z));
-                q.distance(Vec2::new(x, z)) >= 0.3 - 1e-3
-            });
+            let ok = lib
+                .world
+                .solids()
+                .iter()
+                .filter(|o| o.stops.has(Stops::BODIES))
+                .all(|o| {
+                    let q = Vec2::new(x.clamp(o.min.x, o.max.x), z.clamp(o.min.z, o.max.z));
+                    q.distance(Vec2::new(x, z)) >= 0.3 - 1e-3
+                });
             assert!(ok, "test spot ({x}, {z}) is not standable");
             nav.update(p);
             let d = nav.distance(p, open_floor);

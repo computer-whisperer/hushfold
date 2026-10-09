@@ -235,8 +235,8 @@ impl Library {
     /// A flight of stairs, declared in the world and drawn from its profile: solid
     /// stone steps with wooden treads, a stringer and a balustrade on either side, and
     /// guards so nothing goes over the sides or into its high end.
-    pub(super) fn stairs(&mut self, f: Flight, newels: &mut Vec<Vec3>) {
-        self.world.flights.push(f);
+    pub(super) fn stairs(&mut self, f: Stairs, newels: &mut Vec<Vec3>) {
+        self.world.add_stairs(f);
         let c = (f.min + f.max) * 0.5;
         let n = Vec2::new(-f.axis.y, f.axis.x);
         let (r, w) = (f.len() * 0.5, f.width() * 0.5);
@@ -253,7 +253,7 @@ impl Library {
                 Vec2::new(p.x, p.z).max(Vec2::new(q.x, q.z)),
             )
         };
-        let floor = f.y0;
+        let floor = self.world.levels[f.level].y;
         for k in 0..f.steps {
             let top = f.step_top(k);
             let (mn, mx) = f.step_rect(k, 0.0);
@@ -264,7 +264,7 @@ impl Library {
                 STEP_STONE,
             );
             self.decor(stone);
-            // The tread overhangs its riser a little (as books find it: `Flight::tread`).
+            // The tread overhangs its riser a little (as books find it: `Stairs::tread`).
             let (mn, mx) = f.step_rect(k, NOSING);
             self.decor(Inst::minmax(
                 Vec3::new(mn.x, top - TREAD_T, mn.y),

@@ -110,11 +110,12 @@ the implementation's own choices, revisable at the phase boundary.
   by index and rebuild unmoved piles from generation.
 - **Levels**: a floor elevation and roof height per level. Floors are slabs
   (rectangles); anywhere a level has no slab is a hole (the atrium well, stair
-  wells). Stairs are ramps from one level's floor to the next: bodies (player,
-  nav) walk them as a smooth slope, books rest on their treads (`Flight::tread`),
+  wells). Stairs rise from one level's floor to the next: bodies (player, nav)
+  walk them as a smooth slope, books rest on their treads (`Stairs::tread`),
   so a thrown book lies on a step rather than sunk into it.
-- **Solids** have real vertical extent and stand on a level's floor (walls,
-  railings, bookcases, tables). Slabs block sight and aim rays too.
+- **Solids** have real vertical extent; those in the way of bodies or books stand
+  on a floor (walls, railings, bookcases, tables), and one may rise through the
+  floor above (a stair's guard at its top). Slabs block sight and aim rays too.
 - **Departments** generalise wings, **gates** the veil. A gate is a thin solid
   (across the Hall, or filling a doorway) that blocks walking, throwing,
   gathering, aiming and routes until the departments opened before it are
@@ -128,20 +129,20 @@ the implementation's own choices, revisable at the phase boundary.
 ### Loose books across levels
 - One heightfield and bucket grid per level over its bounds. The heightfield is
   stored in 32×32-cell tiles: a tile's base is flat floor, a hole (−∞) or per-cell
-  (furniture, ramps); its top is allocated only once a book lies on it. Chose
+  (furniture, stairs); its top is allocated only once a book lies on it. Chose
   tiles over dense arrays because the Great Library's ~7.5k m² over three levels
   would be ~9M cells (~73 MB dense) of which piles touch a small part.
-- A resting book belongs to one level (saved with it). A flight carries its level:
+- A resting book belongs to one level (saved with it). A flying book carries its level:
   it rises into the level above through a hole, bounces off a slab's underside
   elsewhere, and falls into the level below through a hole. A railing (taller
   than the shed height) sheds books toward open floor, and over the well that
   is down. A book that slides off an edge falls.
 
 ### Player and nav
-- Gravity: the player stands on the highest slab or ramp within a step (0.45 m)
+- Gravity: the player stands on the highest slab or stair within a step (0.45 m)
   of their feet; a higher rise blocks like a wall; railings guard edges. Solids
   collide only where they overlap the body vertically.
-- Nav: a 0.5 m grid per level, ramps linking the cells at their two ends.
+- Nav: a 0.5 m grid per level, stairs linking the cells at their two ends.
   Dijkstra from the player over all levels, run in full whenever the player
   changes cell (no early exit: the whole field serves Tidy Arms and Sort Sense).
 
@@ -214,7 +215,15 @@ screen showed steps), and sight lines passing through stair stone.
     that stop books, closed gates) and keeps them current as gates open.
 - **Each solid says what it stops** (`Stops`: bodies, books, sight). Railings and
   chairs stop bodies and books but are seen past; a bookcase has a sight-only box
-  above it (no aiming over its top). Replaces `blocks_ray` and `sight_top`.
+  above it (no aiming over its top), and the stone over a doorway blocks sight.
+  Replaces `blocks_ray` and `sight_top`. A solid belongs to every level whose
+  space it reaches (a stair's guard rising past the floor above stands on that
+  floor too), so the nav grid and books on each level see what bodies there meet.
+  One that stops books must stand on a floor (checked): books know a level as a
+  heightfield, so nothing can stop them from above; the stone over a doorway
+  stops sight only, and a very high toss can pass over a closed veil.
+- Gate state lives in the world (`open_gate`); `Loose` and `Nav` keep their own
+  account of it, and `Game::open_gate` tells all three.
 - **Each piece is declared once, by role**: `decor` (drawn only: small, or out of
   reach), `solid` (drawn, and its box collides), `collide` (one box standing for a
   piece the same helper draws in parts, like a bookcase; or an unseen guard, like a

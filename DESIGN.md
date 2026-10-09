@@ -30,7 +30,8 @@ looks across it: levels, floor slabs (anywhere a level has none is a hole),
 flights of stairs, solids and gates. Each solid says what it stops (bodies, books,
 sight): railings and chairs stop walking and throwing but are seen past, and a
 bookcase has a sight-only box above it so no one aims over its top. Bodies walk
-floors and stair slopes and are stopped by solids, floor edges and stair stone;
+floors and stair slopes and are stopped by solids, floor edges, stair stone and
+closed gates;
 sight by solids that stop it, floors, stair stone and closed gates; books build
 their heightfields from the same world. Generation (`src/library/`) declares each
 piece once: `decor` (drawn only), `solid` (drawn, and in the way), or parts drawn

@@ -91,7 +91,7 @@ impl Side {
 /// `level` is: in the middle, unless a flight of stairs stands in front of the wall,
 /// when it moves past the foot of the stairs so it can be seen from the well.
 fn door_a(level: usize, side: usize) -> f32 {
-    if STAIRS.iter().any(|f| f.level == level && f.side == side) {
+    if STAIRWAYS.iter().any(|f| f.level == level && f.side == side) {
         -10.5
     } else {
         0.0
@@ -134,19 +134,19 @@ fn cut(rects: Vec<(Vec2, Vec2)>, (hmn, hmx): (Vec2, Vec2)) -> Vec<(Vec2, Vec2)> 
 
 /// Where a flight of stairs stands: in the gallery strip on `side` of the well, from
 /// `level` up to the next, rising toward +a.
-struct Stair {
+struct Stairway {
     level: usize,
     side: usize,
 }
 
-const STAIRS: [Stair; 4] = [
-    Stair { level: 0, side: 3 },
-    Stair { level: 0, side: 1 },
-    Stair { level: 1, side: 0 },
-    Stair { level: 1, side: 2 },
+const STAIRWAYS: [Stairway; 4] = [
+    Stairway { level: 0, side: 3 },
+    Stairway { level: 0, side: 1 },
+    Stairway { level: 1, side: 0 },
+    Stairway { level: 1, side: 2 },
 ];
 
-impl Stair {
+impl Stairway {
     /// The flight's footprint (the stairwell in the floor above).
     fn rect(&self) -> (Vec2, Vec2) {
         SIDES[self.side].rect(-STAIR_HALF_RUN, STAIR_HALF_RUN, WELL, WELL + STAIR_W)
@@ -193,7 +193,7 @@ impl Library {
             let mut rects = vec![(-ext, ext)];
             if l > 0 {
                 rects = cut(rects, (Vec2::splat(-WELL), Vec2::splat(WELL)));
-                for f in STAIRS.iter().filter(|f| f.level + 1 == l) {
+                for f in STAIRWAYS.iter().filter(|f| f.level + 1 == l) {
                     rects = cut(rects, f.rect());
                 }
             }
@@ -286,11 +286,11 @@ impl Library {
     /// through is railed on the floor above, its edges faced in wood.
     fn build_stairs(&mut self, newels: &mut Vec<Vec3>) {
         let r = STAIR_HALF_RUN;
-        for st in &STAIRS {
+        for st in &STAIRWAYS {
             let side = SIDES[st.side];
             let (y0, y1) = (floor_y(st.level), floor_y(st.level + 1));
             let (min, max) = st.rect();
-            let flight = Flight {
+            let flight = Stairs {
                 level: st.level,
                 min,
                 max,
@@ -301,9 +301,11 @@ impl Library {
             };
             self.stairs(flight, newels);
             let edge = WELL + STAIR_W;
+            // Railings on the slab, their guards' faces flush with the stairwell's edges.
             let at = |a: f32, o: f32| side.at3(a, o, y1);
-            self.railing(at(-r, edge + 0.06), at(r, edge + 0.06), newels);
-            self.railing(at(-r - 0.06, WELL + 0.06), at(-r - 0.06, edge + 0.06), newels);
+            let (lip, out) = (WELL + RAIL_T * 0.5, edge + RAIL_T * 0.5);
+            self.railing(at(-r, out), at(r, out), newels);
+            self.railing(at(-r - RAIL_T * 0.5, lip), at(-r - RAIL_T * 0.5, out), newels);
             for rect in [
                 side.rect(-r, r, edge - 0.06, edge),
                 side.rect(-r, -r + 0.06, WELL, edge - 0.06),
@@ -341,7 +343,7 @@ impl Library {
                 // The gallery railing round the well, except where stairs meet it, and
                 // the gallery's edge faced in wood (except over a stairwell).
                 if l > 0 {
-                    let stairs = STAIRS
+                    let stairs = STAIRWAYS
                         .iter()
                         .any(|f| f.side == si && (f.level == l || f.level + 1 == l));
                     let spans: &[(f32, f32)] = if stairs {
@@ -353,7 +355,7 @@ impl Library {
                         let o = WELL + RAIL_T * 0.5;
                         self.railing(side.at3(a0, o, y), side.at3(a1, o, y), newels);
                     }
-                    let stairwell = STAIRS.iter().any(|f| f.side == si && f.level + 1 == l);
+                    let stairwell = STAIRWAYS.iter().any(|f| f.side == si && f.level + 1 == l);
                     let edges: &[(f32, f32)] = if stairwell {
                         &[(-WELL, -STAIR_HALF_RUN), (STAIR_HALF_RUN, WELL)]
                     } else {
@@ -580,10 +582,10 @@ impl Library {
             }
             let p = Vec2::new(rng.gen_range(mn.x + r..mx.x - r), rng.gen_range(mn.y + r..mx.y - r));
             let clear_of = |a: Vec2, b: Vec2, d: f32| p.clamp(a, b).distance(p) >= d;
-            let ok = (self.world.solids.iter())
-                .filter(|o| o.level == level && o.stops.has(Stops::BODIES))
+            let ok = (self.world.solids_on(level))
+                .filter(|o| o.stops.has(Stops::BODIES))
                 .all(|o| clear_of(Vec2::new(o.min.x, o.min.z), Vec2::new(o.max.x, o.max.z), r + gap))
-                && self.world.flights.iter().all(|s| clear_of(s.min, s.max, r + 1.2))
+                && self.world.stairs().iter().all(|s| clear_of(s.min, s.max, r + 1.2))
                 && doors.iter().all(|&d| d.distance(p) >= r + 2.5)
                 && (level > 0
                     || (p.length() >= r + 4.0 && p.distance(Vec2::new(self.spawn.0.x, self.spawn.0.z)) >= r + 2.5))
