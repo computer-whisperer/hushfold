@@ -7,6 +7,7 @@ mod game;
 mod gfx;
 mod hud;
 mod library;
+mod nav;
 mod platform;
 
 use audio::Audio;
@@ -268,6 +269,7 @@ impl Running {
                 Some("unveil") => self.game.east_unlocked = true,
                 Some("facefam") => self.game.script_face_familiar(num(1) as usize),
                 Some("fill") => self.game.script_fill_category(num(1) as usize, num(2)),
+                Some("take") => self.game.script_take(num(1) as usize, num(2) as usize),
                 Some("faceslot") => self.game.script_face_active_slot(),
                 Some("cycle") => self.input.cycle += num(1) as i32,
                 Some("walk") => {

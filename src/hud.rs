@@ -166,26 +166,44 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32, music_on:
     if g.level(Upg::SortSense) > 0
         && let Some(b) = g.active_book()
     {
-        let target = g.lib.books[b as usize].slot_pos;
+        let slot = g.lib.books[b as usize].slot_pos;
         let s = &g.lib.series[g.lib.books[b as usize].series as usize];
         let col = bright(s.color);
         let center = Pos2::new(screen.x * 0.5, screen.y * 0.5);
-        let dist = target.distance(eye);
+        // When the slot is round the back of a case, point along the walk instead.
+        let (target, dist, direct) = match g.sense_route {
+            Some(r) if !r.direct => (r.waypoint + glam::Vec3::Y * 1.1, r.dist, false),
+            Some(r) => (slot, r.dist, true),
+            None => (slot, slot.distance(eye), true),
+        };
         match project(&vp, target, screen) {
             Some(p) if p.x > 30.0 && p.x < screen.x - 30.0 && p.y > 30.0 && p.y < screen.y - 30.0 => {
-                let r = 7.0;
-                let pts = vec![
-                    p + Vec2::new(0.0, -r),
-                    p + Vec2::new(r, 0.0),
-                    p + Vec2::new(0.0, r),
-                    p + Vec2::new(-r, 0.0),
-                ];
-                painter.add(egui::Shape::convex_polygon(
-                    pts,
-                    Color32::TRANSPARENT,
-                    Stroke::new(2.0_f32, col),
-                ));
-                if dist > 3.0 {
+                if direct {
+                    let r = 7.0;
+                    let pts = vec![
+                        p + Vec2::new(0.0, -r),
+                        p + Vec2::new(r, 0.0),
+                        p + Vec2::new(0.0, r),
+                        p + Vec2::new(-r, 0.0),
+                    ];
+                    painter.add(egui::Shape::convex_polygon(
+                        pts,
+                        Color32::TRANSPARENT,
+                        Stroke::new(2.0_f32, col),
+                    ));
+                } else {
+                    // A waypoint: a ring with a chevron toward the slot beyond it.
+                    painter.circle_stroke(p, 8.0, Stroke::new(2.0_f32, col));
+                    let ahead = project(&vp, slot, screen)
+                        .map(|q| (q - p).normalized())
+                        .filter(|d| d.is_finite() && d.length() > 0.5)
+                        .unwrap_or(Vec2::new(0.0, -1.0));
+                    let perp = Vec2::new(-ahead.y, ahead.x);
+                    let tip = p + ahead * 18.0;
+                    painter.line_segment([tip, tip - ahead * 6.0 + perp * 5.0], Stroke::new(2.0_f32, col));
+                    painter.line_segment([tip, tip - ahead * 6.0 - perp * 5.0], Stroke::new(2.0_f32, col));
+                }
+                if dist > 3.0 || !direct {
                     painter.text(
                         p + Vec2::new(0.0, 12.0),
                         Align2::CENTER_TOP,

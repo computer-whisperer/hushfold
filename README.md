@@ -42,8 +42,8 @@ on Windows (delete it to start over).
 - Within a category, series are alphabetical (ignoring leading articles), top
   shelf to bottom, left to right. Shelf edges carry their letter ranges.
 - Empty slots show as faint outlines in the series' colour; outlines of series
-  you are carrying glow brighter. Click anywhere on a series' run to file a
-  volume you carry; it flies to its exact slot.
+  you are carrying glow, with a glint sweeping through them. Click anywhere on a
+  series' run to file a volume you carry; it flies to its exact slot.
 - The East Wing is veiled until 60% of the West Wing is home.
 
 ## Upgrades
@@ -78,8 +78,10 @@ Familiar Wings.
   Scripted runs use a fixed 60 Hz step and never touch the real save. Commands
   (one per line): `pose x y z yaw pitch`, `wait frames`, `walk fwd frames`,
   `click`, `cycle n`, `faceheap`, `faceslot`, `facefam i`, `fill category fraction`,
-  `unveil`, `grant lumens`, `buy <Upgrade>`, `menu on|off`, `intro on|off`,
-  `stats on|off`, `shot name`, `print`, `quit`.
+  `take category n`, `unveil`, `grant lumens`, `buy <Upgrade>`, `menu on|off`,
+  `intro on|off`, `stats on|off`, `shot name`, `print`, `printactive`, `quit`.
+  `fill` and `take` pull books out of the middle of heaps, so use them for shelf
+  shots rather than heap shots.
 
 ## License
 

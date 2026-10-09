@@ -333,8 +333,15 @@ fn book_surface(i: VOut) -> Surf {
         }
     }
     if ((flags & 1u) != 0u) {
+        // The active book in hand: a bright rim along every edge, readable on any cover
+        // colour, over a faint warm wash.
         let t = g.cam_pos.w;
-        s.emit = vec3<f32>(0.9, 0.7, 0.35) * (0.25 + 0.15 * sin(t * 6.0));
+        let e = (vec3<f32>(0.5) - abs(i.local)) * i.scale;
+        let al = abs(ln);
+        let edge = select(select(min(e.x, e.y), min(e.x, e.z), al.y > 0.5), min(e.y, e.z), al.x > 0.5);
+        let rim = 1.0 - smoothstep(0.0015, 0.0035, edge);
+        let pulse = 0.5 + 0.5 * sin(t * 4.0);
+        s.emit = vec3<f32>(1.0, 0.82, 0.5) * (rim * (1.3 + 0.7 * pulse) + 0.1 + 0.08 * pulse);
     }
     return s;
 }
@@ -487,7 +494,12 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
 // Translucent things: slot ghosts, the veil, moonbeams. Premultiplied alpha.
 @fragment
 fn fs_trans(i: VOut) -> @location(0) vec4<f32> {
-    let m = i.local * i.scale;
+    // Ghost outline distance, and its screen-space rate (derivatives need uniform control flow).
+    let e = (vec3<f32>(0.5) - abs(i.local)) * i.scale;
+    let ln = abs(i.lnormal);
+    let edge = select(select(min(e.x, e.y), min(e.x, e.z), ln.y > 0.5), min(e.y, e.z), ln.x > 0.5);
+    let px = max(fwidth(edge), 1e-5);
+
     let t = g.cam_pos.w;
     if (i.kind == K_VEIL) {
         let w = i.world;
@@ -507,19 +519,26 @@ fn fs_trans(i: VOut) -> @location(0) vec4<f32> {
         let a = i.color.w * side * side2 * ends * dust;
         return vec4<f32>(i.color.rgb * a, 0.0);
     }
-    // Ghost slot.
-    let e = (vec3<f32>(0.5) - abs(i.local)) * i.scale;
-    let ln = abs(i.lnormal);
-    var edge: f32;
-    if (ln.x > 0.5) {
-        edge = min(e.y, e.z);
-    } else if (ln.y > 0.5) {
-        edge = min(e.x, e.z);
-    } else {
-        edge = min(e.x, e.y);
+    // Ghost slot. param: 0 = waiting, 1 = a series you carry, 2 = the active book's slot.
+    // Highlighted ghosts arrive in a fixed-brightness signal colour; color.w scales them.
+    let level = i.param & 3u;
+    if (level == 0u) {
+        let outline = 1.0 - smoothstep(0.0015, 0.004, edge);
+        let a = i.color.w * (0.25 + 0.75 * outline);
+        let c = i.color.rgb * (0.35 + 1.0 * outline);
+        return vec4<f32>(c * a, a * 0.6);
     }
-    let outline = 1.0 - smoothstep(0.0015, 0.004, edge);
-    let a = i.color.w * (0.25 + 0.75 * outline);
-    let c = i.color.rgb * (0.35 + 1.0 * outline);
-    return vec4<f32>(c * a, a * 0.6);
+    // Lines at least ~1.5 px wide, so distant runs still read.
+    let outline = 1.0 - smoothstep(max(0.003, px * 1.5), max(0.006, px * 2.5), edge);
+    let k = i.color.w;
+    if (level == 1u) {
+        // A slow glint sweeps through the hall across every run you can file.
+        let ph = (i.world.x + i.world.z) * 1.7 + i.world.y * 2.3 - t * 2.2;
+        let glint = pow(0.5 + 0.5 * sin(ph), 12.0);
+        let c = i.color.rgb * k * (outline * (0.55 + 0.8 * glint) + 0.05);
+        return vec4<f32>(c, k * (0.1 + 0.3 * outline));
+    }
+    let pulse = 0.5 + 0.5 * sin(t * 5.0);
+    let c = i.color.rgb * k * (outline * (1.4 + 0.8 * pulse) + 0.3 + 0.3 * pulse);
+    return vec4<f32>(c, k * (0.35 + 0.3 * outline));
 }

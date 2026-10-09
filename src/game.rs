@@ -4,6 +4,7 @@ use crate::audio::{Audio, Sfx};
 use crate::catalog::{self, CATEGORIES};
 use crate::gfx::{Globals, GpuLight, Inst, MAX_LIGHTS, kind};
 use crate::library::*;
+use crate::nav::{Nav, Route};
 use glam::{Mat4, Quat, Vec2, Vec3};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -270,9 +271,23 @@ pub struct Game {
     pub trans_insts: Vec<Inst>,
     pub held_insts: Vec<Inst>,
     pub heap_bounds: Vec<(Vec3, Vec3)>,
+    nav: Nav,
+    /// Sort Sense: the way to the active book's slot.
+    pub sense_route: Option<Route>,
     pub dirty_save: bool,
     /// False in scripted runs so they never touch the player's save.
     pub persist: bool,
+}
+
+/// A highlight colour with the series' hue at a fixed brightness: the colour is
+/// scaled to full value, then lifted toward white until its luminance reaches a
+/// floor, so dark browns and blacks signal as clearly as golds against the wood.
+fn signal_color(c: [f32; 3]) -> [f32; 3] {
+    let m = c[0].max(c[1]).max(c[2]).max(1e-3);
+    let n = c.map(|x| x / m);
+    let lum = 0.2126 * n[0] + 0.7152 * n[1] + 0.0722 * n[2];
+    let k = ((0.45 - lum) / (1.0 - lum)).max(0.0);
+    n.map(|x| x + (1.0 - x) * k)
 }
 
 pub fn upg_index(u: Upg) -> usize {
@@ -342,6 +357,8 @@ impl Game {
             trans_insts: Vec::with_capacity(n + 64),
             held_insts: Vec::new(),
             heap_bounds: Vec::new(),
+            nav: Nav::new(&lib.obstacles),
+            sense_route: None,
             dirty_save: false,
             persist: true,
             lib,
@@ -471,9 +488,18 @@ impl Game {
             }
         }
         self.manual_pick_t -= dt;
-        if self.level(Upg::Tidy) > 0 && self.manual_pick_t <= 0.0 {
+        let tidy = self.level(Upg::Tidy) > 0;
+        let sense = self.level(Upg::SortSense) > 0;
+        if (tidy || sense) && !self.held.is_empty() {
+            self.nav.update(self.player.pos, self.east_unlocked);
+        }
+        if tidy && self.manual_pick_t <= 0.0 {
             self.pick_nearest_active();
         }
+        self.sense_route = match self.active_book() {
+            Some(b) if sense => self.nav.route(self.player.pos, self.approach(b)),
+            _ => None,
+        };
         self.update_aura(dt);
         self.update_flights(dt, audio);
         self.update_familiars(dt);
@@ -890,19 +916,33 @@ impl Game {
         self.particles.retain(|p| p.life < p.max);
     }
 
+    /// Where to stand to file book `b`: in the aisle in front of its slot, at floor level.
+    fn approach(&self, b: u32) -> Vec3 {
+        let info = &self.lib.books[b as usize];
+        let p = info.slot_pos + self.lib.faces[info.face as usize].normal * 0.75;
+        Vec3::new(p.x, 0.0, p.z)
+    }
+
+    /// Make the held book nearest its home on foot the active one. A bookcase's far
+    /// side is a walk around the row, not the width of the case.
     fn pick_nearest_active(&mut self) {
         if self.held.is_empty() {
             return;
         }
-        let eye = self.player.eye();
+        let from = self.player.pos;
+        let cost = |g: &Self, b: u32| g.nav.distance(from, g.approach(b));
         let mut best = (f32::MAX, 0);
         for (i, &b) in self.held.iter().enumerate() {
-            let d = self.lib.books[b as usize].slot_pos.distance_squared(eye);
+            let d = cost(self, b);
             if d < best.0 {
                 best = (d, i);
             }
         }
-        self.active = best.1;
+        // Hysteresis, so near-ties don't flicker as you walk.
+        let current = self.active_book().map_or(f32::MAX, |b| cost(self, b));
+        if best.0 < current - 0.6 {
+            self.active = best.1;
+        }
     }
 
     fn update_aura(&mut self, dt: f32) {
@@ -1107,6 +1147,27 @@ impl Game {
         self.recompute_heap_bounds();
     }
 
+    /// Put `n` books of a category, spread across its shelves, into the arms (debug/screenshot
+    /// aid). Like `script_fill_category`, it pulls books from the middle of heaps.
+    pub fn script_take(&mut self, cat: usize, n: usize) {
+        let ids: Vec<u32> = (0..self.lib.books.len() as u32)
+            .filter(|&b| {
+                self.state[b as usize] == BookState::Heap
+                    && self.lib.series[self.lib.books[b as usize].series as usize].category == cat
+            })
+            .collect();
+        let step = (ids.len() / n.max(1)).max(1);
+        let room = self.capacity().saturating_sub(self.held.len());
+        for &b in ids.iter().step_by(step).take(n.min(room)) {
+            self.state[b as usize] = BookState::Held;
+            self.held.push(b);
+        }
+        for h in &mut self.lib.heaps {
+            h.books.retain(|&b| self.state[b as usize] == BookState::Heap);
+        }
+        self.recompute_heap_bounds();
+    }
+
     /// Look at familiar `i` from a little way off.
     pub fn script_face_familiar(&mut self, i: usize) {
         if let Some(f) = self.familiars.get(i) {
@@ -1256,29 +1317,32 @@ impl Game {
                 if !self.wing_unlocked(wing) {
                     continue;
                 }
-                let s = &self.lib.series[info.series as usize];
-                let mut a = 0.035;
-                if held_series.contains(&info.series) {
-                    a = 0.22;
-                }
-                if hover_series == Some(info.series) {
-                    a += 0.1;
-                }
-                if sense && active == Some(b as u32) {
-                    a = 0.55 + 0.35 * (self.time * 5.0).sin();
-                }
+                let c = self.lib.series[info.series as usize].color;
+                let hover = hover_series == Some(info.series);
+                // Ghost levels (see fs_trans): waiting, carried series, active slot.
+                let level = if sense && active == Some(b as u32) {
+                    2
+                } else if held_series.contains(&info.series) {
+                    1
+                } else {
+                    0
+                };
+                let (col, mut a) = if level == 0 {
+                    let boost = 1.0 + 0.6 / (c[0] + c[1] + c[2] + 0.2);
+                    (c.map(|x| x * boost), if hover { 0.135 } else { 0.035 })
+                } else {
+                    (signal_color(c), if hover { 1.3 } else { 1.0 })
+                };
                 if st == BookState::Filing {
                     a *= 0.5;
                 }
-                let c = s.color;
-                let boost = 1.0 + 0.6 / (c[0] + c[1] + c[2] + 0.2);
                 trans.push(Inst::new(
                     info.slot_pos,
                     info.slot_rot,
                     info.size * 0.995,
                     kind::GHOST,
-                    [c[0] * boost, c[1] * boost, c[2] * boost, a],
-                    0,
+                    [col[0], col[1], col[2], a],
+                    level,
                 ));
             }
         }
@@ -1773,6 +1837,58 @@ mod tests {
         }
         assert!(tried > 300);
         assert_eq!(failures, 0, "{failures}/{tried} oblique aims failed");
+    }
+
+    /// Tidy Arms must prefer a slot on the face you stand at over one that is nearer in a
+    /// straight line but on the far side of the same double-sided case.
+    #[test]
+    fn nearest_is_measured_on_foot() {
+        let mut g = Game::new();
+        g.upg[upg_index(Upg::Tidy)] = 1;
+        g.upg[upg_index(Upg::SortSense)] = 1;
+        let stand = Vec3::new(-16.3, 0.0, 5.6);
+        g.player.pos = stand;
+        let faces_toward = |g: &Game, b: usize, want: f32| {
+            let p = g.lib.books[b].slot_pos;
+            g.lib.faces[g.lib.books[b].face as usize].normal.z == want && p.x < 0.0 && (3.0..5.0).contains(&p.z)
+        };
+        // Behind the case, straight ahead (the row at z = 4 faces north on that side).
+        let far = (0..g.lib.books.len())
+            .filter(|&b| faces_toward(&g, b, -1.0))
+            .min_by(|&a, &b| {
+                let d = |i: usize| (g.lib.books[i].slot_pos.x - stand.x).abs();
+                d(a).total_cmp(&d(b))
+            })
+            .unwrap();
+        // On the near face, a few metres along the aisle.
+        let near = (0..g.lib.books.len())
+            .find(|&b| faces_toward(&g, b, 1.0) && (g.lib.books[b].slot_pos.x - stand.x).abs() > 2.4)
+            .unwrap();
+        let eye = g.player.eye();
+        assert!(
+            g.lib.books[far].slot_pos.distance(eye) < g.lib.books[near].slot_pos.distance(eye),
+            "test premise: the far-side slot is nearer in a straight line"
+        );
+        for b in [far as u32, near as u32] {
+            g.state[b as usize] = BookState::Held;
+            g.held.push(b);
+        }
+        g.active = 0;
+        let mut audio = crate::audio::Audio::silent();
+        g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
+        assert_eq!(g.active_book(), Some(near as u32));
+        assert!(g.sense_route.is_some_and(|r| r.direct));
+        // With only the far-side book in hand, Sort Sense routes round the end of the row.
+        g.held.retain(|&b| b == far as u32);
+        g.active = 0;
+        g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
+        let r = g.sense_route.unwrap();
+        assert!(!r.direct);
+        assert!(r.dist > 4.0, "route {r:?}");
+        assert!(
+            r.waypoint.x < -20.0 || r.waypoint.x > -12.6,
+            "waypoint should be at a row end: {r:?}"
+        );
     }
 
     #[test]
