@@ -212,6 +212,10 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   min respectively until near the end. Favouring one tech path, the Great
   Library takes 8.5 h (filing) to 13.1 h (hands): no path but filing has an
   engine of its own yet.
+- Some series starting together (the Great Library), the bot hunting sets,
+  familiars doubled, the whole-armful toss: series complete through the game
+  rather than at the end; the Hall ~1.6 h, the Great Library ~8.6 h; by path
+  the Great Library 7.9 h (filing) to 11.5 h (hands), familiars 11.1 h.
 
 ## Rendering
 Box-only geometry, per-instance `kind` selects procedural material in WGSL

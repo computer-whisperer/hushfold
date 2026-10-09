@@ -9,7 +9,7 @@ books wherever you post them.
 Two libraries, each with its own save (switch on the pause screen):
 - **The Hall**: one storey, ~11,700 books in ~2,300 series, two wings.
 - **The Great Library** (in development): three storeys round a skylit atrium,
-  twelve department rooms opened one by one, ~118,000 books, about ten hours.
+  twelve department rooms opened one by one, ~118,000 books, about nine hours.
 
 Prebuilt Linux and Windows binaries are on the
 [releases page](https://github.com/computer-whisperer/hushfold/releases), or build it yourself:

@@ -525,3 +525,35 @@ the last hour) and the first playtest of the opening:
 - **The toss throws the whole armful**, or while seeking only what is sought (it
   threw the active book's category, often one book of a mixed early armful).
 - Then refit the costs and measure the paths again.
+
+Built (2026-10-09), and measured:
+- Series start together in the Great Library only (above). The bot hunts sets
+  with Summon Series. Series now complete through the game: the Great Library
+  ~460 by 2 h, ~2.4k by 4 h, ~8k by 6 h, ~20.7k by 8 h (before: ~250, ~1.2k, —,
+  ~13k). Categories still complete only at the very end, as each needs all of
+  its series.
+- Summon Series I reaches the room you are in; Fine Fingers comes at ~1 h
+  (Great) and ~34 min (Hall).
+- Familiars about doubled (`WINGS`); they set off from still after taking or
+  filing a book (their carried speed swung them into cases at the new speeds),
+  and the flying tests run at the slowest and fastest Wings.
+- The toss throws the whole armful, or while seeking only what is sought.
+- Refit: lumens now come sooner, so the old costs ran the Great Library in
+  ~7.8 h with everything early. Scaling purchase by purchase drifted (raising
+  the early, slightly-early costs delayed the engines; 9.5 → 9.7 → 10.1 h with
+  the late purchases ever later); one uniform factor (1.25, `retune.py uniform`)
+  kept their timing: the Great Library ~8.6 h, the last purchase at ~7.9 h, the
+  middle of the game ~25% ahead of the schedule; the Hall ~1.6 h, the last
+  purchase at ~88 min.
+
+| Path | Hall | Great Library | Familiars shelve (Great) |
+|---|---|---|---|
+| none (cheapest first) | 1.56 h | 8.57 h | 9% |
+| filing | 1.60 h | 7.89 h | 7% |
+| familiars | 1.58 h | 11.07 h (was ~13 h) | 17% |
+| reading | 1.70 h | 10.21 h | 9% |
+| hands | 1.99 h | 11.46 h | 11% |
+
+The Hall's paths are close but for hands; in the Great Library filing is still
+the strongest by 25–45%. Open: the Hall's piles (its 0.1.x saves rebuild them
+from generation), and an engine for the hands path.
