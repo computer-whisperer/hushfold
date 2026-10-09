@@ -1,0 +1,319 @@
+# The Great Library: twelve departments of eight categories. A department is a
+# colour family; within it, each category has its own spine pattern (in order:
+# the first category gets pattern 0, and so on).
+# dept <name> | <hue> <hue spread> | <sat lo> <sat hi> | <val lo> <val hi>
+# cat <name>, then topics / things: semicolon-separated title vocabulary.
+
+spines by category
+
+dept Observatory | 222 10 | 0.5 0.8 | 0.22 0.5
+cat Astronomy
+topics the Night Sky; Wandering Stars; Nebulae; Starlight; the Firmament; Distant Suns
+things Telescope; Star Chart; Lodestar; Sextant
+cat Astrology
+topics the Zodiac; Natal Charts; the Houses of Heaven; Conjunctions; Omens; the Twelve Signs
+things Horoscope; Ephemeris; Astrolabe; Nativity
+cat Comets
+topics Comets; Shooting Stars; Meteors; Bright Tails; Falling Fire; the Long Return
+things Comet; Firestreak; Meteorite; Tailstar
+cat Lunar Studies
+topics the Moon; Lunar Seas; the Seventh Moon; Moonrise; the Phases; Tides of Light
+things Crescent; Moonstone; Lunarium; Halo
+cat Calendars
+topics Calendars; Leap Years; the Long Count; Solstices; Festival Days; the Turning Year
+things Almanac; Sundial; Reckoner; Equinox
+cat Star Navigation
+topics Night Voyages; the Pole Star; Bearings; Celestial Paths; Dead Reckoning; True North
+things Quadrant; Compass Rose; Starfinder; Nocturnal
+cat Eclipses
+topics Eclipses; Shadows of the Moon; the Dark Noon; Occultations; Coronas; Totality
+things Umbra; Penumbra; Ring of Fire; Darkglass
+cat Constellations
+topics Constellations; the Hunter; the Seven Sisters; Star Lore; the Great Bear; Asterisms
+things Orrery; Planisphere; Celestial Globe; Star Wheel
+
+dept Alchemical Wing | 10 8 | 0.6 0.88 | 0.3 0.58
+cat Alchemy
+topics Transmutation; the Great Work; the Red Tincture; Prima Materia; Sulphur; Quicksilver
+things Philosopher's Egg; Ouroboros; Athanor; Crucible
+cat Metallurgy
+topics Iron; Bronze; Smelting; Alloys; Ore; the Seven Metals
+things Forge; Anvil; Bellows; Ingot
+cat Elixirs
+topics Elixirs; Tonics; Long Life; Panaceas; Cordials; Draughts
+things Phial; Flask; Elixir; Decanter
+cat Distillation
+topics Distillation; Spirits; Essences; Condensation; Rectification; Vapours
+things Alembic; Retort; Still; Cucurbit
+cat Minerals
+topics Minerals; Crystals; Salts; Gemstones; Vitriol; Cinnabar
+things Geode; Lodestone; Touchstone; Lapis
+cat Calcination
+topics Calcination; Ashes; Lime; Burning; Cinders; the Black Stage
+things Calx; Kiln; Ashpot; Brazier
+cat Poisons
+topics Poisons; Antidotes; Venoms; Nightshade; Arsenic; Bitter Draughts
+things Poison Ring; Bezoar; Mortar; Pestle
+cat Furnaces
+topics Furnaces; Fires; Slow Heat; Fuel; Flues; the Gentle Flame
+things Furnace; Hearthstone; Crucible Tongs; Firebox
+
+dept Herbarium | 115 14 | 0.4 0.72 | 0.22 0.5
+cat Botany
+topics Plants; Leaves; Roots; Stems; Flowers; Growth
+things Herbarium; Greenhouse; Seedvault; Pressbook
+cat Herbals
+topics Herbs; Simples; Physic Gardens; Tinctures; Salves; Infusions
+things Herb Pot; Drying Rack; Herbal; Sprig
+cat Ferns and Mosses
+topics Ferns; Mosses; Lichens; Liverworts; Damp Places; Spores
+things Fernery; Moss Bank; Fiddlehead; Frond
+cat Fungi
+topics Fungi; Mushrooms; Toadstools; Fairy Rings; Moulds; Truffles
+things Puffball; Morel; Bracket; Mycelium
+cat Orchards
+topics Orchards; Apples; Pears; Grafting; Pruning; Blossom
+things Orchard; Graft; Quince; Medlar
+cat Seeds
+topics Seeds; Sowing; Germination; Pods; Kernels; Spring Planting
+things Seed Drill; Seed Packet; Acorn; Seedbed
+cat Gardens
+topics Gardens; Hedges; Topiary; Walled Gardens; Borders; Mazes
+things Arbour; Trellis; Cloche; Sundial Garden
+cat Night Flowers
+topics Night-blooming Flowers; Moonflowers; Evening Primroses; Night Scents; Pale Petals; Dusk Gardens
+things Moonflower; Nightbell; Lantern Lily; Gloaming Rose
+
+dept Bestiary | 172 10 | 0.45 0.75 | 0.22 0.48
+cat Dragons
+topics Dragons; Wyrms; Hoards; Dragonfire; Scales; Lairs
+things Wyvern; Drake; Dragon Egg; Firedrake
+cat Sea Creatures
+topics Sea Serpents; Krakens; Deep Waters; Tidepools; Whales; Shoals
+things Leviathan; Selkie; Kraken; Nautilus
+cat Birds
+topics Birds; Owls; Migrations; Nests; Songbirds; Ravens
+things Phoenix; Roc; Aviary; Feather
+cat Insects
+topics Moths; Beetles; Bees; Silkworms; Glow-worms; Hives
+things Hive; Cocoon; Chrysalis; Firefly
+cat Hedge Beasts
+topics Hedgehogs; Badgers; Hares; Foxes; Hedgerow Folk; Burrows
+things Barghest; Hare's Form; Sett; Burrow
+cat Familiars
+topics Familiars; Witches' Cats; Talking Ravens; Bound Spirits; Companions; Small Helpers
+things Familiar; Black Cat; Toad; Paper Crane
+cat Serpents
+topics Serpents; Basilisks; Adders; Venom; Coils; Shed Skins
+things Basilisk; Cockatrice; Amphisbaena; Serpent Egg
+cat Mythic Beasts
+topics Griffins; Manticores; Unicorns; Chimeras; Hippogriffs; the Wild Hunt
+things Griffin; Manticore; Unicorn Horn; Hippogriff
+
+dept Map Room | 40 8 | 0.5 0.78 | 0.42 0.7
+cat Cartography
+topics Maps; Projections; Surveys; Scale; Borders on Paper; Legends
+things Atlas; Chart; Theodolite; Map Case
+cat Voyages
+topics Voyages; Long Journeys; Shipwrecks; Far Shores; Expeditions; Wayfaring
+things Logbook; Spyglass; Galleon; Sea Chest
+cat Coastlines
+topics Coastlines; Harbours; Cliffs; Bays; Estuaries; Lighthouses
+things Lighthouse; Breakwater; Harbour Chart; Tide Table
+cat Mountains
+topics Mountains; Passes; Peaks; Glaciers; High Valleys; Avalanches
+things Ice Axe; Cairn; Summit Log; Rope Ladder
+cat Rivers
+topics Rivers; Fords; Deltas; Waterfalls; Underground Rivers; Springs
+things Ferry; Weir; Millrace; River Barge
+cat Cities
+topics Cities; Streets; Markets; City Walls; Bridges; Lost Cities
+things Street Plan; Gatehouse; Bell Tower; Market Cross
+cat Borderlands
+topics the Borderlands; the Northern Marches; Frontiers; No Man's Land; Customs Posts; Disputed Hills
+things Boundary Stone; Watchtower; Border Map; Toll Gate
+cat Islands
+topics Islands; Archipelagos; Atolls; Hidden Islands; Castaways; Reefs
+things Island Chart; Lagoon; Reef Map; Message in a Bottle
+
+dept Chronicle Hall | 25 8 | 0.32 0.56 | 0.15 0.34
+cat History
+topics the Old Kingdoms; the First Age; Golden Ages; Ancient Empires; the Long Peace; Lost Eras
+things Chronicle; Annal; Codex; Timeline
+cat Dynasties
+topics Dynasties; Royal Houses; Successions; Pretenders; Crowns; Regencies
+things Crown; Sceptre; Family Tree; Throne
+cat Wars
+topics Wars; Sieges; Battles; Campaigns; Truces; Fallen Fortresses
+things Siege Engine; Banner; War Chest; Battle Map
+cat Guilds
+topics Guilds; Crafts; Apprenticeships; Masters; Charters; Trade
+things Guild Seal; Charter; Ledger; Toolchest
+cat Treaties
+topics Treaties; Alliances; Embassies; Accords; Envoys; Oaths
+things Seal; Treaty Scroll; Signet; Envoy's Pouch
+cat Biographies
+topics Lives; Great Women; Scholars; Wanderers; Kings and Beggars; Forgotten Names
+things Memoir; Portrait; Diary; Epitaph
+cat Ruins
+topics Ruins; Excavations; Buried Towns; Old Stones; Tombs; Barrows
+things Shard; Trowel; Barrow; Standing Stone
+cat Heraldry
+topics Heraldry; Coats of Arms; Blazons; Tinctures and Furs; Badges; Mottoes
+things Escutcheon; Banneret; Tabard; Crest
+
+dept Verse Gallery | 285 10 | 0.35 0.62 | 0.28 0.58
+cat Poetry
+topics Verse; Odes; Measures; Rhyme; the Muse; Small Hours
+things Quill; Laurel; Lyre; Inkwell
+cat Ballads
+topics Ballads; Broadsides; Murder Ballads; Love Songs; Roadside Songs; Old Refrains
+things Broadsheet; Fiddle; Ballad Sheet; Chapbook
+cat Epics
+topics Epics; Heroes; Long Quests; the Underworld; Homecomings; Great Deeds
+things Saga; Hero's Shield; Odyssey; Mead Hall
+cat Sonnets
+topics Sonnets; Turns of Thought; Fourteen Lines; Courtly Love; Mortality; Sleepless Nights
+things Sonnet; Rose; Love Token; Lute
+cat Riddles
+topics Riddles; Enigmas; Word Games; Kennings; Puzzles; Answers
+things Riddle Box; Sphinx; Charade; Acrostic
+cat Hymns
+topics Hymns; Canticles; Psalms; Vespers; Matins; Plainsong
+things Psalter; Antiphonary; Chantbook; Choir Stall
+cat Elegies
+topics Elegies; Laments; Mourning; Remembrance; Autumn; Last Words
+things Elegy; Willow; Black Ribbon; Wreath
+cat Nursery Rhymes
+topics Nursery Rhymes; Counting Songs; Skipping Rhymes; Bedtime; Small Folk; Games
+things Hobby Horse; Rattle; Cradle; Spinning Top
+
+dept Arcanum | 320 10 | 0.52 0.86 | 0.18 0.42
+cat Arcana
+topics Hidden Things; the Veil; Secret Names; Mysteries; Thresholds; the Unseen
+things Grimoire; Key; Veil; Sealed Door
+cat Sigils
+topics Sigils; Marks of Power; Seals; Glyphs; Circles; Signatures
+things Sigil; Seal Ring; Chalk Circle; Pentacle
+cat Wards
+topics Wards; Protections; Thresholds; Salt Lines; Charms; Safe Houses
+things Amulet; Talisman; Ward Stone; Witch Bottle
+cat Summoning
+topics Summoning; Spirits; Calling; Binding; Names of Power; Circles of Calling
+things Bell; Candle; Summoning Circle; Spirit Board
+cat Runes
+topics Runes; Staves; Carvings; Rune Lore; Old Alphabets; Casting
+things Runestone; Rune Staff; Bone Lot; Tally
+cat Enchantment
+topics Enchantment; Glamours; Charmed Objects; Bindings; Spells; Illusions
+things Wand; Enchanted Mirror; Spindle; Charm Bracelet
+cat Dreams
+topics Dreams; Nightmares; Dream Reading; Sleepwalking; Visions; the Dreamlands
+things Dreamcatcher; Pillow Book; Sleep Draught; Nightcap
+cat Curses
+topics Curses; Hexes; Ill Wishes; Breaking Spells; Blights; Bad Luck
+things Hex Doll; Black Candle; Cursed Coin; Thorn Crown
+
+dept Clockworks | 205 8 | 0.1 0.32 | 0.32 0.62
+cat Mathematics
+topics Numbers; Proofs; Infinity; Primes; Algebra; Calculation
+things Abacus; Slate; Counting Board; Theorem
+cat Geometry
+topics Geometry; Circles; Polyhedra; Proportion; Tilings; Conic Sections
+things Compass; Straightedge; Protractor; Tessellation
+cat Clockwork
+topics Clockwork; Escapements; Gears; Springs; Timekeeping; Pendulums
+things Clock; Pocket Watch; Mainspring; Cogwheel
+cat Automata
+topics Automata; Mechanical Birds; Brass Servants; Moving Figures; Wind-up Toys; Engines of Wonder
+things Automaton; Music Box; Brass Owl; Puppet
+cat Optics
+topics Optics; Lenses; Mirrors; Light and Colour; Refraction; Spectacles
+things Prism; Magnifying Glass; Camera Obscura; Lens
+cat Engines
+topics Engines; Steam; Pumps; Levers; Pulleys; Waterwheels
+things Engine; Piston; Flywheel; Boiler
+cat Measures
+topics Measures; Weights; Units; Balances; Rulers; Accuracy
+things Scales; Measuring Rod; Plumb Bob; Gauge
+cat Ciphers
+topics Ciphers; Codes; Secret Writing; Cryptograms; Keys; Invisible Ink
+things Cipher Wheel; Codebook; Cipher Disk; Grille
+
+dept Music Room | 350 8 | 0.55 0.82 | 0.26 0.5
+cat Music
+topics Music; Melody; Harmony; Composition; Modes; Rhythm
+things Score; Metronome; Tuning Fork; Stave
+cat Instruments
+topics Instruments; Strings; Winds; Brass; Making Instruments; Tuning
+things Violin; Harp; Flute; Hurdy-gurdy
+cat Songbooks
+topics Songs; Airs; Rounds; Glees; Carols; Folk Tunes
+things Songbook; Fiddle Book; Hymnal; Song Sheet
+cat Dances
+topics Dances; Reels; Waltzes; Masques; Country Dances; Court Dances
+things Dance Card; Tambourine; Ballroom; Maypole
+cat Choirs
+topics Choirs; Voices; Chanting; Descants; Harmony Singing; Evensong
+things Choir Book; Lectern; Organ Loft; Cantata
+cat Bells
+topics Bells; Change Ringing; Peals; Carillons; Bell Founding; Chimes
+things Bell; Bell Rope; Belfry; Handbell
+cat Lullabies
+topics Lullabies; Cradle Songs; Soft Voices; Evening Songs; Sleep; Hushes
+things Cradle; Music Box; Night Light; Rocking Chair
+cat Harmony
+topics Harmony; Counterpoint; Fugues; Intervals; Consonance; the Spheres
+things Monochord; Harpsichord; Fugue; Canon
+
+dept Weatherhouse | 188 10 | 0.42 0.72 | 0.3 0.58
+cat Tempestry
+topics Storms; Gales; Cloud Shaping; Weather Working; Whirlwinds; Calm Seas
+things Weathervane; Storm Glass; Bottled Gale; Cloud Loom
+cat Winds
+topics Winds; Trade Winds; the Four Winds; Breezes; Monsoons; Squalls
+things Windsock; Windmill; Kite; Aeolian Harp
+cat Rain
+topics Rain; Showers; Drizzle; Rainbows; Floods; Rain Making
+things Rain Gauge; Umbrella; Rain Barrel; Gutter
+cat Snow and Ice
+topics Snow; Ice; Frost; Hail; Blizzards; Thaws
+things Snowflake; Icicle; Sledge; Ice House
+cat Tides
+topics Tides; Neap Tides; Spring Tides; Tidal Bores; Ebb and Flow; the Pull of the Moon
+things Tide Mill; Tidestone; Tide Clock; Mooring
+cat Lightning
+topics Lightning; Thunder; Ball Lightning; Static; Thunderstorms; Fire from the Sky
+things Lightning Rod; Leyden Jar; Thunderstone; Spark
+cat Seasons
+topics the Seasons; Spring; High Summer; Autumn; Midwinter; Equinoxes
+things Weather Diary; Barometer; Season Wheel; Almanac
+cat Fog
+topics Fog; Mist; Haar; Sea Fog; Vapours; Grey Mornings
+things Foghorn; Fog Lantern; Mist Net; Fog Bell
+
+dept Hearth Library | 70 12 | 0.36 0.62 | 0.3 0.55
+cat Hearthcraft
+topics Hearths; Home Keeping; Firesides; Chimneys; Warmth; Good Housekeeping
+things Hearth; Kettle; Bellows; Firedog
+cat Cookery
+topics Cookery; Soups; Stews; Sauces; Roasts; Pies
+things Cookbook; Cauldron; Ladle; Larder
+cat Brewing
+topics Brewing; Ales; Ciders; Meads; Malting; Fermentation
+things Brewhouse; Cask; Tankard; Mash Tun
+cat Baking
+topics Bread; Cakes; Pastry; Ovens; Leavening; Biscuits
+things Bakehouse; Rolling Pin; Bread Oven; Peel
+cat Weaving
+topics Weaving; Spinning; Dyeing; Tapestries; Wool; Embroidery
+things Loom; Spindle; Shuttle; Distaff
+cat Candlemaking
+topics Candles; Tallow; Beeswax; Wicks; Lamps; Lights for Dark Evenings
+things Candle Mould; Rushlight; Taper; Lantern
+cat Remedies
+topics Remedies; Poultices; Cures; Home Physic; Teas; Honey Cures
+things Stillroom; Medicine Chest; Poultice; Honey Jar
+cat Feast Days
+topics Feast Days; Harvest Home; Midwinter Feasts; Fairs; Saints' Days; Wedding Feasts
+things Feast Table; Wassail Bowl; Harvest Loaf; Garland

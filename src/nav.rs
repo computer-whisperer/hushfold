@@ -499,7 +499,7 @@ mod tests {
     /// the hearth) used to leave the field stuck in the player's own cell.
     #[test]
     fn tight_spots_still_reach_the_hall() {
-        let lib = Library::generate(crate::game::SEED);
+        let lib = Library::generate(crate::library::Layout::Hall, crate::game::SEED);
         let mut nav = Nav::new(&lib);
         nav.set_gate(0, false);
         let open_floor = Vec3::new(0.0, 0.0, 5.0);
@@ -531,7 +531,7 @@ mod tests {
     /// The closed veil walls off the East Wing; open, it is a walk away.
     #[test]
     fn the_veil_closes_the_east_wing() {
-        let lib = Library::generate(crate::game::SEED);
+        let lib = Library::generate(crate::library::Layout::Hall, crate::game::SEED);
         let mut nav = Nav::new(&lib);
         let (west, east) = (Vec3::new(5.0, 0.0, 6.0), Vec3::new(16.0, 0.0, 6.0));
         assert!(nav.open_at(west) && !nav.open_at(east));

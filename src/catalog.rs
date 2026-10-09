@@ -37,6 +37,10 @@ impl Catalogue {
         Self::parse(include_str!("catalog/hall.txt"))
     }
 
+    pub fn great() -> Self {
+        Self::parse(include_str!("catalog/great.txt"))
+    }
+
     /// Lines: `dept <name> [| colours]`, `cat <name> [| colours]`, `topics a; b; …`,
     /// `things a; b; …`, `spines by category`; `#` starts a comment. Colours are
     /// `<hue> <hue spread> | <sat lo> <sat hi> | <val lo> <val hi>`; a category

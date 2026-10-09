@@ -2,6 +2,7 @@
 //! loose books start, static geometry and lights. `hall` builds the original hall;
 //! the pieces here are shared between layouts.
 
+mod great;
 mod hall;
 
 #[cfg(test)]
@@ -90,8 +91,38 @@ impl Obstacle {
     }
 }
 
+/// Which library to build.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub enum Layout {
+    #[default]
+    /// The original hall: ~11.7k books, two wings.
+    Hall,
+    /// Three storeys round an atrium, twelve department rooms, ~120k books.
+    Great,
+}
+
+impl Layout {
+    pub const ALL: [Layout; 2] = [Layout::Hall, Layout::Great];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Layout::Hall => "The Hall",
+            Layout::Great => "The Great Library",
+        }
+    }
+
+    /// How long a library takes, roughly.
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Layout::Hall => "one hall, ~12,000 books, an hour or two",
+            Layout::Great => "three storeys, ~120,000 books, a long while",
+        }
+    }
+}
+
 /// A storey: its floor elevation, how high its space reaches where no floor above
-/// caps it, and the rectangle everything on it lies within.
+/// caps it (unless a raised roof says otherwise), and the rectangle everything on
+/// it lies within.
 pub struct Level {
     pub y: f32,
     pub roof: f32,
@@ -160,12 +191,22 @@ pub struct LightDef {
     pub kind: LightKind,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum LabelKind {
+    /// A shelf's range of filing keys.
+    Shelf,
+    /// A category's sign over its cases.
+    Category(usize),
+    /// A department's sign over its door.
+    Department(usize),
+}
+
 pub struct Label {
     pub pos: Vec3,
     pub normal: Vec3,
     pub text: String,
-    pub category: usize,
-    pub is_sign: bool,
+    pub kind: LabelKind,
+    pub level: usize,
 }
 
 pub struct Library {
@@ -178,6 +219,8 @@ pub struct Library {
     pub levels: Vec<Level>,
     pub slabs: Vec<Slab>,
     pub ramps: Vec<Ramp>,
+    /// Where a level's space reaches higher than its roof: (level, min, max, height).
+    pub raised_roofs: Vec<(usize, Vec2, Vec2, f32)>,
     pub gates: Vec<Gate>,
     /// Where each book is first dropped, in order: (book, level, point, direction of
     /// its length).
@@ -197,9 +240,12 @@ pub struct Library {
 }
 
 impl Library {
-    pub fn generate(seed: u64) -> Self {
+    pub fn generate(layout: Layout, seed: u64) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
-        let catalog = Catalogue::hall();
+        let catalog = match layout {
+            Layout::Hall => Catalogue::hall(),
+            Layout::Great => Catalogue::great(),
+        };
         let n = catalog.categories.len();
         let mut lib = Library {
             catalog,
@@ -211,6 +257,7 @@ impl Library {
             levels: Vec::new(),
             slabs: Vec::new(),
             ramps: Vec::new(),
+            raised_roofs: Vec::new(),
             gates: Vec::new(),
             drops: Vec::new(),
             obstacles: Vec::new(),
@@ -223,7 +270,10 @@ impl Library {
             lanterns: Vec::new(),
             spawn: (Vec3::ZERO, 0.0),
         };
-        hall::build(&mut lib, &mut rng);
+        match layout {
+            Layout::Hall => hall::build(&mut lib, &mut rng),
+            Layout::Great => great::build(&mut lib, &mut rng),
+        }
         lib
     }
 
@@ -330,59 +380,179 @@ impl Library {
         );
     }
 
-    /// A double-sided bookcase standing at `c` (floor level), its faces toward ±z.
-    fn build_unit(&mut self, c: Vec3) {
-        let hw = UNIT_W * 0.5;
-        let hd = UNIT_DEPTH * 0.5;
-        for s in [-1.0, 1.0] {
-            self.push(Inst::aabox(
-                c + Vec3::new(s * (hw - SIDE_T * 0.5), UNIT_H * 0.5, 0.0),
-                Vec3::new(SIDE_T, UNIT_H, UNIT_DEPTH),
-                kind::WOOD,
-                WALNUT,
-            ));
-        }
+    /// A reading table centred at `c` (on the floor), with four chairs and a candle.
+    fn reading_table(&mut self, c: Vec3) {
         self.push(Inst::aabox(
-            c + Vec3::Y * (UNIT_H + 0.04),
-            Vec3::new(UNIT_W + 0.08, 0.08, UNIT_DEPTH + 0.08),
+            c + Vec3::Y * (TABLE_H - 0.03),
+            Vec3::new(2.4, 0.06, 1.2),
             kind::WOOD,
             WALNUT,
         ));
+        for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            self.push(Inst::aabox(
+                c + Vec3::new(sx * 1.08, (TABLE_H - 0.06) * 0.5, sz * 0.48),
+                Vec3::new(0.09, TABLE_H - 0.06, 0.09),
+                kind::WOOD,
+                DARK_WOOD,
+            ));
+        }
+        self.obstacle(c - Vec3::new(1.25, 0.0, 0.65), c + Vec3::new(1.25, TABLE_H, 0.65), true);
+        for sz in [-1.0f32, 1.0] {
+            for sx in [-0.6f32, 0.6] {
+                let ch = c + Vec3::new(sx, 0.0, sz * 1.0);
+                self.push(Inst::aabox(
+                    ch + Vec3::Y * 0.45,
+                    Vec3::new(0.48, 0.05, 0.46),
+                    kind::WOOD,
+                    [0.2, 0.09, 0.04],
+                ));
+                self.push(Inst::aabox(
+                    ch + Vec3::new(0.0, 0.75, sz * 0.21),
+                    Vec3::new(0.48, 0.6, 0.04),
+                    kind::WOOD,
+                    [0.2, 0.09, 0.04],
+                ));
+                for (lx, lz) in [(-0.2, -0.2), (0.2, -0.2), (-0.2, 0.2), (0.2, 0.2)] {
+                    self.push(Inst::aabox(
+                        ch + Vec3::new(lx, 0.22, lz),
+                        Vec3::new(0.04, 0.44, 0.04),
+                        kind::WOOD,
+                        DARK_WOOD,
+                    ));
+                }
+                self.obstacle(ch - Vec3::new(0.26, 0.0, 0.26), ch + Vec3::new(0.26, 1.05, 0.26), false);
+            }
+        }
+        let candle = c + Vec3::new(0.7, TABLE_H, 0.0);
         self.push(Inst::aabox(
-            c + Vec3::Y * (UNIT_H + 0.105),
+            candle + Vec3::Y * 0.02,
+            Vec3::new(0.14, 0.04, 0.14),
+            kind::WOOD,
+            BRASS,
+        ));
+        self.push(Inst::aabox(
+            candle + Vec3::Y * 0.11,
+            Vec3::new(0.05, 0.16, 0.05),
+            kind::PLAIN,
+            [0.8, 0.75, 0.6],
+        ));
+        let mut flame = Inst::aabox(
+            candle + Vec3::Y * 0.22,
+            Vec3::new(0.025, 0.05, 0.025),
+            kind::EMISSIVE,
+            [1.0, 0.55, 0.18],
+        );
+        flame.color[3] = 14.0;
+        flame.param = 1;
+        self.push(flame);
+        self.light(candle + Vec3::Y * 0.35, 4.5, [1.0, 0.6, 0.28], 0.7, LightKind::Flicker);
+    }
+
+    /// A ring chandelier at `ch` hung on chains from `top_y`.
+    fn chandelier(&mut self, ch: Vec3, top_y: f32) {
+        for k in 0..12 {
+            let a = k as f32 / 12.0 * TAU;
+            let p = ch + Vec3::new(a.cos(), 0.0, a.sin()) * 1.3;
+            self.push(Inst::new(
+                p,
+                Quat::from_rotation_y(-a),
+                Vec3::new(0.08, 0.06, 0.72),
+                kind::WOOD,
+                [BRASS[0], BRASS[1], BRASS[2], 1.0],
+                0,
+            ));
+            if k % 2 == 0 {
+                self.push(Inst::aabox(
+                    p + Vec3::Y * 0.1,
+                    Vec3::new(0.05, 0.14, 0.05),
+                    kind::PLAIN,
+                    [0.8, 0.75, 0.6],
+                ));
+                let mut flame = Inst::aabox(
+                    p + Vec3::Y * 0.21,
+                    Vec3::new(0.03, 0.06, 0.03),
+                    kind::EMISSIVE,
+                    [1.0, 0.55, 0.18],
+                );
+                flame.color[3] = 14.0;
+                flame.param = 1;
+                self.push(flame);
+            }
+        }
+        for k in 0..3 {
+            let a = k as f32 / 3.0 * TAU;
+            let top = Vec3::new(ch.x, top_y, ch.z);
+            let bottom = ch + Vec3::new(a.cos(), 0.0, a.sin()) * 1.3;
+            let d = top - bottom;
+            let rot = Quat::from_rotation_arc(Vec3::Y, d.normalize());
+            self.push(Inst::new(
+                (top + bottom) * 0.5,
+                rot,
+                Vec3::new(0.025, d.length(), 0.025),
+                kind::WOOD,
+                [0.1, 0.08, 0.05, 1.0],
+                0,
+            ));
+        }
+        self.light(ch + Vec3::Y * 0.2, 20.0, [1.0, 0.68, 0.38], 4.0, LightKind::Flicker);
+    }
+
+    /// A double-sided bookcase standing at `c` (floor level), running along x with its
+    /// faces toward ±z, or (`along_x` false) running along z, faces toward ±x.
+    fn build_unit(&mut self, c: Vec3, along_x: bool) {
+        // Boxes are laid out for a case along x; `sw` turns offsets and sizes.
+        let sw = |v: Vec3| if along_x { v } else { Vec3::new(v.z, v.y, v.x) };
+        let part = |lib: &mut Self, off: Vec3, size: Vec3, rgb: [f32; 3]| {
+            lib.push(Inst::aabox(c + sw(off), sw(size), kind::WOOD, rgb));
+        };
+        let hw = UNIT_W * 0.5;
+        let hd = UNIT_DEPTH * 0.5;
+        for s in [-1.0, 1.0] {
+            part(
+                self,
+                Vec3::new(s * (hw - SIDE_T * 0.5), UNIT_H * 0.5, 0.0),
+                Vec3::new(SIDE_T, UNIT_H, UNIT_DEPTH),
+                WALNUT,
+            );
+        }
+        part(
+            self,
+            Vec3::Y * (UNIT_H + 0.04),
+            Vec3::new(UNIT_W + 0.08, 0.08, UNIT_DEPTH + 0.08),
+            WALNUT,
+        );
+        part(
+            self,
+            Vec3::Y * (UNIT_H + 0.105),
             Vec3::new(UNIT_W + 0.16, 0.05, UNIT_DEPTH + 0.16),
-            kind::WOOD,
             [0.12, 0.06, 0.028],
-        ));
-        self.push(Inst::aabox(
-            c + Vec3::Y * (SHELF_BASE * 0.5),
+        );
+        part(
+            self,
+            Vec3::Y * (SHELF_BASE * 0.5),
             Vec3::new(UNIT_W - 0.02, SHELF_BASE, UNIT_DEPTH - 0.04),
-            kind::WOOD,
             [0.1, 0.05, 0.022],
-        ));
-        self.push(Inst::aabox(
-            c + Vec3::Y * (UNIT_H * 0.5),
+        );
+        part(
+            self,
+            Vec3::Y * (UNIT_H * 0.5),
             Vec3::new(UNIT_W - 2.0 * SIDE_T, UNIT_H, 0.04),
-            kind::WOOD,
             DARK_WOOD,
-        ));
+        );
         for nz in [-1.0f32, 1.0] {
             for i in 1..ROWS {
                 let y = SHELF_BASE + i as f32 * SHELF_STEP;
-                self.push(Inst::aabox(
-                    c + Vec3::new(0.0, y - BOARD_T * 0.5, nz * (0.02 + FACE_DEPTH * 0.5)),
+                part(
+                    self,
+                    Vec3::new(0.0, y - BOARD_T * 0.5, nz * (0.02 + FACE_DEPTH * 0.5)),
                     Vec3::new(UNIT_W - 2.0 * SIDE_T, BOARD_T, FACE_DEPTH),
-                    kind::WOOD,
                     WALNUT,
-                ));
+                );
             }
         }
         // Solid to the cornice; blocks sight a good way above it.
-        self.obstacle(
-            c - Vec3::new(hw + 0.04, 0.0, hd + 0.04),
-            c + Vec3::new(hw + 0.04, UNIT_H + 0.13, hd + 0.04),
-            true,
-        );
+        let half = sw(Vec3::new(hw + 0.04, 0.0, hd + 0.04));
+        self.obstacle(c - half, c + half + Vec3::Y * (UNIT_H + 0.13), true);
         self.obstacles.last_mut().unwrap().sight_top = c.y + UNIT_H + 1.2;
     }
 
@@ -434,8 +604,8 @@ impl Library {
             pos: sign_pos + normal * 0.04,
             normal,
             text: self.catalog.categories[cat].name.clone(),
-            category: cat,
-            is_sign: true,
+            kind: LabelKind::Category(cat),
+            level: self.level_at(mid_center),
         });
         let lantern = mid_center + Vec3::Y * (UNIT_H + 0.95) + normal * 0.05;
         self.push(Inst::aabox(
@@ -569,12 +739,13 @@ impl Library {
                 let text = format!("{} – {}", key(runs[0].series), key(runs[runs.len() - 1].series));
                 let face = &self.faces[f];
                 let pos = face.center + Vec3::Y * (row_floor_y(row) - BOARD_T * 0.5) + face.normal * 0.02;
+                let level = self.level_at(face.center);
                 self.labels.push(Label {
                     pos,
                     normal: face.normal,
                     text,
-                    category: face.category,
-                    is_sign: false,
+                    kind: LabelKind::Shelf,
+                    level,
                 });
             }
         }

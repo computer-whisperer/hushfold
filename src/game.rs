@@ -299,6 +299,7 @@ const LEGACY_ORDER: [Upg; 9] = [
 ];
 
 pub struct Game {
+    pub layout: Layout,
     pub lib: Library,
     pub state: Vec<BookState>,
     pub pos: Vec<Vec3>,
@@ -370,8 +371,8 @@ pub fn upg_index(u: Upg) -> usize {
 }
 
 impl Game {
-    pub fn new() -> Self {
-        let lib = Library::generate(SEED);
+    pub fn new(layout: Layout) -> Self {
+        let lib = Library::generate(layout, SEED);
         let n = lib.books.len();
         let mut dept_total = vec![0u32; lib.catalog.departments.len()];
         for b in 0..n as u32 {
@@ -444,6 +445,7 @@ impl Game {
             fov: 70.0,
             dirty_save: false,
             persist: true,
+            layout,
             lib,
         }
     }
@@ -1273,8 +1275,9 @@ impl Game {
     /// Where to stand to file book `b`: in the aisle in front of its slot, at floor level.
     fn approach(&self, b: u32) -> Vec3 {
         let info = &self.lib.books[b as usize];
-        let p = info.slot_pos + self.lib.faces[info.face as usize].normal * 0.75;
-        Vec3::new(p.x, 0.0, p.z)
+        let face = &self.lib.faces[info.face as usize];
+        let p = info.slot_pos + face.normal * 0.75;
+        Vec3::new(p.x, face.center.y, p.z)
     }
 
     /// Make the held book nearest its home on foot the active one. A bookcase's far
@@ -1529,24 +1532,42 @@ impl Game {
 
     pub fn globals(&self, aspect: f32) -> Globals {
         let eye = self.player.eye();
-        let mut lights = [GpuLight::default(); MAX_LIGHTS];
-        let mut n = 0;
-        let mut push = |p: Vec3, r: f32, c: [f32; 3], i: f32| {
-            if n < MAX_LIGHTS {
-                lights[n] = GpuLight {
-                    pos_radius: [p.x, p.y, p.z, r],
-                    color: [c[0], c[1], c[2], i],
-                };
-                n += 1;
-            }
+        let mut list: Vec<GpuLight> = Vec::with_capacity(MAX_LIGHTS);
+        let push = |list: &mut Vec<GpuLight>, p: Vec3, r: f32, c: [f32; 3], i: f32| {
+            list.push(GpuLight {
+                pos_radius: [p.x, p.y, p.z, r],
+                color: [c[0], c[1], c[2], i],
+            });
         };
+        // The librarian's own candle: a soft warm glow that keeps nearby spines readable.
+        push(
+            &mut list,
+            eye - self.player.forward() * 0.6 + Vec3::Y * 0.35,
+            7.0,
+            [1.0, 0.72, 0.45],
+            0.6,
+        );
+        for f in &self.familiars {
+            push(&mut list, f.pos, 3.5, [0.75, 0.85, 1.0], 0.8);
+        }
+        // The library's lights nearest the eye (by how far their reach falls short of
+        // it), as many as are left.
         let t = self.time;
-        for (li, l) in self.lib.lights.iter().enumerate() {
+        let room = MAX_LIGHTS - list.len();
+        let mut near: Vec<(f32, usize)> = (self.lib.lights.iter().enumerate())
+            .map(|(i, l)| (l.pos.distance(eye) - l.radius, i))
+            .collect();
+        if near.len() > room {
+            near.select_nth_unstable_by(room, |a, b| a.0.total_cmp(&b.0));
+            near.truncate(room);
+        }
+        for (_, li) in near {
+            let l = &self.lib.lights[li];
             match l.kind {
-                LightKind::Static => push(l.pos, l.radius, l.color, l.intensity),
+                LightKind::Static => push(&mut list, l.pos, l.radius, l.color, l.intensity),
                 LightKind::Flicker => {
                     let f = 0.88 + 0.08 * (t * 7.3 + li as f32 * 1.7).sin() + 0.05 * (t * 13.1 + li as f32).sin();
-                    push(l.pos, l.radius, l.color, l.intensity * f);
+                    push(&mut list, l.pos, l.radius, l.color, l.intensity * f);
                 }
                 LightKind::Lantern(c) => {
                     let g = self.lantern_glow[c];
@@ -1558,21 +1579,13 @@ impl Game {
                         l.color[1] * (1.0 - k) + cc[1] * k,
                         l.color[2] * (1.0 - k) + cc[2] * k,
                     ];
-                    push(l.pos, l.radius + g * 2.0, col, l.intensity + g * 1.6);
+                    push(&mut list, l.pos, l.radius + g * 2.0, col, l.intensity + g * 1.6);
                 }
             }
         }
-        // The librarian's own candle: a soft warm glow that keeps nearby spines readable.
-        push(
-            eye - self.player.forward() * 0.6 + Vec3::Y * 0.35,
-            7.0,
-            [1.0, 0.72, 0.45],
-            0.6,
-        );
-        for f in &self.familiars {
-            push(f.pos, 3.5, [0.75, 0.85, 1.0], 0.8);
-        }
-        let n = n as f32;
+        let n = list.len() as f32;
+        let mut lights = [GpuLight::default(); MAX_LIGHTS];
+        lights[..list.len()].copy_from_slice(&list);
         Globals {
             view_proj: self.view_proj(aspect).to_cols_array_2d(),
             cam_pos: [eye.x, eye.y, eye.z, self.time],
@@ -1853,8 +1866,13 @@ impl Game {
 
     // -------------------------------------------------------------- save / load
 
-    fn save_path() -> std::path::PathBuf {
-        crate::platform::data_dir().join("save.json")
+    /// Each library keeps its own save (the Hall's under its 0.1 name).
+    fn save_path(&self) -> std::path::PathBuf {
+        let name = match self.layout {
+            Layout::Hall => "save.json",
+            Layout::Great => "great.json",
+        };
+        crate::platform::data_dir().join(name)
     }
 
     pub fn save(&mut self) {
@@ -1898,7 +1916,7 @@ impl Game {
                 .collect(),
             airborne: self.loose.airborne().map(|(b, p)| (b, p.to_array())).collect(),
         };
-        let path = Self::save_path();
+        let path = self.save_path();
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -1918,7 +1936,7 @@ impl Game {
     }
 
     pub fn load(&mut self) -> bool {
-        let Ok(bytes) = std::fs::read(Self::save_path()) else {
+        let Ok(bytes) = std::fs::read(self.save_path()) else {
             return false;
         };
         let Ok(data) = serde_json::from_slice::<SaveData>(&bytes) else {
@@ -2049,7 +2067,7 @@ mod tests {
 
     #[test]
     fn generation_invariants() {
-        let g = Game::new();
+        let g = Game::new(Layout::Hall);
         let lib = &g.lib;
         // Every book starts loose, on its own wing's side of the veil.
         for b in 0..lib.books.len() as u32 {
@@ -2076,7 +2094,7 @@ mod tests {
             assert!(g.loose.rest(b).c.y < 2.0, "book {b} at {:?}", g.loose.rest(b));
         }
         // Generation is deterministic (saves depend on it).
-        let g2 = Game::new();
+        let g2 = Game::new(Layout::Hall);
         assert_eq!(g2.lib.books.len(), lib.books.len());
         assert!((0..lib.books.len() as u32).all(|b| g2.loose.rest(b) == g.loose.rest(b)));
         assert!(
@@ -2092,7 +2110,7 @@ mod tests {
     /// Hall must generate exactly as it did (0.1.x saves included).
     #[test]
     fn hall_generates_as_before() {
-        let g = Game::new();
+        let g = Game::new(Layout::Hall);
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         let mut eat = |x: u32| {
             h ^= x as u64;
@@ -2126,7 +2144,7 @@ mod tests {
     #[test]
     #[ignore]
     fn pacing_simulation() {
-        let mut g = Game::new();
+        let mut g = Game::new(Layout::Hall);
         let mut audio = crate::audio::Audio::silent();
         let mut t = 0.0f32;
         let mut pos = g.player.pos;
@@ -2271,7 +2289,7 @@ mod tests {
         let mut audio = crate::audio::Audio::silent();
         for wings in 0..=2 {
             for fams in [1, 5] {
-                let mut g = Game::new();
+                let mut g = Game::new(Layout::Hall);
                 g.upg[upg_index(Upg::Wings)] = wings;
                 for _ in 0..fams {
                     g.spawn_familiar();
@@ -2290,7 +2308,7 @@ mod tests {
     /// (regression: a bookcase's own collision box used to block grazing rays).
     #[test]
     fn slots_aimable_at_angles() {
-        let mut g = Game::new();
+        let mut g = Game::new(Layout::Hall);
         g.open_all_gates();
         for b in 0..g.lib.books.len() as u32 {
             g.loose.forget(b);
@@ -2332,7 +2350,7 @@ mod tests {
     /// straight line but on the far side of the same double-sided case.
     #[test]
     fn nearest_is_measured_on_foot() {
-        let mut g = Game::new();
+        let mut g = Game::new(Layout::Hall);
         g.upg[upg_index(Upg::Tidy)] = 1;
         g.upg[upg_index(Upg::SortSense)] = 1;
         let stand = Vec3::new(-16.3, 0.0, 5.6);
@@ -2397,7 +2415,7 @@ mod tests {
     fn filing_flies_from_the_hand() {
         let mut audio = crate::audio::Audio::silent();
         for by_aura in [false, true] {
-            let mut g = Game::new();
+            let mut g = Game::new(Layout::Hall);
             let b = 0u32;
             g.loose.take(&[b]);
             g.state[b as usize] = BookState::Held;
@@ -2431,12 +2449,107 @@ mod tests {
         }
     }
 
+    /// Every book in the Great Library starts where it can be walked to by the time
+    /// its department opens (its own room, the atrium, or a room that opens before).
+    #[test]
+    fn great_library_books_are_reachable() {
+        let mut g = Game::new(Layout::Great);
+        let n = g.lib.books.len() as u32;
+        assert!(n > 100_000, "{n} books");
+        assert_eq!(g.lib.catalog.departments.len(), 12);
+        assert!((0..n).all(|b| g.loose.is_resting(b)));
+        assert_eq!(g.loose.heightfield_errors(), 0);
+        let depts = g.lib.catalog.departments.len();
+        for d in 0..depts {
+            if let Some(gate) = g.lib.gates.iter().position(|gate| gate.opens == d) {
+                g.open_gate(gate);
+            }
+            let stranded = (0..n)
+                .filter(|&b| g.lib.dept_of(g.category_of(b)) == d && !g.nav.open_at(g.loose.pose(b).0))
+                .count();
+            assert_eq!(stranded, 0, "department {d}: {stranded} books out of reach");
+        }
+    }
+
+    /// The player walks up a flight of stairs to the first floor, and down again.
+    #[test]
+    fn stairs_climb_between_floors() {
+        let mut g = Game::new(Layout::Great);
+        let mut audio = crate::audio::Audio::silent();
+        // The foot of the west flight, facing up it (north).
+        g.player.pos = Vec3::new(-10.2, 0.0, 7.5);
+        g.player.yaw = 0.0;
+        let walk = Input {
+            forward: 1.0,
+            ..Input::default()
+        };
+        for _ in 0..60 * 5 {
+            g.update(1.0 / 60.0, &walk, &mut audio, true);
+        }
+        let p = g.player.pos;
+        assert!((p.y - 6.0).abs() < 0.01 && p.z < -6.0, "up: {p}");
+        assert_eq!(g.lib.level_at(p), 1);
+        g.player.yaw = PI;
+        for _ in 0..60 * 6 {
+            g.update(1.0 / 60.0, &walk, &mut audio, true);
+        }
+        let p = g.player.pos;
+        assert!(p.y.abs() < 0.01 && p.z > 6.0, "down: {p}");
+    }
+
+    /// Books tossed over a gallery railing fall down the well to the ground floor.
+    #[test]
+    fn books_fall_down_the_well() {
+        let mut g = Game::new(Layout::Great);
+        let mut audio = crate::audio::Audio::silent();
+        let (lv, top) = g.loose.best_pile(|l, c, _| (l == 0).then(|| c.length())).unwrap();
+        let books = g.loose.gather(lv, Vec2::new(top.x, top.z), 1.0, 12, |_| true);
+        assert_eq!(books.len(), 12);
+        for (i, &b) in books.iter().enumerate() {
+            let from = Vec3::new(11.5, 13.6, -1.2 + i as f32 * 0.2);
+            g.loose
+                .throw(b, from, Vec3::new(-5.0, 3.0, 0.0), Quat::IDENTITY, Vec3::ONE, 0.0);
+        }
+        for _ in 0..60 * 6 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
+        }
+        for &b in &books {
+            let p = g.loose.pose(b).0;
+            assert!(g.loose.is_resting(b) && g.loose.level_of(b) == 0, "book {b} at {p}");
+            assert!(p.y < 3.5 && p.x.abs() < 9.0 && p.z.abs() < 9.0, "book {b} at {p}");
+        }
+        assert_eq!(g.loose.heightfield_errors(), 0);
+    }
+
+    /// The way to a slot upstairs goes by the stairs.
+    #[test]
+    fn routes_climb_the_stairs() {
+        let mut g = Game::new(Layout::Great);
+        g.open_all_gates();
+        let from = g.player.pos;
+        g.nav.update(from);
+        for dept in [4, 8] {
+            let b = (0..g.lib.books.len() as u32)
+                .find(|&b| g.lib.dept_of(g.category_of(b)) == dept)
+                .unwrap();
+            let to = g.approach(b);
+            let d = g.nav.distance(from, to);
+            let r = g.nav.route(from, to).expect("a route");
+            // Straight-line distance is no measure of a walk up a storey or two.
+            assert!(
+                d.is_finite() && d > from.distance(to) + 5.0 && d < 120.0,
+                "dept {dept}: {d}"
+            );
+            assert!(!r.direct && r.waypoint.y < 0.5, "{r:?}");
+        }
+    }
+
     #[test]
     fn save_round_trip() {
         let dir = std::env::temp_dir().join(format!("hushfold-test-{}", std::process::id()));
         // SAFETY: tests in this module don't read the environment concurrently.
         unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
-        let mut g = Game::new();
+        let mut g = Game::new(Layout::Hall);
         let mut audio = crate::audio::Audio::silent();
         let pile = |g: &Game| {
             let from = Vec3::new(-16.0, 0.0, 0.0);
@@ -2488,7 +2601,7 @@ mod tests {
         g.upg[upg_index(Upg::Sift)] = 1;
         g.save();
 
-        let mut l = Game::new();
+        let mut l = Game::new(Layout::Hall);
         assert!(l.load());
         assert_eq!(l.total_shelved(), g.total_shelved());
         assert_eq!(l.lumens, 42);
@@ -2514,6 +2627,59 @@ mod tests {
         assert_eq!(l.total_shelved(), g.total_shelved() + 1);
         assert_eq!(l.lumens, 43);
         assert!(l.loose.is_resting(flying));
+
+        // The Great Library saves beside it: books upstairs come back on their floors,
+        // and gates open as far as what is shelved says.
+        let mut g = Game::new(Layout::Great);
+        let up = |g: &Game| g.loose.best_pile(|l, c, _| (l == 2).then(|| c.length())).unwrap();
+        for _ in 0..3 {
+            let (lv, top) = up(&g);
+            for b in g.loose.gather(lv, Vec2::new(top.x, top.z), 0.6, 15, |_| true) {
+                g.on_shelved(b, &mut audio, &mut thunks);
+            }
+        }
+        let (lv, top) = up(&g);
+        let tossed = g.loose.gather(lv, Vec2::new(top.x, top.z), 0.6, 6, |_| true);
+        for (i, &b) in tossed.iter().enumerate() {
+            // Onto the second-floor gallery, and the first-floor one below it.
+            let (from, vel) = if i % 2 == 0 {
+                (Vec3::new(12.0, 13.5, -3.0 + i as f32 * 0.3), Vec3::new(0.0, 1.0, 1.0))
+            } else {
+                (Vec3::new(12.0, 7.5, -3.0 + i as f32 * 0.3), Vec3::new(0.0, 1.0, 1.0))
+            };
+            g.loose.throw(b, from, vel, Quat::IDENTITY, Vec3::ONE, 0.0);
+        }
+        for _ in 0..180 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
+        }
+        let levels: Vec<usize> = tossed.iter().map(|&b| g.loose.level_of(b)).collect();
+        assert!(levels.contains(&1) && levels.contains(&2), "{levels:?}");
+        // Enough of the first department home to lift the first gate.
+        let first: Vec<u32> = (0..g.lib.books.len() as u32)
+            .filter(|&b| g.lib.dept_of(g.category_of(b)) == 0 && g.loose.is_resting(b))
+            .take(g.gate_books_left(0) as usize)
+            .collect();
+        g.loose.take(&first);
+        for &b in &first {
+            g.on_shelved(b, &mut audio, &mut thunks);
+        }
+        assert!(g.gate_open[0] && !g.gate_open[1]);
+        g.save();
+        let mut l = Game::new(Layout::Great);
+        assert!(l.load());
+        assert_eq!(l.total_shelved(), g.total_shelved());
+        assert_eq!(l.gate_open, g.gate_open);
+        assert_eq!(l.loose.heightfield_errors(), 0);
+        for b in 0..g.lib.books.len() as u32 {
+            if g.loose.is_resting(b) {
+                assert_eq!(l.loose.rest(b), g.loose.rest(b), "book {b}");
+                assert_eq!(l.loose.level_of(b), g.loose.level_of(b), "book {b}");
+            }
+        }
+        // The Hall's save is still there, apart.
+        let mut hall = Game::new(Layout::Hall);
+        assert!(hall.load());
+        assert_eq!(hall.lumens, 42);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

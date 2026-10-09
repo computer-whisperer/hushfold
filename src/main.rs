@@ -16,6 +16,7 @@ use audio::Audio;
 use game::{Game, Input};
 use gfx::{FrameInput, PostParams, Renderer};
 use hud::{Hud, HudAction};
+use library::Layout;
 use settings::Settings;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -87,17 +88,37 @@ impl Running {
         self.input.toss_down = false;
     }
 
-    /// A fresh library in place of the current one; the save is overwritten at once
-    /// so quitting now doesn't bring the old game back. Settings are kept.
+    /// Start this library over; its save is overwritten at once so quitting now
+    /// doesn't bring the old game back. Settings are kept.
     fn new_game(&mut self) {
+        self.open_library(self.game.layout, false);
+        self.game.save();
+    }
+
+    /// Put `layout` in place of the current library: its save if `resume` and it has
+    /// one, else a fresh one. The current library is saved first.
+    fn open_library(&mut self, layout: Layout, resume: bool) {
+        self.game.save();
         let persist = self.game.persist;
-        self.game = Game::new();
+        let t0 = Instant::now();
+        self.game = Game::new(layout);
         self.game.persist = persist;
+        let loaded = persist && resume && self.game.load();
+        eprintln!(
+            "hushfold: {}: {} books, generated in {:.0} ms{}",
+            layout.name(),
+            self.game.lib.books.len(),
+            t0.elapsed().as_secs_f32() * 1000.0,
+            if loaded { " (save loaded)" } else { "" }
+        );
         self.renderer.set_static(&self.game.lib.static_insts);
         self.apply_settings();
-        self.game.save();
         self.hud.confirm_restart = false;
         self.hud.menu_open = false;
+        if self.hud.settings.library != layout {
+            self.hud.settings.library = layout;
+            self.save_settings();
+        }
     }
 
     fn apply_settings(&mut self) {
@@ -258,6 +279,7 @@ impl Running {
                 HudAction::SettingsChanged => self.apply_settings(),
                 HudAction::Quit => self.quit = true,
                 HudAction::NewGame => self.new_game(),
+                HudAction::Switch(layout) => self.open_library(layout, true),
                 HudAction::CloseMenu => {
                     self.hud.menu_open = false;
                     self.set_grab(true);
@@ -397,6 +419,15 @@ impl Running {
                     }
                 }
                 Some("newgame") => self.new_game(),
+                // library hall|great: switch to a fresh copy of that library.
+                Some("library") => {
+                    let layout = if w.get(1) == Some(&"great") {
+                        Layout::Great
+                    } else {
+                        Layout::Hall
+                    };
+                    self.open_library(layout, false);
+                }
                 Some("quit") => std::process::exit(0),
                 _ => {}
             }
@@ -430,7 +461,14 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let mut renderer = Renderer::new(window.clone());
         let t0 = Instant::now();
-        let mut game = Game::new();
+        // Scripts start in the Hall (or HUSHFOLD_LIBRARY=great).
+        let layout = match std::env::var("HUSHFOLD_LIBRARY").as_deref() {
+            Ok("great") => Layout::Great,
+            Ok(_) => Layout::Hall,
+            Err(_) if scripted => Layout::Hall,
+            Err(_) => settings.library,
+        };
+        let mut game = Game::new(layout);
         let script = std::env::var("HUSHFOLD_SCRIPT").ok().map(|path| Script {
             lines: std::fs::read_to_string(&path)
                 .expect("read script")
@@ -444,7 +482,8 @@ impl ApplicationHandler for App {
         let loaded = script.is_none() && game.load();
         game.persist = script.is_none();
         eprintln!(
-            "hushfold: {} books in {} series, generated in {:.0} ms{}",
+            "hushfold: {}: {} books in {} series, generated in {:.0} ms{}",
+            layout.name(),
             game.lib.books.len(),
             game.lib.series.len(),
             t0.elapsed().as_secs_f32() * 1000.0,

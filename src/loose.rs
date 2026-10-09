@@ -1472,7 +1472,7 @@ mod tests {
     }
 
     fn library() -> (Library, Loose) {
-        let lib = Library::generate(crate::game::SEED);
+        let lib = Library::generate(crate::library::Layout::Hall, crate::game::SEED);
         let loose = Loose::new(&lib);
         (lib, loose)
     }

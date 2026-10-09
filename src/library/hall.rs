@@ -233,7 +233,7 @@ impl Library {
             // Unit geometry.
             for &rz in &rows_z {
                 for &cx in &xs {
-                    self.build_unit(Vec3::new(cx, 0.0, rz));
+                    self.build_unit(Vec3::new(cx, 0.0, rz), true);
                 }
             }
             let mut cat = self.catalog.departments[wing].categories.start;
@@ -269,120 +269,11 @@ impl Library {
 
         // Reading tables with chairs and candles.
         for (tx, tz) in [(-4.5f32, -2.6f32), (4.5, -2.6), (-4.5, 2.6), (4.5, 2.6)] {
-            let c = Vec3::new(tx, 0.0, tz);
-            self.push(Inst::aabox(
-                c + Vec3::Y * (TABLE_H - 0.03),
-                Vec3::new(2.4, 0.06, 1.2),
-                kind::WOOD,
-                WALNUT,
-            ));
-            for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-                self.push(Inst::aabox(
-                    c + Vec3::new(sx * 1.08, (TABLE_H - 0.06) * 0.5, sz * 0.48),
-                    Vec3::new(0.09, TABLE_H - 0.06, 0.09),
-                    kind::WOOD,
-                    DARK_WOOD,
-                ));
-            }
-            self.obstacle(c - Vec3::new(1.25, 0.0, 0.65), c + Vec3::new(1.25, TABLE_H, 0.65), true);
-            for sz in [-1.0f32, 1.0] {
-                for sx in [-0.6f32, 0.6] {
-                    let ch = c + Vec3::new(sx, 0.0, sz * 1.0);
-                    self.push(Inst::aabox(
-                        ch + Vec3::Y * 0.45,
-                        Vec3::new(0.48, 0.05, 0.46),
-                        kind::WOOD,
-                        [0.2, 0.09, 0.04],
-                    ));
-                    self.push(Inst::aabox(
-                        ch + Vec3::new(0.0, 0.75, sz * 0.21),
-                        Vec3::new(0.48, 0.6, 0.04),
-                        kind::WOOD,
-                        [0.2, 0.09, 0.04],
-                    ));
-                    for (lx, lz) in [(-0.2, -0.2), (0.2, -0.2), (-0.2, 0.2), (0.2, 0.2)] {
-                        self.push(Inst::aabox(
-                            ch + Vec3::new(lx, 0.22, lz),
-                            Vec3::new(0.04, 0.44, 0.04),
-                            kind::WOOD,
-                            DARK_WOOD,
-                        ));
-                    }
-                    self.obstacle(ch - Vec3::new(0.26, 0.0, 0.26), ch + Vec3::new(0.26, 1.05, 0.26), false);
-                }
-            }
-            let candle = c + Vec3::new(0.7, TABLE_H, 0.0);
-            self.push(Inst::aabox(
-                candle + Vec3::Y * 0.02,
-                Vec3::new(0.14, 0.04, 0.14),
-                kind::WOOD,
-                BRASS,
-            ));
-            self.push(Inst::aabox(
-                candle + Vec3::Y * 0.11,
-                Vec3::new(0.05, 0.16, 0.05),
-                kind::PLAIN,
-                [0.8, 0.75, 0.6],
-            ));
-            let mut flame = Inst::aabox(
-                candle + Vec3::Y * 0.22,
-                Vec3::new(0.025, 0.05, 0.025),
-                kind::EMISSIVE,
-                [1.0, 0.55, 0.18],
-            );
-            flame.color[3] = 14.0;
-            flame.param = 1;
-            self.push(flame);
-            self.light(candle + Vec3::Y * 0.35, 4.5, [1.0, 0.6, 0.28], 0.7, LightKind::Flicker);
+            self.reading_table(Vec3::new(tx, 0.0, tz));
         }
 
         // Chandelier.
-        let ch = Vec3::new(0.0, 5.6, 0.0);
-        for k in 0..12 {
-            let a = k as f32 / 12.0 * TAU;
-            let p = ch + Vec3::new(a.cos(), 0.0, a.sin()) * 1.3;
-            self.push(Inst::new(
-                p,
-                Quat::from_rotation_y(-a),
-                Vec3::new(0.08, 0.06, 0.72),
-                kind::WOOD,
-                [BRASS[0], BRASS[1], BRASS[2], 1.0],
-                0,
-            ));
-            if k % 2 == 0 {
-                self.push(Inst::aabox(
-                    p + Vec3::Y * 0.1,
-                    Vec3::new(0.05, 0.14, 0.05),
-                    kind::PLAIN,
-                    [0.8, 0.75, 0.6],
-                ));
-                let mut flame = Inst::aabox(
-                    p + Vec3::Y * 0.21,
-                    Vec3::new(0.03, 0.06, 0.03),
-                    kind::EMISSIVE,
-                    [1.0, 0.55, 0.18],
-                );
-                flame.color[3] = 14.0;
-                flame.param = 1;
-                self.push(flame);
-            }
-        }
-        for k in 0..3 {
-            let a = k as f32 / 3.0 * TAU;
-            let top = Vec3::new(0.0, HALL_H, 0.0);
-            let bottom = ch + Vec3::new(a.cos(), 0.0, a.sin()) * 1.3;
-            let d = top - bottom;
-            let rot = Quat::from_rotation_arc(Vec3::Y, d.normalize());
-            self.push(Inst::new(
-                (top + bottom) * 0.5,
-                rot,
-                Vec3::new(0.025, d.length(), 0.025),
-                kind::WOOD,
-                [0.1, 0.08, 0.05, 1.0],
-                0,
-            ));
-        }
-        self.light(ch + Vec3::Y * 0.2, 20.0, [1.0, 0.68, 0.38], 4.0, LightKind::Flicker);
+        self.chandelier(Vec3::new(0.0, 5.6, 0.0), HALL_H);
 
         // Fireplace on the south wall.
         let fz = HALL_Z;

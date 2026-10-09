@@ -1,5 +1,6 @@
 //! Player preferences, kept apart from the save so starting over keeps them.
 
+use crate::library::Layout;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -16,6 +17,8 @@ pub struct Settings {
     pub effects_volume: f32,
     /// Toggled with F11; restored at launch.
     pub fullscreen: bool,
+    /// The library played last (each keeps its own save).
+    pub library: Layout,
 }
 
 impl Default for Settings {
@@ -28,6 +31,7 @@ impl Default for Settings {
             music_volume: 0.8,
             effects_volume: 1.0,
             fullscreen: false,
+            library: Layout::Hall,
         }
     }
 }

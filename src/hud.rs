@@ -2,7 +2,7 @@
 
 use crate::catalog;
 use crate::game::{Aim, Game, UPGRADES, Upg, upg_def};
-use crate::library::ROWS;
+use crate::library::{LabelKind, Layout, ROWS};
 use crate::settings::Settings;
 use egui::{Align2, Color32, FontFamily, FontId, Pos2, Rect, RichText, Stroke, Vec2};
 use glam::{Mat4, Vec3, Vec4};
@@ -26,8 +26,10 @@ pub enum HudAction {
     CloseMenu,
     SettingsChanged,
     Quit,
-    /// Start a new library (confirmed).
+    /// Start this library over (confirmed).
     NewGame,
+    /// Go to the other library (its save, or a fresh one).
+    Switch(Layout),
 }
 
 const INK: Color32 = Color32::from_rgb(236, 224, 200);
@@ -104,22 +106,32 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
 
     // ---- World labels.
     let mut carrying = vec![false; g.lib.catalog.categories.len()];
+    let mut carrying_dept = vec![false; g.lib.catalog.departments.len()];
     for &b in &g.held {
-        carrying[g.lib.category_of_book(b)] = true;
+        let c = g.lib.category_of_book(b);
+        carrying[c] = true;
+        carrying_dept[g.lib.dept_of(c)] = true;
     }
+    let here = g.lib.level_at(g.player.pos);
     // Gather first so guide signs can be drawn last and clear the space under them.
     let mut plain: Vec<(Pos2, &str, FontId, Color32, Align2)> = Vec::new();
     let mut guides: Vec<(Pos2, &str, f32, f32, bool)> = Vec::new();
     for l in &g.lib.labels {
         let to_eye = eye - l.pos;
         let d = to_eye.length();
-        // Signs for categories you carry show from anywhere (dimmed when hidden).
-        let guide = l.is_sign && carrying[l.category];
+        // Signs for the categories (and departments) you carry show from anywhere on
+        // your floor (dimmed when hidden).
+        let (is_sign, guide, done) = match l.kind {
+            LabelKind::Shelf => (false, false, false),
+            LabelKind::Category(c) => (true, carrying[c], g.category_shelved[c] == g.lib.category_books[c]),
+            LabelKind::Department(d) => (true, carrying_dept[d], g.dept_shelved[d] == g.dept_total[d]),
+        };
+        let guide = guide && l.level == here;
         let facing = to_eye.dot(l.normal) > 0.0;
         if !facing && !guide {
             continue;
         }
-        let (max_d, size) = if l.is_sign {
+        let (max_d, size) = if is_sign {
             (34.0, (22.0 * 6.0 / d.max(3.0)).clamp(10.0, 26.0))
         } else {
             (3.2, 12.0)
@@ -136,8 +148,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         if guide {
             let pulse = (0.8 + 0.2 * (g.time * 3.0).sin()) * if seen { 1.0 } else { 0.55 };
             guides.push((p, &l.text, size.max(16.0), pulse, facing));
-        } else if l.is_sign {
-            let done = g.category_shelved[l.category] == g.lib.category_books[l.category];
+        } else if is_sign {
             let col = if done { Color32::from_rgb(255, 236, 190) } else { INK };
             plain.push((p, &l.text, serif(size), col.gamma_multiply(fade), Align2::CENTER_CENTER));
         } else {
@@ -337,7 +348,13 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                         .font(serif(14.0))
                         .color(INK),
                 );
+                // A few departments are all listed; many, only the open ones and the next.
+                let many = g.lib.catalog.departments.len() > 4;
+                let next = g.next_gate().map(|gate| g.lib.gates[gate].opens);
                 for (d, dept) in g.lib.catalog.departments.iter().enumerate() {
+                    if many && !g.dept_open(d) && Some(d) != next {
+                        continue;
+                    }
                     let name = &dept.name;
                     let frac = g.dept_shelved[d] as f32 / g.dept_total[d].max(1) as f32;
                     let label = if g.dept_open(d) {
@@ -594,6 +611,20 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 for style in [egui::TextStyle::Body, egui::TextStyle::Button] {
                     ui.style_mut().text_styles.insert(style, serif(15.0));
                 }
+                // Which library: each keeps its own place.
+                ui.horizontal(|ui| {
+                    for layout in Layout::ALL {
+                        let here = layout == g.layout;
+                        let text = RichText::new(layout.name())
+                            .font(serif(15.0))
+                            .color(if here { GOLD } else { DIM });
+                        let b = egui::Button::new(text).selected(here).frame(here);
+                        if ui.add(b).on_hover_text(layout.blurb()).clicked() && !here {
+                            actions.push(HudAction::Switch(layout));
+                        }
+                    }
+                });
+                ui.add_space(6.0);
                 if fresh {
                     let body = "The night librarian has gone missing, and the library has come undone. \
                         Thousands of books lie in piles across the floor.\n\n\
@@ -713,8 +744,8 @@ fn restart_controls(ui: &mut egui::Ui, hud: &mut Hud, actions: &mut Vec<HudActio
         }
         ui.label(
             RichText::new(
-                "Start a new library? Every book goes back on the floor, and your lumens and \
-                 upgrades are lost. Settings are kept.",
+                "Start this library over? Every book goes back on the floor, and its lumens and \
+                 upgrades are lost. Settings, and the other library, are kept.",
             )
             .font(serif(14.0))
             .color(INK),
