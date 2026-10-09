@@ -56,7 +56,6 @@ impl Inst {
     }
 
     /// Its corners, if its rotation only swaps or flips axes.
-    #[cfg(test)]
     pub fn axis_box(&self) -> Option<(Vec3, Vec3)> {
         let m = glam::Mat3::from_quat(Quat::from_array(self.rot));
         let square = (m.to_cols_array().iter()).all(|v| v.abs() < 1e-4 || (v.abs() - 1.0).abs() < 1e-4);

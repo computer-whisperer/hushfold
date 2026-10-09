@@ -24,11 +24,25 @@ so the hall gets visibly brighter and more colourful as you sort.
   The active book's slot (Sort Sense) pulses as a filled block; the active book
   in hand carries a bright rim.
 
+## The world
+`src/world.rs` is what the library is to everything that moves through it or
+looks across it: levels, floor slabs (anywhere a level has none is a hole),
+flights of stairs, solids and gates. Each solid says what it stops (bodies, books,
+sight): railings and chairs stop walking and throwing but are seen past, and a
+bookcase has a sight-only box above it so no one aims over its top. Bodies walk
+floors and stair slopes and are stopped by solids, floor edges and stair stone;
+sight by solids that stop it, floors, stair stone and closed gates; books build
+their heightfields from the same world. Generation (`src/library/`) declares each
+piece once: `decor` (drawn only), `solid` (drawn, and in the way), or parts drawn
+with one `collide` box standing for them. Pieces live in `kit.rs`; `hall.rs` and
+`great.rs` only place them. A test fails if two visible faces share a plane
+(z-fighting).
+
 ## Loose books
 Every book not shelved or carried is loose (`src/loose.rs`), simulated with
 semi-physics rather than rigid bodies (see SCALING.md for why):
 - Each level has a 4 cm heightfield holding the floor (or a hole where it has
-  none), stairs, furniture tops (furniture is a solid column from its floor) and
+  none), stair treads, furniture tops (furniture is a solid column from its floor) and
   every resting book's top, stored in 32×32-cell tiles allocated where books lie;
   a 0.5 m bucket grid indexes resting books for picking and gathering.
 - A resting book is a footprint with a planar underside. Dropping one fits it

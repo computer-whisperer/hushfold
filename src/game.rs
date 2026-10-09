@@ -7,6 +7,7 @@ use crate::library::*;
 use crate::loose::{Loose, Rest};
 use crate::nav::{Nav, Route};
 use crate::scene::Scene;
+use crate::world::{BODY_R, STEP_UP, Stops};
 use glam::{Mat4, Quat, Vec2, Vec3};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -16,11 +17,6 @@ use std::f32::consts::PI;
 pub const SEED: u64 = 0x4855_5348_464f_4c44;
 const EYE: f32 = 1.62;
 const SHELF_REACH: f32 = 4.2;
-const PLAYER_R: f32 = 0.3;
-/// Highest rise the player walks up (a stair); anything higher is a wall.
-const STEP_UP: f32 = 0.45;
-/// The player's height, for what they bump into.
-const BODY_H: f32 = 1.8;
 const HAND_VISIBLE: usize = 8;
 /// Shelving Aura by level: (radius in metres, books per second).
 const AURA_LEVELS: [(f32, f32); 4] = [(0.0, 0.0), (3.0, 2.0), (4.5, 4.0), (6.0, 8.0)];
@@ -319,7 +315,6 @@ pub struct Game {
     pub category_shelved: Vec<u32>,
     pub dept_total: Vec<u32>,
     pub dept_shelved: Vec<u32>,
-    pub gate_open: Vec<bool>,
     /// How much of each gate's veil is still drawn (1 closed, 0 gone).
     gate_fade: Vec<f32>,
     familiars: Vec<Familiar>,
@@ -396,7 +391,7 @@ impl Game {
         let pos = (0..n as u32).map(|b| loose.pose(b).0).collect();
         let rot = (0..n as u32).map(|b| loose.pose(b).1).collect();
         let mut rng = StdRng::seed_from_u64(0x5eed);
-        let ground = &lib.levels[0];
+        let ground = &lib.world.levels[0];
         let motes = (0..700)
             .map(|_| {
                 (
@@ -431,8 +426,7 @@ impl Game {
             category_shelved: vec![0; lib.catalog.categories.len()],
             dept_shelved: vec![0; dept_total.len()],
             dept_total,
-            gate_open: vec![false; lib.gates.len()],
-            gate_fade: vec![1.0; lib.gates.len()],
+            gate_fade: vec![1.0; lib.world.gates.len()],
             familiars: Vec::new(),
             particles: Vec::new(),
             motes,
@@ -458,9 +452,9 @@ impl Game {
                 |b| lib.books[b as usize].series,
                 lib.series.len(),
             ),
-            scene_gates: vec![false; lib.gates.len()],
+            scene_gates: vec![false; lib.world.gates.len()],
             loose,
-            nav: Nav::new(&lib),
+            nav: Nav::new(&lib.world, lib.spawn.0),
             sense_route: None,
             fov: 70.0,
             dirty_save: false,
@@ -549,7 +543,7 @@ impl Game {
 
     /// Books of the departments gate `g` counts still to shelve before it lifts.
     pub fn gate_books_left(&self, g: usize) -> u32 {
-        let gate = &self.lib.gates[g];
+        let gate = &self.lib.world.gates[g];
         let total: u32 = gate.counts.iter().map(|&d| self.dept_total[d]).sum();
         let done: u32 = gate.counts.iter().map(|&d| self.dept_shelved[d]).sum();
         let need = (total as f32 * gate.need).ceil() as u32;
@@ -558,27 +552,27 @@ impl Game {
 
     /// The first gate still closed.
     pub fn next_gate(&self) -> Option<usize> {
-        self.gate_open.iter().position(|&o| !o)
+        self.lib.world.open.iter().position(|&o| !o)
     }
 
     /// A department is open once the gate before it has lifted.
     pub fn dept_open(&self, d: usize) -> bool {
-        (self.lib.gates.iter().zip(&self.gate_open)).all(|(g, &open)| open || g.opens != d)
+        self.lib.world.closed_gates().all(|(_, g)| g.opens != d)
     }
 
     fn open_gate(&mut self, g: usize) {
-        self.gate_open[g] = true;
+        self.lib.world.open[g] = true;
         self.loose.set_gate(g, false);
         self.nav.set_gate(g, false);
     }
 
     /// Lift every gate whose departments are shelved far enough.
     fn check_gates(&mut self, audio: &mut Audio) {
-        for g in 0..self.lib.gates.len() {
-            if !self.gate_open[g] && self.gate_books_left(g) == 0 {
+        for g in 0..self.lib.world.gates.len() {
+            if !self.lib.world.open[g] && self.gate_books_left(g) == 0 {
                 self.open_gate(g);
                 audio.play(Sfx::Fanfare, 0.8);
-                let name = &self.lib.catalog.departments[self.lib.gates[g].opens].name;
+                let name = &self.lib.catalog.departments[self.lib.world.gates[g].opens].name;
                 self.toast(format!("The veil over the {name} lifts…"), [0.75, 0.6, 1.0], true);
             }
         }
@@ -586,7 +580,7 @@ impl Game {
 
     /// Script aid: lift every gate.
     pub fn open_all_gates(&mut self) {
-        for g in 0..self.lib.gates.len() {
+        for g in 0..self.lib.world.gates.len() {
             self.open_gate(g);
         }
     }
@@ -670,7 +664,7 @@ impl Game {
             };
             self.lantern_glow[c] += (target - self.lantern_glow[c]) * (1.0 - (-dt * 1.5).exp());
         }
-        for (f, &open) in self.gate_fade.iter_mut().zip(&self.gate_open) {
+        for (f, &open) in self.gate_fade.iter_mut().zip(&self.lib.world.open) {
             if open {
                 *f = (*f - dt * 0.25).max(0.0);
             }
@@ -685,20 +679,6 @@ impl Game {
                 self.hint = None;
             }
         }
-    }
-
-    /// Boxes the player bumps into standing with their feet at `feet`: furniture and
-    /// walls overlapping the body (not what they can step over or walk under), and
-    /// closed gates (with the gate's index).
-    fn solids_in_way(&self, feet: f32) -> impl Iterator<Item = (Vec3, Vec3, Option<usize>)> + '_ {
-        let body = move |mn: Vec3, mx: Vec3| mx.y > feet + STEP_UP && mn.y < feet + BODY_H;
-        let furniture = (self.lib.obstacles.iter())
-            .filter(move |o| body(o.min, o.max))
-            .map(|o| (o.min, o.max, None));
-        let gates = (self.lib.gates.iter().enumerate())
-            .filter(move |&(g, gate)| !self.gate_open[g] && body(gate.min, gate.max))
-            .map(|(g, gate)| (gate.min, gate.max, Some(g)));
-        furniture.chain(gates)
     }
 
     fn update_player(&mut self, dt: f32, input: &Input) {
@@ -716,8 +696,9 @@ impl Game {
         let k = 1.0 - (-dt * 10.0).exp();
         let walk = Vec3::new(self.player.vel.x, 0.0, self.player.vel.z).lerp(wish * speed, k);
         let pos = self.player.pos;
-        let lv = &self.lib.levels[self.lib.level_at(pos)];
-        let (lo, hi) = (lv.min + PLAYER_R + 0.1, lv.max - PLAYER_R - 0.1);
+        let world = &self.lib.world;
+        let lv = &world.levels[world.level_at(pos)];
+        let (lo, hi) = (lv.min + BODY_R + 0.1, lv.max - BODY_R - 0.1);
         // In steps short enough that nothing thin (a veil, a rail) is stepped over.
         let total = Vec2::new(walk.x, walk.z) * dt;
         let steps = (total.length() / 0.1).ceil().max(1.0) as usize;
@@ -731,11 +712,11 @@ impl Game {
             np.z += total.y / steps as f32;
             // Collide with what stands in the way (circle vs box in xz).
             for _ in 0..2 {
-                for (mn, mx, gate) in self.solids_in_way(feet) {
+                for (mn, mx, gate) in world.in_way(feet) {
                     let q = Vec2::new(np.x.clamp(mn.x, mx.x), np.z.clamp(mn.z, mx.z));
                     let d = Vec2::new(np.x, np.z) - q;
                     let l = d.length();
-                    if l >= PLAYER_R {
+                    if l >= BODY_R {
                         continue;
                     }
                     if l <= 1e-5 {
@@ -743,7 +724,7 @@ impl Game {
                         (np.x, np.z) = (from.x, from.z);
                         continue;
                     }
-                    let push = d / l * (PLAYER_R - l);
+                    let push = d / l * (BODY_R - l);
                     np.x += push.x;
                     np.z += push.y;
                     if gate.is_some() && Vec2::new(wish.x, wish.z).dot(-push.normalize_or_zero()) > 0.3 {
@@ -755,7 +736,7 @@ impl Game {
             np.z = np.z.clamp(lo.y, hi.y);
             // A rise too high to step onto is a wall: slide along it if one axis is
             // clear, else stay.
-            let walled = |x: f32, z: f32| self.lib.rises_at(Vec2::new(x, z), feet, STEP_UP, BODY_H);
+            let walled = |x: f32, z: f32| world.rises_at(Vec2::new(x, z), feet);
             if walled(np.x, np.z) {
                 if !walled(np.x, from.z) {
                     np.z = from.z;
@@ -766,7 +747,7 @@ impl Game {
                 }
             }
             // Stand on the floor or stair underfoot; step down stairs, fall off edges.
-            match self.lib.ground_at(Vec2::new(np.x, np.z), feet + STEP_UP) {
+            match world.ground(Vec2::new(np.x, np.z), feet + STEP_UP) {
                 Some(g) if g >= feet - 0.6 && vy <= 0.0 => {
                     np.y = g;
                     vy = 0.0;
@@ -800,45 +781,10 @@ impl Game {
         }
     }
 
-    /// The first thing that blocks sight along a ray (furniture, closed gates, floors),
-    /// within `max_t`.
-    fn ray_block(&self, o: Vec3, d: Vec3, max_t: f32) -> f32 {
-        let furniture = (self.lib.obstacles.iter())
-            .filter(|ob| ob.blocks_ray)
-            .map(|ob| (ob.min, ob.sight_max()));
-        let gates = (self.lib.gates.iter().zip(&self.gate_open))
-            .filter(|&(_, &open)| !open)
-            .map(|(g, _)| (g.min, g.max));
-        let floors = self.lib.slabs.iter().map(|s| {
-            let y = self.lib.levels[s.level].y;
-            (Vec3::new(s.min.x, y - SLAB, s.min.y), Vec3::new(s.max.x, y, s.max.y))
-        });
-        (furniture.chain(gates).chain(floors))
-            .filter_map(|(mn, mx)| Self::ray_aabb(o, d, mn, mx))
-            .fold(max_t, f32::min)
-    }
-
-    /// True if nothing that blocks rays lies between `a` and `b`.
-    pub fn line_of_sight(&self, a: Vec3, b: Vec3) -> bool {
-        let d = b - a;
-        let len = d.length();
-        let dir = d / len.max(1e-5);
-        self.ray_block(a, dir, f32::MAX) >= len - 0.15
-    }
-
-    fn ray_aabb(o: Vec3, d: Vec3, mn: Vec3, mx: Vec3) -> Option<f32> {
-        let inv = d.recip();
-        let t1 = (mn - o) * inv;
-        let t2 = (mx - o) * inv;
-        let tmin = t1.min(t2).max_element();
-        let tmax = t1.max(t2).min_element();
-        (tmax >= tmin.max(0.0)).then_some(tmin.max(0.0))
-    }
-
     fn compute_aim(&self) -> Aim {
         let o = self.player.eye();
         let d = self.player.forward();
-        let block = self.ray_block(o, d, f32::MAX);
+        let block = self.lib.world.ray(o, d, f32::MAX, Stops::SIGHT);
         let mut best = Aim::None;
         let mut best_t = f32::MAX;
         // Shelves.
@@ -1017,18 +963,12 @@ impl Game {
     /// Where a toss at the current charge leaves the hand, and how fast.
     fn toss_launch(&self) -> (Vec3, Vec3) {
         let (mut hand, _) = self.hand_xform(0);
-        // Flush against furniture or a closed gate the hand is inside it; leave from
-        // just short of it.
+        // Flush against something books can't pass (furniture, a closed gate) the hand
+        // is inside it; leave from just short of it.
         let eye = self.player.eye();
         let reach = hand - eye;
         let dir = reach.normalize();
-        let gates = (self.lib.gates.iter().zip(&self.gate_open))
-            .filter(|&(_, &open)| !open)
-            .map(|(g, _)| (g.min, g.max));
-        let hit = (self.lib.obstacles.iter().map(|o| (o.min, o.max)))
-            .chain(gates)
-            .filter_map(|(mn, mx)| Self::ray_aabb(eye, dir, mn, mx))
-            .fold(f32::MAX, f32::min);
+        let hit = self.lib.world.ray(eye, dir, f32::MAX, Stops::BOOKS);
         if hit < reach.length() {
             hand = eye + dir * (hit - 0.08).max(0.0);
         }
@@ -1490,7 +1430,7 @@ impl Game {
         if dir == Vec3::ZERO {
             dir = Vec3::Z;
         }
-        let floor = self.lib.ground_at(Vec2::new(top.x, top.z), top.y).unwrap_or(0.0);
+        let floor = self.lib.world.ground(Vec2::new(top.x, top.z), top.y).unwrap_or(0.0);
         let from = Vec3::new(top.x, floor, top.z) + dir * 1.6;
         self.look_at(from, top);
     }
@@ -1503,7 +1443,11 @@ impl Game {
             dir = Vec3::Z;
         }
         let at = Vec3::new(target.x, 0.0, target.z) + dir * dist;
-        let floor = self.lib.ground_at(Vec2::new(at.x, at.z), target.y + 0.5).unwrap_or(0.0);
+        let floor = self
+            .lib
+            .world
+            .ground(Vec2::new(at.x, at.z), target.y + 0.5)
+            .unwrap_or(0.0);
         self.look_at(Vec3::new(at.x, floor, at.z), target);
     }
 
@@ -1550,7 +1494,11 @@ impl Game {
     pub fn script_face_familiar(&mut self, i: usize) {
         if let Some(f) = self.familiars.get(i) {
             let p = f.pos;
-            let floor = self.lib.ground_at(Vec2::new(p.x + 1.2, p.z + 1.2), p.y).unwrap_or(0.0);
+            let floor = self
+                .lib
+                .world
+                .ground(Vec2::new(p.x + 1.2, p.z + 1.2), p.y)
+                .unwrap_or(0.0);
             let from = Vec3::new(p.x + 1.2, floor, p.z + 1.2);
             self.look_at(from, p);
         }
@@ -1711,7 +1659,7 @@ impl Game {
         scene.highlight(lit);
         let active = self.active_book().filter(|_| self.level(Upg::SortSense) > 0);
         scene.set_active(active.map(|b| (b, self.lib.books[b as usize].slot_pos)));
-        if scene_gates_changed(&mut self.scene_gates, &self.gate_open) {
+        if scene_gates_changed(&mut self.scene_gates, &self.lib.world.open) {
             scene.redraw_all();
         }
         for c in 0..scene.chunks.len() {
@@ -1866,7 +1814,7 @@ impl Game {
 
         // Moonbeams and veils.
         trans.extend_from_slice(&self.lib.static_trans);
-        for (gate, &fade) in self.lib.gates.iter().zip(&self.gate_fade) {
+        for (gate, &fade) in self.lib.world.gates.iter().zip(&self.gate_fade) {
             if fade > 0.0 {
                 let size = gate.max - gate.min;
                 // Drawn thinner than the solid it is.
@@ -2041,7 +1989,7 @@ impl Game {
             }
         }
         // Gates follow from what is shelved; lift them before anything is laid down.
-        for g in 0..self.lib.gates.len() {
+        for g in 0..self.lib.world.gates.len() {
             if self.gate_books_left(g) == 0 {
                 self.open_gate(g);
                 self.gate_fade[g] = 0.0;
@@ -2248,7 +2196,7 @@ mod tests {
             }) else {
                 break;
             };
-            let floor = g.lib.ground_at(Vec2::new(top.x, top.z), top.y).unwrap_or(0.0);
+            let floor = g.lib.world.ground(Vec2::new(top.x, top.z), top.y).unwrap_or(0.0);
             let at = g.nav.standable_near(Vec3::new(top.x, floor, top.z));
             let reach = g.gather_reach();
             let d = g.nav.distance(pos, at);
@@ -2607,7 +2555,7 @@ mod tests {
         assert_eq!(g.loose.heightfield_errors(), 0);
         let depts = g.lib.catalog.departments.len();
         for d in 0..depts {
-            if let Some(gate) = g.lib.gates.iter().position(|gate| gate.opens == d) {
+            if let Some(gate) = g.lib.world.gates.iter().position(|gate| gate.opens == d) {
                 g.open_gate(gate);
             }
             let stranded = (0..n)
@@ -2634,7 +2582,7 @@ mod tests {
         }
         let p = g.player.pos;
         assert!((p.y - 6.0).abs() < 0.01 && p.z < -6.0, "up: {p}");
-        assert_eq!(g.lib.level_at(p), 1);
+        assert_eq!(g.lib.world.level_at(p), 1);
         g.player.yaw = PI;
         for _ in 0..60 * 6 {
             g.update(1.0 / 60.0, &walk, &mut audio, true);
@@ -2675,11 +2623,11 @@ mod tests {
         let (lv, top) = g.loose.best_pile(|l, c, _| (l == 0).then(|| c.length())).unwrap();
         let books = g.loose.gather(lv, Vec2::new(top.x, top.z), 1.5, 40, |_| true);
         assert_eq!(books.len(), 40);
-        let ramps = g.lib.ramps.clone();
+        let flights = g.lib.world.flights.clone();
         for (i, &b) in books.iter().enumerate() {
-            let r = &ramps[i % ramps.len()];
+            let r = &flights[i % flights.len()];
             let (c, half) = ((r.min + r.max) * 0.5, (r.max - r.min) * 0.5);
-            let t = (i / ramps.len()) as f32 / 10.0 * 1.6 - 0.8;
+            let t = (i / flights.len()) as f32 / 10.0 * 1.6 - 0.8;
             let p = c + r.axis * half.dot(r.axis.abs()) * t;
             let from = Vec3::new(p.x, r.height(p) + 1.0, p.y);
             let rot = Quat::from_rotation_y(i as f32 * 0.7);
@@ -2998,12 +2946,12 @@ mod tests {
         for &b in &first {
             g.on_shelved(b, &mut audio, &mut thunks);
         }
-        assert!(g.gate_open[0] && !g.gate_open[1]);
+        assert!(g.lib.world.open[0] && !g.lib.world.open[1]);
         g.save();
         let mut l = Game::new(Layout::Great);
         assert!(l.load());
         assert_eq!(l.total_shelved(), g.total_shelved());
-        assert_eq!(l.gate_open, g.gate_open);
+        assert_eq!(l.lib.world.open, g.lib.world.open);
         assert_eq!(l.loose.heightfield_errors(), 0);
         for b in 0..g.lib.books.len() as u32 {
             if g.loose.is_resting(b) {

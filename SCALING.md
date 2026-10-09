@@ -111,7 +111,7 @@ the implementation's own choices, revisable at the phase boundary.
 - **Levels**: a floor elevation and roof height per level. Floors are slabs
   (rectangles); anywhere a level has no slab is a hole (the atrium well, stair
   wells). Stairs are ramps from one level's floor to the next: bodies (player,
-  nav) walk them as a smooth slope, books rest on their treads (`Ramp::tread`),
+  nav) walk them as a smooth slope, books rest on their treads (`Flight::tread`),
   so a thrown book lies on a step rather than sunk into it.
 - **Solids** have real vertical extent and stand on a level's floor (walls,
   railings, bookcases, tables). Slabs block sight and aim rays too.
@@ -187,3 +187,47 @@ the implementation's own choices, revisable at the phase boundary.
 - Familiars still fly straight (through walls); they are rebuilt as roles with
   stations in phase 3.
 - Choosing: starting over asks which library; each has its own save.
+
+## World model rebuild (between phases 2 and 3)
+
+Agreed 2026-10-09 ("let's proceed with the refactor"), after the Great Library's
+first polish pass. Further polish waits until gameplay has moved on, so it is not
+redone when a building is re-laid out.
+
+Why: solids were described twice (boxes drawn, boxes collided) and floors, stairs
+and gates were interpreted separately by player movement, the nav grid, book
+physics and aiming. Most of phase 2's world bugs came from that: the invisible
+wall under the upper stairs (movement misread them), walking into the side of the
+stairs (drawn, not collided), books sunk into the steps (physics saw a slope, the
+screen showed steps), and sight lines passing through stair stone.
+
+- **One world** (`src/world.rs`, owned by the Library): levels, floor slabs,
+  flights of stairs, solids, gates and which are open, raised roofs. It alone says
+  what the library is to bodies, books and sight; nothing else interprets a slab,
+  a flight or a gate.
+  - Bodies (the player, and the nav grid planning for them) stand on floors and
+    flight slopes, are stopped by solids that stop bodies where they overlap the
+    body above a step, by floor edges and stair stone rising into the body, and by
+    closed gates. The body's measures (step, height, radius) are defined there once.
+  - Sight and aim: solids that stop sight, floors, stair stone, closed gates.
+  - Books: `Loose` builds its heightfields from the world (floors, treads, solids
+    that stop books, closed gates) and keeps them current as gates open.
+- **Each solid says what it stops** (`Stops`: bodies, books, sight). Railings and
+  chairs stop bodies and books but are seen past; a bookcase has a sight-only box
+  above it (no aiming over its top). Replaces `blocks_ray` and `sight_top`.
+- **Each piece is declared once, by role**: `decor` (drawn only: small, or out of
+  reach), `solid` (drawn, and its box collides), `collide` (one box standing for a
+  piece the same helper draws in parts, like a bookcase; or an unseen guard, like a
+  railing's). A flight of stairs is declared once and its steps are drawn from its
+  own profile, the one books rest on.
+- **Pieces apart from layouts**: reusable pieces (bookcase, reading table,
+  chandelier, sconce, railing, newel, pier, door frame, panelling) live in
+  `library/kit.rs`; `hall.rs` and `great.rs` only place things. Chose this so work
+  on pieces survives re-laying out a building.
+- Guards: `no_coplanar_faces` (z-fighting), `books_rest_on_the_treads`, sight
+  blocked by stairs, and the Hall fingerprint (the Hall's collision must come out
+  identical so its saves hold; the Great Library's collision is kept too, so its
+  saves hold as well).
+- Deferred: a spatial index for solids (queries are linear scans; it goes inside
+  the world when a profile asks); raised floors (daises, landings) as floors with
+  their own height; familiars moving through the world (phase 3).

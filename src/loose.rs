@@ -12,7 +12,8 @@
 //! or a stairwell) its heightfield is a hole: a book flies up into the level above
 //! through a hole in that level's floor, and falls through holes to the level below.
 
-use crate::library::{Library, Ramp, SLAB};
+use crate::library::Library;
+use crate::world::{Flight, SLAB, Stops, World};
 use glam::{Mat3, Quat, Vec2, Vec3};
 
 /// Heightfield resolution.
@@ -139,7 +140,7 @@ struct Grid {
     /// Resting books by the 0.5 m cells their footprints overlap.
     buckets: Vec<Vec<u32>>,
     slabs: Vec<(Vec2, Vec2)>,
-    ramps: Vec<Ramp>,
+    flights: Vec<Flight>,
     /// Where the space reaches higher than `roof` (a skylit well).
     raised: Vec<(Vec2, Vec2, f32)>,
     /// Furniture standing on this level (min, max), rows of tall pieces merged.
@@ -153,16 +154,16 @@ fn xz(v: Vec3) -> Vec2 {
 }
 
 impl Grid {
-    fn new(lib: &Library, l: usize) -> Grid {
-        let lv = &lib.levels[l];
+    fn new(world: &World, l: usize) -> Grid {
+        let lv = &world.levels[l];
         let size = lv.max - lv.min;
         let fw = (size.x / CELL).ceil() as usize;
         let fh = (size.y / CELL).ceil() as usize;
         let (tw, th) = (fw.div_ceil(TILE), fh.div_ceil(TILE));
         let bw = (size.x / BUCKET).ceil() as usize;
         let bh = (size.y / BUCKET).ceil() as usize;
-        let solids = (lib.obstacles.iter())
-            .filter(|o| o.level == l)
+        let solids = (world.solids.iter())
+            .filter(|o| o.level == l && o.stops.has(Stops::BOOKS))
             .map(|o| (o.min, o.max))
             .collect();
         let mut g = Grid {
@@ -178,17 +179,17 @@ impl Grid {
             bw,
             bh,
             buckets: vec![Vec::new(); bw * bh],
-            slabs: (lib.slabs.iter())
+            slabs: (world.slabs.iter())
                 .filter(|s| s.level == l)
                 .map(|s| (s.min, s.max))
                 .collect(),
-            ramps: lib.ramps.iter().filter(|r| r.level == l).copied().collect(),
-            raised: (lib.raised_roofs.iter())
+            flights: world.flights.iter().filter(|f| f.level == l).copied().collect(),
+            raised: (world.raised_roofs.iter())
                 .filter(|r| r.0 == l)
                 .map(|&(_, mn, mx, y)| (mn, mx, y))
                 .collect(),
             solids: merge_solids(solids, lv.y),
-            gates: (lib.gates.iter().enumerate())
+            gates: (world.closed_gates())
                 .filter(|(_, g)| g.level == l)
                 .map(|(i, g)| (i, g.min, g.max))
                 .collect(),
@@ -221,7 +222,7 @@ impl Grid {
         let hi = lo + Vec2::splat((TILE + 1) as f32 * CELL);
         let over = |mn: Vec2, mx: Vec2| mn.x <= hi.x && mx.x >= lo.x && mn.y <= hi.y && mx.y >= lo.y;
         let slabs: Vec<(Vec2, Vec2)> = self.slabs.iter().copied().filter(|&(a, b)| over(a, b)).collect();
-        let ramps: Vec<&Ramp> = self.ramps.iter().filter(|r| over(r.min, r.max)).collect();
+        let flights: Vec<&Flight> = self.flights.iter().filter(|f| over(f.min, f.max)).collect();
         let solids: Vec<(Vec3, Vec3)> = self.all_solids().filter(|&(a, b)| over(xz(a), xz(b))).collect();
         let mut cells = vec![HOLE; TILE * TILE];
         for dz in 0..TILE {
@@ -232,9 +233,9 @@ impl Grid {
                 } else {
                     HOLE
                 };
-                for r in &ramps {
-                    if r.contains(c) {
-                        h = h.max(r.tread(c));
+                for f in &flights {
+                    if f.contains(c) {
+                        h = h.max(f.tread(c));
                     }
                 }
                 for &(mn, mx) in &solids {
@@ -412,7 +413,8 @@ pub struct Loose {
 }
 
 impl Loose {
-    /// Drop every book where the library's generator put it (every gate closed).
+    /// Drop every book where the library's generator put it (gates as the world has
+    /// them).
     pub fn new(lib: &Library) -> Self {
         let n = lib.books.len();
         let mut loose = Loose {
@@ -430,8 +432,8 @@ impl Loose {
             pose: vec![(Vec3::ZERO, Quat::IDENTITY); n],
             resting: vec![false; n],
             moved: vec![false; n],
-            grids: (0..lib.levels.len()).map(|l| Grid::new(lib, l)).collect(),
-            gate_boxes: lib.gates.iter().map(|g| (g.level, g.min, g.max)).collect(),
+            grids: (0..lib.world.levels.len()).map(|l| Grid::new(&lib.world, l)).collect(),
+            gate_boxes: lib.world.gates.iter().map(|g| (g.level, g.min, g.max)).collect(),
             flying: Vec::new(),
             easing: Vec::new(),
             eased: vec![false; n],

@@ -12,6 +12,7 @@ mod nav;
 mod platform;
 mod scene;
 mod settings;
+mod world;
 
 use audio::Audio;
 use game::{Game, Input};

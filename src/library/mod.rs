@@ -1,15 +1,19 @@
-//! The library's layout: levels and floors, bookcase faces, slot assignment, where the
-//! loose books start, static geometry and lights. `hall` builds the original hall;
-//! the pieces here are shared between layouts.
+//! The library's generation: its world (floors, stairs, solids, gates), bookcase
+//! faces and slot assignment, where the loose books start, static geometry and
+//! lights. `hall` and `great` lay out the two libraries from the pieces in `kit`;
+//! each piece is declared once, as `decor` (drawn only), `solid` (drawn and in the
+//! way) or drawn parts with one `collide` box standing for them.
 
 mod great;
 mod hall;
+mod kit;
 
 #[cfg(test)]
 pub use hall::{HALL_X, HALL_Z, VEIL_X};
 
 use crate::catalog::{self, Catalogue, Series};
 use crate::gfx::{Inst, kind};
+use crate::world::{Flight, Gate, Level, NOSING, SLAB, Slab, Stops, World};
 use glam::{Mat3, Quat, Vec2, Vec3};
 use rand::prelude::*;
 use std::collections::HashSet;
@@ -27,8 +31,6 @@ pub const SHELF_BASE: f32 = 0.14;
 pub const SHELF_STEP: f32 = 0.48;
 pub const BOARD_T: f32 = 0.03;
 pub const TABLE_H: f32 = 0.78;
-/// Thickness of a floor slab (its top is the level's floor).
-pub const SLAB: f32 = 0.35;
 
 const WALNUT: [f32; 3] = [0.16, 0.08, 0.035];
 const DARK_WOOD: [f32; 3] = [0.07, 0.035, 0.018];
@@ -73,24 +75,6 @@ pub struct BookInfo {
     pub slot_rot: Quat,
 }
 
-/// A solid piece of furniture or wall, standing on a level's floor.
-#[derive(Clone, Copy)]
-pub struct Obstacle {
-    pub min: Vec3,
-    pub max: Vec3,
-    pub blocks_ray: bool,
-    /// How high it blocks sight lines (bookcases block aiming over their tops too).
-    pub sight_top: f32,
-    pub level: usize,
-}
-
-impl Obstacle {
-    /// The far corner of the box that blocks sight.
-    pub fn sight_max(&self) -> Vec3 {
-        Vec3::new(self.max.x, self.sight_top, self.max.z)
-    }
-}
-
 /// Which library to build.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub enum Layout {
@@ -118,81 +102,6 @@ impl Layout {
             Layout::Great => "three storeys, ~120,000 books, a long while",
         }
     }
-}
-
-/// A storey: its floor elevation, how high its space reaches where no floor above
-/// caps it (unless a raised roof says otherwise), and the rectangle everything on
-/// it lies within.
-pub struct Level {
-    pub y: f32,
-    pub roof: f32,
-    pub min: Vec2,
-    pub max: Vec2,
-}
-
-/// A rectangle of floor on a level (its top at the level's elevation). Wherever a
-/// level has no slab is a hole: books fall through it and the player can't stand.
-pub struct Slab {
-    pub level: usize,
-    pub min: Vec2,
-    pub max: Vec2,
-}
-
-/// How far a stair's tread overhangs the riser below it.
-pub const NOSING: f32 = 0.03;
-
-/// A flight of `steps` stairs rising from `y0` at its low end to `y1` along `axis` (a
-/// unit axis direction) across its rectangle. Bodies walk it as a smooth slope; books
-/// rest on its treads.
-#[derive(Clone, Copy)]
-pub struct Ramp {
-    pub level: usize,
-    pub min: Vec2,
-    pub max: Vec2,
-    pub axis: Vec2,
-    pub y0: f32,
-    pub y1: f32,
-    pub steps: usize,
-}
-
-impl Ramp {
-    pub fn contains(&self, p: Vec2) -> bool {
-        p.cmpge(self.min).all() && p.cmple(self.max).all()
-    }
-
-    /// The flight's length, and how far along it `p` is (not clamped).
-    fn along(&self, p: Vec2) -> (f32, f32) {
-        let c = (self.min + self.max) * 0.5;
-        let len = (self.max - self.min).dot(self.axis.abs());
-        (len, (p - c).dot(self.axis) + len * 0.5)
-    }
-
-    /// Height of the slope above `p` (clamped to the ends).
-    pub fn height(&self, p: Vec2) -> f32 {
-        let (len, d) = self.along(p);
-        self.y0 + (self.y1 - self.y0) * (d / len).clamp(0.0, 1.0)
-    }
-
-    /// Height of the tread above `p`: step `k` (from 0) rises to `k + 1` rises over
-    /// its stretch of the run, and its tread reaches `NOSING` past its riser.
-    pub fn tread(&self, p: Vec2) -> f32 {
-        let (len, d) = self.along(p);
-        let run = len / self.steps as f32;
-        let k = ((d + NOSING) / run).floor().clamp(0.0, (self.steps - 1) as f32);
-        self.y0 + (self.y1 - self.y0) * (k + 1.0) / self.steps as f32
-    }
-}
-
-/// A veil across the way into a department: a thin solid until the departments it
-/// counts are shelved to `need` of their books.
-pub struct Gate {
-    pub level: usize,
-    pub min: Vec3,
-    pub max: Vec3,
-    /// The department it opens.
-    pub opens: usize,
-    pub counts: Vec<usize>,
-    pub need: f32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -235,16 +144,10 @@ pub struct Library {
     pub books: Vec<BookInfo>,
     pub faces: Vec<Face>,
     pub runs: Vec<[Vec<Run>; ROWS]>,
-    pub levels: Vec<Level>,
-    pub slabs: Vec<Slab>,
-    pub ramps: Vec<Ramp>,
-    /// Where a level's space reaches higher than its roof: (level, min, max, height).
-    pub raised_roofs: Vec<(usize, Vec2, Vec2, f32)>,
-    pub gates: Vec<Gate>,
+    pub world: World,
     /// Where each book is first dropped, in order: (book, level, point, direction of
     /// its length).
     pub drops: Vec<(u32, usize, Vec2, Vec2)>,
-    pub obstacles: Vec<Obstacle>,
     pub static_insts: Vec<Inst>,
     /// Translucent static geometry (moonbeams).
     pub static_trans: Vec<Inst>,
@@ -273,13 +176,8 @@ impl Library {
             books: Vec::new(),
             faces: Vec::new(),
             runs: Vec::new(),
-            levels: Vec::new(),
-            slabs: Vec::new(),
-            ramps: Vec::new(),
-            raised_roofs: Vec::new(),
-            gates: Vec::new(),
+            world: World::default(),
             drops: Vec::new(),
-            obstacles: Vec::new(),
             static_insts: Vec::new(),
             static_trans: Vec::new(),
             lights: Vec::new(),
@@ -304,38 +202,9 @@ impl Library {
         self.series[self.books[b as usize].series as usize].category
     }
 
-    /// Heights of every floor and stair surface over `p`.
-    pub fn surfaces(&self, p: Vec2) -> impl Iterator<Item = f32> + '_ {
-        let slabs = (self.slabs.iter())
-            .filter(move |s| p.cmpge(s.min).all() && p.cmple(s.max).all())
-            .map(|s| self.levels[s.level].y);
-        let ramps = (self.ramps.iter())
-            .filter(move |r| r.contains(p))
-            .map(move |r| r.height(p));
-        slabs.chain(ramps)
-    }
-
-    /// True if something at `p` rises in the way of a body standing at `feet`: the
-    /// edge of a floor higher than a step but below the head, or a flight of stairs
-    /// whose stone (from its own floor up to its treads) fills the body's height above
-    /// a step. A flight on the floor above is overhead, not in the way.
-    pub fn rises_at(&self, p: Vec2, feet: f32, step: f32, head: f32) -> bool {
-        let slab = (self.slabs.iter())
-            .filter(|s| p.cmpge(s.min).all() && p.cmple(s.max).all())
-            .any(|s| (feet + step..feet + head).contains(&self.levels[s.level].y));
-        let stairs = (self.ramps.iter())
-            .any(|r| r.contains(p) && r.height(p) > feet + step && self.levels[r.level].y < feet + head);
-        slab || stairs
-    }
-
-    /// The highest floor or stair surface under `p` that is no higher than `below`.
-    pub fn ground_at(&self, p: Vec2, below: f32) -> Option<f32> {
-        self.surfaces(p).filter(|&y| y <= below).max_by(f32::total_cmp)
-    }
-
     /// The departments a gate counts, by name ("West Wing", "Astronomy and Botany").
     pub fn gate_counts_names(&self, g: usize) -> String {
-        let names: Vec<&str> = (self.gates[g].counts.iter())
+        let names: Vec<&str> = (self.world.gates[g].counts.iter())
             .map(|&d| self.catalog.departments[d].name.as_str())
             .collect();
         match names.as_slice() {
@@ -345,34 +214,22 @@ impl Library {
         }
     }
 
-    /// The level whose floor (or stair) `p` stands on or above.
-    pub fn level_at(&self, p: Vec3) -> usize {
-        let Some(g) = self.ground_at(Vec2::new(p.x, p.z), p.y + 0.5) else {
-            return 0;
-        };
-        // A ramp belongs to the level it rises from.
-        (0..self.levels.len())
-            .rev()
-            .find(|&l| self.levels[l].y <= g + 1e-3)
-            .unwrap_or(0)
-    }
-
-    fn push(&mut self, i: Inst) {
+    /// Drawn only: small, or out of reach, so in nothing's way.
+    fn decor(&mut self, i: Inst) {
         self.static_insts.push(i);
     }
 
-    fn obstacle(&mut self, min: Vec3, max: Vec3, blocks_ray: bool) {
-        let level = (0..self.levels.len())
-            .rev()
-            .find(|&l| self.levels[l].y <= min.y + 1e-3)
-            .unwrap_or(0);
-        self.obstacles.push(Obstacle {
-            min,
-            max,
-            blocks_ray,
-            sight_top: max.y,
-            level,
-        });
+    /// Drawn, and its box is in the way of what `stops` says.
+    fn solid(&mut self, i: Inst, stops: Stops) {
+        let (min, max) = i.axis_box().expect("a solid is an axis-aligned box");
+        self.decor(i);
+        self.collide(min, max, stops);
+    }
+
+    /// In the way of what `stops` says, drawn by its own helper's other calls: one box
+    /// for a piece drawn in parts (a bookcase), or an unseen guard (a railing's).
+    fn collide(&mut self, min: Vec3, max: Vec3, stops: Stops) {
+        self.world.add_solid(min, max, stops);
     }
 
     fn light(&mut self, pos: Vec3, radius: f32, color: [f32; 3], intensity: f32, kind: LightKind) {
@@ -383,210 +240,6 @@ impl Library {
             intensity,
             kind,
         });
-    }
-
-    /// A brass wall sconce with a candle flame, lighting the room in front of it.
-    fn sconce(&mut self, p: Vec3, n: Vec3) {
-        self.push(Inst::aabox(p - n * 0.08, Vec3::new(0.12, 0.3, 0.12), kind::WOOD, BRASS));
-        self.push(Inst::aabox(
-            p + Vec3::Y * 0.12,
-            Vec3::new(0.06, 0.12, 0.06),
-            kind::EMISSIVE,
-            [0.9, 0.85, 0.7],
-        ));
-        let mut flame = Inst::aabox(
-            p + Vec3::Y * 0.24,
-            Vec3::new(0.05, 0.1, 0.05),
-            kind::EMISSIVE,
-            [1.0, 0.55, 0.18],
-        );
-        flame.color[3] = 12.0;
-        flame.param = 1;
-        self.push(flame);
-        self.light(
-            p + n * 0.4 + Vec3::Y * 0.3,
-            8.0,
-            [1.0, 0.62, 0.3],
-            1.3,
-            LightKind::Flicker,
-        );
-    }
-
-    /// A reading table centred at `c` (on the floor), with four chairs and a candle.
-    fn reading_table(&mut self, c: Vec3) {
-        self.push(Inst::aabox(
-            c + Vec3::Y * (TABLE_H - 0.03),
-            Vec3::new(2.4, 0.06, 1.2),
-            kind::WOOD,
-            WALNUT,
-        ));
-        for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-            self.push(Inst::aabox(
-                c + Vec3::new(sx * 1.08, (TABLE_H - 0.06) * 0.5, sz * 0.48),
-                Vec3::new(0.09, TABLE_H - 0.06, 0.09),
-                kind::WOOD,
-                DARK_WOOD,
-            ));
-        }
-        self.obstacle(c - Vec3::new(1.25, 0.0, 0.65), c + Vec3::new(1.25, TABLE_H, 0.65), true);
-        for sz in [-1.0f32, 1.0] {
-            for sx in [-0.6f32, 0.6] {
-                let ch = c + Vec3::new(sx, 0.0, sz * 1.0);
-                self.push(Inst::aabox(
-                    ch + Vec3::Y * 0.45,
-                    Vec3::new(0.48, 0.05, 0.46),
-                    kind::WOOD,
-                    [0.2, 0.09, 0.04],
-                ));
-                self.push(Inst::aabox(
-                    ch + Vec3::new(0.0, 0.75, sz * 0.2),
-                    Vec3::new(0.44, 0.6, 0.04),
-                    kind::WOOD,
-                    [0.2, 0.09, 0.04],
-                ));
-                for (lx, lz) in [(-0.2, -0.2), (0.2, -0.2), (-0.2, 0.2), (0.2, 0.2)] {
-                    self.push(Inst::aabox(
-                        ch + Vec3::new(lx, 0.22, lz),
-                        Vec3::new(0.04, 0.44, 0.04),
-                        kind::WOOD,
-                        DARK_WOOD,
-                    ));
-                }
-                self.obstacle(ch - Vec3::new(0.26, 0.0, 0.26), ch + Vec3::new(0.26, 1.05, 0.26), false);
-            }
-        }
-        let candle = c + Vec3::new(0.7, TABLE_H, 0.0);
-        self.push(Inst::aabox(
-            candle + Vec3::Y * 0.02,
-            Vec3::new(0.14, 0.04, 0.14),
-            kind::WOOD,
-            BRASS,
-        ));
-        self.push(Inst::aabox(
-            candle + Vec3::Y * 0.11,
-            Vec3::new(0.05, 0.16, 0.05),
-            kind::PLAIN,
-            [0.8, 0.75, 0.6],
-        ));
-        let mut flame = Inst::aabox(
-            candle + Vec3::Y * 0.22,
-            Vec3::new(0.025, 0.05, 0.025),
-            kind::EMISSIVE,
-            [1.0, 0.55, 0.18],
-        );
-        flame.color[3] = 14.0;
-        flame.param = 1;
-        self.push(flame);
-        self.light(candle + Vec3::Y * 0.35, 4.5, [1.0, 0.6, 0.28], 0.7, LightKind::Flicker);
-    }
-
-    /// A ring chandelier at `ch` hung on chains from `top_y`.
-    fn chandelier(&mut self, ch: Vec3, top_y: f32) {
-        for k in 0..12 {
-            let a = k as f32 / 12.0 * TAU;
-            let p = ch + Vec3::new(a.cos(), 0.0, a.sin()) * 1.3;
-            self.push(Inst::new(
-                p,
-                Quat::from_rotation_y(-a),
-                Vec3::new(0.08, 0.06, 0.72),
-                kind::WOOD,
-                [BRASS[0], BRASS[1], BRASS[2], 1.0],
-                0,
-            ));
-            if k % 2 == 0 {
-                self.push(Inst::aabox(
-                    p + Vec3::Y * 0.1,
-                    Vec3::new(0.05, 0.14, 0.05),
-                    kind::PLAIN,
-                    [0.8, 0.75, 0.6],
-                ));
-                let mut flame = Inst::aabox(
-                    p + Vec3::Y * 0.21,
-                    Vec3::new(0.03, 0.06, 0.03),
-                    kind::EMISSIVE,
-                    [1.0, 0.55, 0.18],
-                );
-                flame.color[3] = 14.0;
-                flame.param = 1;
-                self.push(flame);
-            }
-        }
-        for k in 0..3 {
-            let a = k as f32 / 3.0 * TAU;
-            let top = Vec3::new(ch.x, top_y, ch.z);
-            let bottom = ch + Vec3::new(a.cos(), 0.0, a.sin()) * 1.3;
-            let d = top - bottom;
-            let rot = Quat::from_rotation_arc(Vec3::Y, d.normalize());
-            self.push(Inst::new(
-                (top + bottom) * 0.5,
-                rot,
-                Vec3::new(0.025, d.length(), 0.025),
-                kind::WOOD,
-                [0.1, 0.08, 0.05, 1.0],
-                0,
-            ));
-        }
-        self.light(ch + Vec3::Y * 0.2, 20.0, [1.0, 0.68, 0.38], 4.0, LightKind::Flicker);
-    }
-
-    /// A double-sided bookcase standing at `c` (floor level), running along x with its
-    /// faces toward ±z, or (`along_x` false) running along z, faces toward ±x.
-    fn build_unit(&mut self, c: Vec3, along_x: bool) {
-        // Boxes are laid out for a case along x; `sw` turns offsets and sizes.
-        let sw = |v: Vec3| if along_x { v } else { Vec3::new(v.z, v.y, v.x) };
-        let part = |lib: &mut Self, off: Vec3, size: Vec3, rgb: [f32; 3]| {
-            lib.push(Inst::aabox(c + sw(off), sw(size), kind::WOOD, rgb));
-        };
-        let hw = UNIT_W * 0.5;
-        let hd = UNIT_DEPTH * 0.5;
-        for s in [-1.0, 1.0] {
-            part(
-                self,
-                Vec3::new(s * (hw - SIDE_T * 0.5), UNIT_H * 0.5, 0.0),
-                Vec3::new(SIDE_T, UNIT_H, UNIT_DEPTH),
-                WALNUT,
-            );
-        }
-        part(
-            self,
-            Vec3::Y * (UNIT_H + 0.04),
-            Vec3::new(UNIT_W + 0.08, 0.08, UNIT_DEPTH + 0.08),
-            WALNUT,
-        );
-        part(
-            self,
-            Vec3::Y * (UNIT_H + 0.105),
-            // As wide as the pitch, so the caps of a row of cases meet without overlapping.
-            Vec3::new(UNIT_PITCH, 0.05, UNIT_DEPTH + 0.16),
-            [0.12, 0.06, 0.028],
-        );
-        part(
-            self,
-            Vec3::Y * (SHELF_BASE * 0.5),
-            Vec3::new(UNIT_W - 0.02, SHELF_BASE, UNIT_DEPTH - 0.04),
-            [0.1, 0.05, 0.022],
-        );
-        part(
-            self,
-            Vec3::Y * (UNIT_H * 0.5),
-            Vec3::new(UNIT_W - 2.0 * SIDE_T, UNIT_H, 0.04),
-            DARK_WOOD,
-        );
-        for nz in [-1.0f32, 1.0] {
-            for i in 1..ROWS {
-                let y = SHELF_BASE + i as f32 * SHELF_STEP;
-                part(
-                    self,
-                    Vec3::new(0.0, y - BOARD_T * 0.5, nz * (0.02 + FACE_DEPTH * 0.5)),
-                    Vec3::new(UNIT_W - 2.0 * SIDE_T, BOARD_T, FACE_DEPTH),
-                    WALNUT,
-                );
-            }
-        }
-        // Solid to the cornice; blocks sight a good way above it.
-        let half = sw(Vec3::new(hw + 0.04, 0.0, hd + 0.04));
-        self.obstacle(c - half, c + half + Vec3::Y * (UNIT_H + 0.13), true);
-        self.obstacles.last_mut().unwrap().sight_top = c.y + UNIT_H + 1.2;
     }
 
     /// A category's shelves: `cases` (front-plane centre at floor level, in reading
@@ -626,8 +279,8 @@ impl Library {
             [ccol[0], ccol[1], ccol[2], 0.08],
             0,
         );
-        self.push(plaque);
-        self.push(Inst::aabox(
+        self.decor(plaque);
+        self.decor(Inst::aabox(
             sign_pos - Vec3::Y * 0.21 - normal * 0.02,
             Vec3::new(0.06, 0.12, 0.06),
             kind::WOOD,
@@ -638,22 +291,22 @@ impl Library {
             normal,
             text: self.catalog.categories[cat].name.clone(),
             kind: LabelKind::Category(cat),
-            level: self.level_at(mid_center),
+            level: self.world.level_at(mid_center),
         });
         let lantern = mid_center + Vec3::Y * (UNIT_H + 0.95) + normal * 0.05;
-        self.push(Inst::aabox(
+        self.decor(Inst::aabox(
             lantern + Vec3::Y * 0.16,
             Vec3::new(0.22, 0.04, 0.22),
             kind::WOOD,
             BRASS,
         ));
-        self.push(Inst::aabox(
+        self.decor(Inst::aabox(
             lantern - Vec3::Y * 0.16,
             Vec3::new(0.2, 0.04, 0.2),
             kind::WOOD,
             BRASS,
         ));
-        self.push(Inst::aabox(
+        self.decor(Inst::aabox(
             lantern + Vec3::Y * 0.5,
             Vec3::new(0.02, 0.6, 0.02),
             kind::WOOD,
@@ -772,7 +425,7 @@ impl Library {
                 let text = format!("{} – {}", key(runs[0].series), key(runs[runs.len() - 1].series));
                 let face = &self.faces[f];
                 let pos = face.center + Vec3::Y * (row_floor_y(row) - BOARD_T * 0.5) + face.normal * 0.02;
-                let level = self.level_at(face.center);
+                let level = self.world.level_at(face.center);
                 self.labels.push(Label {
                     pos,
                     normal: face.normal,

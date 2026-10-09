@@ -112,7 +112,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         carrying[c] = true;
         carrying_dept[g.lib.dept_of(c)] = true;
     }
-    let here = g.lib.level_at(g.player.pos);
+    let here = g.lib.world.level_at(g.player.pos);
     // Gather first so guide signs can be drawn last and clear the space under them.
     let mut plain: Vec<(Pos2, &str, FontId, Color32, Align2)> = Vec::new();
     let mut guides: Vec<(Pos2, &str, f32, f32, bool)> = Vec::new();
@@ -139,7 +139,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         if d > max_d && !guide {
             continue;
         }
-        let seen = facing && g.line_of_sight(eye, l.pos);
+        let seen = facing && g.lib.world.line_of_sight(eye, l.pos);
         if !seen && !guide {
             continue;
         }
@@ -350,7 +350,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 );
                 // A few departments are all listed; many, only the open ones and the next.
                 let many = g.lib.catalog.departments.len() > 4;
-                let next = g.next_gate().map(|gate| g.lib.gates[gate].opens);
+                let next = g.next_gate().map(|gate| g.lib.world.gates[gate].opens);
                 for (d, dept) in g.lib.catalog.departments.iter().enumerate() {
                     if many && !g.dept_open(d) && Some(d) != next {
                         continue;
@@ -378,7 +378,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 }
                 if let Some(gate) = g.next_gate() {
                     let left = g.gate_books_left(gate);
-                    let name = &g.lib.catalog.departments[g.lib.gates[gate].opens].name;
+                    let name = &g.lib.catalog.departments[g.lib.world.gates[gate].opens].name;
                     ui.label(
                         RichText::new(format!("{left} more to open the {name}"))
                             .font(serif(12.0))

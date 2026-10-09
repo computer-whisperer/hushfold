@@ -12,13 +12,13 @@ const CASES_PER_CATEGORY: usize = 3;
 const WINDOWS_X: [f32; 8] = [-20.0, -15.5, -7.0, -2.3, 2.3, 7.0, 15.5, 20.0];
 
 pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
-    lib.levels.push(Level {
+    lib.world.levels.push(Level {
         y: 0.0,
         roof: HALL_H,
         min: Vec2::new(-HALL_X, -HALL_Z),
         max: Vec2::new(HALL_X, HALL_Z),
     });
-    lib.slabs.push(Slab {
+    lib.world.slabs.push(Slab {
         level: 0,
         min: Vec2::new(-HALL_X, -HALL_Z),
         max: Vec2::new(HALL_X, HALL_Z),
@@ -29,7 +29,7 @@ pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
     lib.build_center();
     lib.build_piles(rng);
     // The veil hangs between the east columns until 60% of the West Wing is home.
-    lib.gates.push(Gate {
+    lib.world.add_gate(Gate {
         level: 0,
         min: Vec3::new(VEIL_X - 0.05, 0.0, -HALL_Z),
         max: Vec3::new(VEIL_X + 0.05, HALL_H, HALL_Z),
@@ -58,40 +58,40 @@ impl Library {
     fn build_hall(&mut self) {
         let (hx, hz, hh) = (HALL_X, HALL_Z, HALL_H);
         let floor_col = [0.30, 0.16, 0.075];
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             Vec3::new(-hx, -0.2, -hz),
             Vec3::new(hx, 0.0, hz),
             kind::FLOOR,
             floor_col,
         ));
-        // Walls.
+        // Walls (drawn only: the level's bounds hold bodies and books at them).
         let t = 0.5;
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             Vec3::new(-hx - t, 0.0, -hz - t),
             Vec3::new(hx + t, hh, -hz),
             kind::STONE,
             STONE,
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             Vec3::new(-hx - t, 0.0, hz),
             Vec3::new(hx + t, hh, hz + t),
             kind::STONE,
             STONE,
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             Vec3::new(-hx - t, 0.0, -hz),
             Vec3::new(-hx, hh, hz),
             kind::STONE,
             STONE,
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             Vec3::new(hx, 0.0, -hz),
             Vec3::new(hx + t, hh, hz),
             kind::STONE,
             STONE,
         ));
         // Ceiling and beams.
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             Vec3::new(-hx - t, hh, -hz - t),
             Vec3::new(hx + t, hh + 0.3, hz + t),
             kind::WOOD,
@@ -99,7 +99,7 @@ impl Library {
         ));
         let mut x = -hx + 2.0;
         while x < hx {
-            self.push(Inst::minmax(
+            self.decor(Inst::minmax(
                 Vec3::new(x - 0.18, hh - 0.45, -hz),
                 Vec3::new(x + 0.18, hh, hz),
                 kind::WOOD,
@@ -110,25 +110,25 @@ impl Library {
         // Wainscot panelling with a rail.
         let wh = 1.15;
         let wc = [0.13, 0.065, 0.03];
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             Vec3::new(-hx, 0.0, -hz),
             Vec3::new(hx, wh, -hz + 0.06),
             kind::WOOD,
             wc,
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             Vec3::new(-hx, 0.0, hz - 0.06),
             Vec3::new(hx, wh, hz),
             kind::WOOD,
             wc,
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             Vec3::new(-hx, 0.0, -hz),
             Vec3::new(-hx + 0.06, wh, hz),
             kind::WOOD,
             wc,
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             Vec3::new(hx - 0.06, 0.0, -hz),
             Vec3::new(hx, wh, hz),
             kind::WOOD,
@@ -140,32 +140,36 @@ impl Library {
             (Vec3::new(-hx, wh, -hz), Vec3::new(-hx + 0.1, wh + 0.06, hz)),
             (Vec3::new(hx - 0.1, wh, -hz), Vec3::new(hx, wh + 0.06, hz)),
         ] {
-            self.push(Inst::minmax(a, b, kind::WOOD, WALNUT));
+            self.decor(Inst::minmax(a, b, kind::WOOD, WALNUT));
         }
 
         // Columns flanking the reading room (the veil hangs between the east ones).
         for sx in [-VEIL_X, VEIL_X] {
             for z in [-16.0, -8.0, 8.0, 16.0] {
                 let c = Vec3::new(sx, 0.0, z);
-                self.push(Inst::aabox(
+                self.decor(Inst::aabox(
                     c + Vec3::Y * hh * 0.5,
                     Vec3::new(0.7, hh, 0.7),
                     kind::STONE,
                     [0.42, 0.39, 0.35],
                 ));
-                self.push(Inst::aabox(
+                self.decor(Inst::aabox(
                     c + Vec3::Y * 0.2,
                     Vec3::new(0.95, 0.4, 0.95),
                     kind::STONE,
                     [0.3, 0.28, 0.25],
                 ));
-                self.push(Inst::aabox(
+                self.decor(Inst::aabox(
                     c + Vec3::Y * (hh - 0.6),
                     Vec3::new(0.95, 0.3, 0.95),
                     kind::STONE,
                     [0.3, 0.28, 0.25],
                 ));
-                self.obstacle(c - Vec3::new(0.48, 0.0, 0.48), c + Vec3::new(0.48, hh, 0.48), true);
+                self.collide(
+                    c - Vec3::new(0.48, 0.0, 0.48),
+                    c + Vec3::new(0.48, hh, 0.48),
+                    Stops::ALL,
+                );
             }
         }
 
@@ -180,23 +184,23 @@ impl Library {
                 [0.32, 0.42, 0.85, 1.2],
                 0,
             );
-            self.push(glass);
+            self.decor(glass);
             // Sill, lintel and jambs: the jambs stand under the lintel and between the
             // ends of sill and lintel, so no two faces share a plane.
-            self.push(Inst::aabox(
+            self.decor(Inst::aabox(
                 c + Vec3::new(0.0, -2.2, 0.12),
                 Vec3::new(2.1, 0.14, 0.3),
                 kind::STONE,
                 [0.45, 0.42, 0.38],
             ));
-            self.push(Inst::aabox(
+            self.decor(Inst::aabox(
                 c + Vec3::new(0.0, 2.2, 0.1),
                 Vec3::new(2.1, 0.2, 0.24),
                 kind::STONE,
                 [0.45, 0.42, 0.38],
             ));
             for s in [-1.0, 1.0] {
-                self.push(Inst::aabox(
+                self.decor(Inst::aabox(
                     c + Vec3::new(s * 0.85, -0.1, 0.08),
                     Vec3::new(0.2, 4.4, 0.2),
                     kind::STONE,
@@ -234,7 +238,7 @@ impl Library {
             // Unit geometry.
             for &rz in &rows_z {
                 for &cx in &xs {
-                    self.build_unit(Vec3::new(cx, 0.0, rz), true);
+                    self.bookcase(Vec3::new(cx, 0.0, rz), true);
                 }
             }
             let mut cat = self.catalog.departments[wing].categories.start;
@@ -266,7 +270,7 @@ impl Library {
             [0.28, 0.035, 0.03],
         );
         rug.param = second[0] | (second[1] << 8) | (second[2] << 16);
-        self.push(rug);
+        self.decor(rug);
 
         // Reading tables with chairs and candles.
         for (tx, tz) in [(-4.5f32, -2.6f32), (4.5, -2.6), (-4.5, 2.6), (4.5, 2.6)] {
@@ -280,43 +284,43 @@ impl Library {
         let fz = HALL_Z;
         let fc = Vec3::new(0.0, 0.0, fz);
         let st = [0.4, 0.37, 0.33];
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             fc + Vec3::new(-2.2, 0.0, -0.9),
             fc + Vec3::new(-1.4, 2.6, 0.0),
             kind::STONE,
             st,
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             fc + Vec3::new(1.4, 0.0, -0.9),
             fc + Vec3::new(2.2, 2.6, 0.0),
             kind::STONE,
             st,
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             fc + Vec3::new(-2.4, 2.0, -1.0),
             fc + Vec3::new(2.4, 2.7, 0.0),
             kind::STONE,
             st,
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             fc + Vec3::new(-2.5, 2.7, -1.1),
             fc + Vec3::new(2.5, 2.85, 0.0),
             kind::WOOD,
             WALNUT,
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             fc + Vec3::new(-1.6, 2.85, -0.6),
             fc + Vec3::new(1.6, HALL_H, 0.0),
             kind::STONE,
             [0.33, 0.3, 0.27],
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             fc + Vec3::new(-2.4, 0.0, -1.6),
             fc + Vec3::new(2.4, 0.08, -0.9),
             kind::STONE,
             [0.25, 0.23, 0.21],
         ));
-        self.push(Inst::minmax(
+        self.decor(Inst::minmax(
             fc + Vec3::new(-1.4, 0.0, -0.5),
             fc + Vec3::new(1.4, 2.0, -0.4),
             kind::PLAIN,
@@ -324,7 +328,7 @@ impl Library {
         ));
         for (i, (x, ang)) in [(-0.3f32, 0.3f32), (0.25, -0.25), (0.0, 0.05)].iter().enumerate() {
             let p = fc + Vec3::new(*x, 0.12 + i as f32 * 0.07, -0.75);
-            self.push(Inst::new(
+            self.decor(Inst::new(
                 p,
                 Quat::from_rotation_y(*ang),
                 Vec3::new(0.9, 0.14, 0.14),
@@ -344,11 +348,19 @@ impl Library {
             );
             flame.color[3] = 8.0;
             flame.param = 1;
-            self.push(flame);
+            self.decor(flame);
         }
-        self.obstacle(fc + Vec3::new(-2.5, 0.0, -1.7), fc + Vec3::new(2.5, 3.0, 0.0), true);
+        self.collide(
+            fc + Vec3::new(-2.5, 0.0, -1.7),
+            fc + Vec3::new(2.5, 3.0, 0.0),
+            Stops::ALL,
+        );
         // The chimney breast, up to the ceiling.
-        self.obstacle(fc + Vec3::new(-1.6, 0.0, -0.6), fc + Vec3::new(1.6, HALL_H, 0.0), true);
+        self.collide(
+            fc + Vec3::new(-1.6, 0.0, -0.6),
+            fc + Vec3::new(1.6, HALL_H, 0.0),
+            Stops::ALL,
+        );
         self.light(
             fc + Vec3::new(0.0, 0.8, -1.6),
             11.0,
@@ -410,7 +422,7 @@ impl Library {
     }
 
     fn pile_spot_ok(&self, p: Vec2, r: f32, spots: &[Vec2]) -> bool {
-        for o in &self.obstacles {
+        for o in self.world.solids.iter().filter(|o| o.stops.has(Stops::BODIES)) {
             let q = Vec2::new(p.x.clamp(o.min.x, o.max.x), p.y.clamp(o.min.z, o.max.z));
             if q.distance(p) < r + 1.1 {
                 return false;

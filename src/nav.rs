@@ -3,20 +3,17 @@
 //! "nearest" means nearest on foot rather than through the back of a bookcase or
 //! the floor above.
 
-use crate::library::Library;
+use crate::world::{BODY_R, STEP_UP, Stops, World, in_body};
 use glam::{Vec2, Vec3};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
 const CELL: f32 = 0.5;
-/// Clearance the grid keeps from furniture (the player's radius).
-const CLEARANCE: f32 = 0.3;
+/// Clearance the grid keeps from furniture (a body's radius).
+const CLEARANCE: f32 = BODY_R;
 /// Clearance for straight-segment tests; smaller, so a player standing flush
 /// against a case never counts as inside it.
 const SEG_CLEARANCE: f32 = 0.15;
-/// The biggest rise between neighbouring cells that is still a walk (a stair, not a
-/// ledge or the floor above).
-const STEP_UP: f32 = 0.45;
 /// Grid step costs: orthogonal and diagonal, in tenths of a cell.
 const STEP: u32 = 10;
 const DIAG: u32 = 14;
@@ -40,7 +37,8 @@ struct Layer {
     min: Vec2,
     w: usize,
     h: usize,
-    /// Height of the floor or stair at each cell's centre (NaN: none).
+    /// Height of the floor or stair at each cell's centre (NaN: none). Neighbours
+    /// more than `STEP_UP` apart are a ledge (or the floor above), not a walk.
     surf: Vec<f32>,
     /// Furniture footprints standing on this level (min, max) in xz.
     boxes: Vec<(Vec2, Vec2)>,
@@ -87,11 +85,13 @@ pub struct Nav {
 }
 
 impl Nav {
-    pub fn new(lib: &Library) -> Self {
+    /// The grid for `world` (its gates as they stand), routes measured from `start`
+    /// until the first `update`.
+    pub fn new(world: &World, start: Vec3) -> Self {
         let mut layers = Vec::new();
         let mut first = Vec::new();
         let mut nodes = 0;
-        for (l, lv) in lib.levels.iter().enumerate() {
+        for (l, lv) in world.levels.iter().enumerate() {
             let size = lv.max - lv.min;
             let (w, h) = ((size.x / CELL).ceil() as usize, (size.y / CELL).ceil() as usize);
             let mut layer = Layer {
@@ -104,19 +104,14 @@ impl Nav {
                 solid: vec![false; w * h],
             };
             for i in 0..w * h {
-                let c = layer.center(i);
-                let slab = (lib.slabs.iter())
-                    .filter(|s| s.level == l && c.cmpge(s.min).all() && c.cmple(s.max).all())
-                    .map(|_| lv.y);
-                let ramp = (lib.ramps.iter())
-                    .filter(|r| r.level == l && r.contains(c))
-                    .map(|r| r.height(c));
-                if let Some(y) = slab.chain(ramp).max_by(f32::total_cmp) {
+                if let Some(y) = world.surfaces(layer.center(i), Some(l)).max_by(f32::total_cmp) {
                     layer.surf[i] = y;
                 }
             }
-            let obstacles: Vec<_> = lib.obstacles.iter().filter(|o| o.level == l).collect();
-            layer.boxes = obstacles
+            let solids: Vec<_> = (world.solids.iter())
+                .filter(|o| o.level == l && o.stops.has(Stops::BODIES))
+                .collect();
+            layer.boxes = solids
                 .iter()
                 .map(|o| (Vec2::new(o.min.x, o.min.z), Vec2::new(o.max.x, o.max.z)))
                 .collect();
@@ -128,9 +123,8 @@ impl Nav {
                     || c.y < lv.min.y + CLEARANCE
                     || c.y > lv.max.y - CLEARANCE;
                 // Furniture the body would walk into from this cell's floor.
-                let in_way = |o: &&&crate::library::Obstacle| o.max.y > s + STEP_UP && o.min.y < s + 1.8;
                 let near = |pad: f32| {
-                    obstacles.iter().filter(in_way).any(|o| {
+                    solids.iter().filter(|o| in_body(o.min, o.max, s)).any(|o| {
                         c.x > o.min.x - pad && c.x < o.max.x + pad && c.y > o.min.z - pad && c.y < o.max.z + pad
                     })
                 };
@@ -166,15 +160,15 @@ impl Nav {
                 }
             }
         }
-        let gates = (lib.gates.iter())
+        let gates = (world.gates.iter())
             .map(|g| (g.level, Vec2::new(g.min.x, g.min.z), Vec2::new(g.max.x, g.max.z)))
             .collect::<Vec<_>>();
         let mut nav = Nav {
-            closed: vec![true; gates.len()],
+            closed: world.open.iter().map(|&open| !open).collect(),
             gates,
             gated: vec![false; nodes],
             region: vec![false; nodes],
-            start: lib.spawn.0,
+            start,
             layers,
             first,
             links,
@@ -525,7 +519,7 @@ mod tests {
     #[test]
     fn tight_spots_still_reach_the_hall() {
         let lib = Library::generate(crate::library::Layout::Hall, crate::game::SEED);
-        let mut nav = Nav::new(&lib);
+        let mut nav = Nav::new(&lib.world, lib.spawn.0);
         nav.set_gate(0, false);
         let open_floor = Vec3::new(0.0, 0.0, 5.0);
         let spots = [
@@ -540,7 +534,7 @@ mod tests {
         for (x, z) in spots {
             let p = Vec3::new(x, 0.0, z);
             // Only spots the player's collision actually allows.
-            let ok = lib.obstacles.iter().all(|o| {
+            let ok = lib.world.solids.iter().filter(|o| o.stops.has(Stops::BODIES)).all(|o| {
                 let q = Vec2::new(x.clamp(o.min.x, o.max.x), z.clamp(o.min.z, o.max.z));
                 q.distance(Vec2::new(x, z)) >= 0.3 - 1e-3
             });
@@ -557,7 +551,7 @@ mod tests {
     #[test]
     fn the_veil_closes_the_east_wing() {
         let lib = Library::generate(crate::library::Layout::Hall, crate::game::SEED);
-        let mut nav = Nav::new(&lib);
+        let mut nav = Nav::new(&lib.world, lib.spawn.0);
         let (west, east) = (Vec3::new(5.0, 0.0, 6.0), Vec3::new(16.0, 0.0, 6.0));
         assert!(nav.open_at(west) && !nav.open_at(east));
         nav.update(west);
