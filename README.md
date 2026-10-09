@@ -25,7 +25,7 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | Left click | gather from a heap · file onto a series run |
 | Scroll, Q / E | cycle the active book |
 | Tab | the Grimoire (upgrades) |
-| M | music on/off |
+| M | music on/off (remembered) |
 | F3 | performance overlay |
 | F11 | fullscreen (remembered) |
 | F12 | screenshot to `~/Pictures` (`%USERPROFILE%\Pictures` on Windows) |
