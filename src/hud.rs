@@ -11,6 +11,8 @@ pub struct Hud {
     pub settings: Settings,
     pub menu_open: bool,
     pub show_intro: bool,
+    /// The pause screen is asking whether to start over.
+    pub confirm_restart: bool,
     pub show_stats: bool,
     pub fps: f32,
     pub frame_ms: f32,
@@ -24,6 +26,8 @@ pub enum HudAction {
     CloseMenu,
     SettingsChanged,
     Quit,
+    /// Start a new library (confirmed).
+    NewGame,
 }
 
 const INK: Color32 = Color32::from_rgb(236, 224, 200);
@@ -607,21 +611,23 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                     } else {
                         format!("{mins} min")
                     };
-                    ui.label(
-                        RichText::new(format!(
-                            "{} of {} books are home · {} in the stacks",
+                    let done = g.total_shelved() == g.total_books();
+                    let summary = if done {
+                        format!("Every book is home · {time} in the stacks")
+                    } else {
+                        format!(
+                            "{} of {} books are home · {time} in the stacks",
                             g.total_shelved(),
-                            g.total_books(),
-                            time
-                        ))
-                        .font(serif(16.0))
-                        .color(INK),
-                    );
-                    ui.label(
-                        RichText::new("Your place is kept; progress saves as you go.")
-                            .font(serif(13.0))
-                            .color(DIM),
-                    );
+                            g.total_books()
+                        )
+                    };
+                    ui.label(RichText::new(summary).font(serif(16.0)).color(INK));
+                    let note = if done {
+                        "The library is in order. Start over for a fresh one."
+                    } else {
+                        "Your place is kept; progress saves as you go."
+                    };
+                    ui.label(RichText::new(note).font(serif(13.0)).color(DIM));
                 }
                 ui.add_space(8.0);
                 ui.label(
@@ -688,7 +694,47 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                         actions.push(HudAction::Quit);
                     }
                 });
+                if !fresh {
+                    ui.add_space(8.0);
+                    restart_controls(ui, hud, &mut actions);
+                }
             });
     }
     actions
+}
+
+/// "Start over…", then a confirmation, on the pause screen.
+fn restart_controls(ui: &mut egui::Ui, hud: &mut Hud, actions: &mut Vec<HudAction>) {
+    ui.vertical_centered(|ui| {
+        if !hud.confirm_restart {
+            let link = egui::Button::new(RichText::new("Start over…").font(serif(14.0)).color(DIM)).frame(false);
+            if ui.add(link).clicked() {
+                hud.confirm_restart = true;
+            }
+            return;
+        }
+        ui.label(
+            RichText::new(
+                "Start a new library? Every book goes back on the floor, and your lumens and \
+                 upgrades are lost. Settings are kept.",
+            )
+            .font(serif(14.0))
+            .color(INK),
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let w = ui.available_width();
+            ui.add_space((w - 160.0 * 2.0 - 12.0).max(0.0) * 0.5);
+            let size = Vec2::new(160.0, 34.0);
+            let start = egui::Button::new(RichText::new("Start over").font(serif(16.0)).color(GOLD)).min_size(size);
+            if ui.add(start).clicked() {
+                actions.push(HudAction::NewGame);
+            }
+            ui.add_space(12.0);
+            let keep = egui::Button::new(RichText::new("Keep playing").font(serif(16.0)).color(DIM)).min_size(size);
+            if ui.add(keep).clicked() {
+                hud.confirm_restart = false;
+            }
+        });
+    });
 }

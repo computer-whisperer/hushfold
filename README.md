@@ -31,11 +31,12 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | F3 | performance overlay |
 | F11 | fullscreen (remembered) |
 | F12 | screenshot to `~/Pictures` (`%USERPROFILE%\Pictures` on Windows) |
-| Esc | pause: settings (look speed, invert, field of view, volumes) and save-and-quit |
+| Esc | pause: settings (look speed, invert, field of view, volumes), save-and-quit, and start over |
 
 Progress autosaves every 20 s and on pause or quit. The save lives in
 `$XDG_DATA_HOME/hushfold/save.json` on Linux and `%APPDATA%\hushfold\save.json` on
-Windows (delete it to start over); settings sit beside it in `settings.json`.
+Windows; **Start over** on the pause screen replaces it with a fresh library (settings,
+in `settings.json` beside it, are kept).
 
 ## How filing works
 
@@ -94,7 +95,7 @@ Familiar Wings.
   `click`, `cycle n`, `charge` / `throw` (hold and release the toss), `sift`,
   `facepile`, `faceslot`, `facefam i`, `lookat x y z dist`, `fill category fraction`,
   `take category n`, `unveil`, `grant lumens`, `buy <Upgrade>`, `menu on|off`,
-  `intro on|off`, `stats on|off`, `shot name`, `print` (includes where a charging
+  `intro on|off|confirm`, `newgame`, `stats on|off`, `shot name`, `print` (includes where a charging
   toss would land), `printactive`, `quit`. `fill` and `take` pull books from
   anywhere in the piles, which then settle.
 

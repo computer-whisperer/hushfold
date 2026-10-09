@@ -87,6 +87,19 @@ impl Running {
         self.input.toss_down = false;
     }
 
+    /// A fresh library in place of the current one; the save is overwritten at once
+    /// so quitting now doesn't bring the old game back. Settings are kept.
+    fn new_game(&mut self) {
+        let persist = self.game.persist;
+        self.game = Game::new();
+        self.game.persist = persist;
+        self.renderer.set_static(&self.game.lib.static_insts);
+        self.apply_settings();
+        self.game.save();
+        self.hud.confirm_restart = false;
+        self.hud.menu_open = false;
+    }
+
     fn apply_settings(&mut self) {
         let s = self.hud.settings;
         self.game.fov = s.fov;
@@ -244,6 +257,7 @@ impl Running {
                 }
                 HudAction::SettingsChanged => self.apply_settings(),
                 HudAction::Quit => self.quit = true,
+                HudAction::NewGame => self.new_game(),
                 HudAction::CloseMenu => {
                     self.hud.menu_open = false;
                     self.set_grab(true);
@@ -280,7 +294,13 @@ impl Running {
 
 impl Running {
     fn run_script(&mut self) {
-        let Some(sc) = self.script.as_mut() else { return };
+        // Out of `self` while it runs, so commands can call methods on `self`.
+        let Some(mut sc) = self.script.take() else { return };
+        self.step_script(&mut sc);
+        self.script = Some(sc);
+    }
+
+    fn step_script(&mut self, sc: &mut Script) {
         if sc.wait > 0 {
             sc.wait -= 1;
             return;
@@ -335,7 +355,11 @@ impl Running {
                     }
                 }
                 Some("menu") => self.hud.menu_open = w.get(1) == Some(&"on"),
-                Some("intro") => self.hud.show_intro = w.get(1) == Some(&"on"),
+                // intro on|off|confirm (confirm: the pause screen asking whether to start over)
+                Some("intro") => {
+                    self.hud.show_intro = matches!(w.get(1), Some(&"on" | &"confirm"));
+                    self.hud.confirm_restart = w.get(1) == Some(&"confirm");
+                }
                 Some("stats") => self.hud.show_stats = w.get(1) == Some(&"on"),
                 Some("shot") => {
                     let name = w.get(1).copied().unwrap_or("shot");
@@ -372,6 +396,7 @@ impl Running {
                         );
                     }
                 }
+                Some("newgame") => self.new_game(),
                 Some("quit") => std::process::exit(0),
                 _ => {}
             }
@@ -447,6 +472,7 @@ impl ApplicationHandler for App {
                 settings,
                 menu_open: false,
                 show_intro: script.is_none(),
+                confirm_restart: false,
                 show_stats: false,
                 fps: 0.0,
                 frame_ms: 0.0,
