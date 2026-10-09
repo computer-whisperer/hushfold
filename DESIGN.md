@@ -44,7 +44,8 @@ the player over a 0.5 m grid (furniture inflated by the player's radius),
 recomputed when the player changes cell (~0.2 ms). A slot's cost is the walk to
 the aisle in front of it, so the far side of a double-sided case costs the walk
 round the end of the row. Tidy Arms switches the active book only when another
-is 0.6 m nearer. Sort Sense's marker sits on the slot when the walk is a straight
+is 0.6 m nearer, and leaves a book you picked by cycling active until it is
+filed or you gather again. Sort Sense's marker sits on the slot when the walk is a straight
 line, and otherwise on the farthest visible point along the route.
 East wing is veiled until 60% of the West wing is sorted.
 

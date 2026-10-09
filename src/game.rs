@@ -244,7 +244,9 @@ pub struct Game {
     flights: Vec<Flight>,
     pub held: Vec<u32>,
     pub active: usize,
-    manual_pick_t: f32,
+    /// A book the player chose by cycling; Tidy Arms leaves it active until it is
+    /// filed or a new armful is gathered.
+    manual_pick: Option<u32>,
     pub player: Player,
     pub lumens: u64,
     pub earned: u64,
@@ -327,7 +329,7 @@ impl Game {
             flights: Vec::new(),
             held: Vec::new(),
             active: 0,
-            manual_pick_t: 0.0,
+            manual_pick: None,
             player: Player {
                 pos: Vec3::new(0.0, 0.0, 6.5),
                 vel: Vec3::ZERO,
@@ -488,7 +490,7 @@ impl Game {
             if input.cycle != 0 && !self.held.is_empty() {
                 let n = self.held.len() as i32;
                 self.active = ((self.active as i32 + input.cycle).rem_euclid(n)) as usize;
-                self.manual_pick_t = 4.0;
+                self.manual_pick = self.active_book();
                 audio.play(Sfx::Tick, 0.25);
             }
             self.grab_cooldown -= dt;
@@ -497,13 +499,15 @@ impl Game {
                 self.interact(audio, input.primary_pressed);
             }
         }
-        self.manual_pick_t -= dt;
+        if self.manual_pick.is_some_and(|b| !self.held.contains(&b)) {
+            self.manual_pick = None;
+        }
         let tidy = self.level(Upg::Tidy) > 0;
         let sense = self.level(Upg::SortSense) > 0;
         if (tidy || sense) && !self.held.is_empty() {
             self.nav.update(self.player.pos, self.east_unlocked);
         }
-        if tidy && self.manual_pick_t <= 0.0 {
+        if tidy && self.manual_pick.is_none() {
             self.pick_nearest_active();
         }
         self.sense_route = match self.active_book() {
@@ -715,6 +719,7 @@ impl Game {
                     self.start_flight(b, Dest::Hand, 0.32 + i as f32 * 0.004, i as f32 * 0.025);
                 }
                 self.update_heap_bound(h);
+                self.manual_pick = None;
                 if self.level(Upg::Tidy) > 0 {
                     let prev = self.active_book();
                     self.held.sort();
@@ -1888,6 +1893,17 @@ mod tests {
         g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
         assert_eq!(g.active_book(), Some(near as u32));
         assert!(g.sense_route.is_some_and(|r| r.direct));
+        // A book chosen by cycling stays active while you walk to it.
+        let cycle = Input {
+            cycle: 1,
+            ..Input::default()
+        };
+        g.update(1.0 / 60.0, &cycle, &mut audio, true);
+        assert_eq!(g.active_book(), Some(far as u32));
+        for _ in 0..600 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
+        }
+        assert_eq!(g.active_book(), Some(far as u32));
         // With only the far-side book in hand, Sort Sense routes round the end of the row.
         g.held.retain(|&b| b == far as u32);
         g.active = 0;
