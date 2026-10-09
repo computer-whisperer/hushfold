@@ -373,6 +373,13 @@ impl ApplicationHandler for App {
             .with_title("Hushfold Library")
             .with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0))
             .with_fullscreen(settings.fullscreen.then_some(Fullscreen::Borderless(None)));
+        // Name the app for the compositor (Wayland app_id / X11 WM_CLASS).
+        #[cfg(all(unix, not(target_vendor = "apple")))]
+        let attrs = {
+            use winit::platform::{wayland::WindowAttributesExtWayland, x11::WindowAttributesExtX11};
+            let attrs = WindowAttributesExtWayland::with_name(attrs, "hushfold", "hushfold");
+            WindowAttributesExtX11::with_name(attrs, "hushfold", "hushfold")
+        };
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let mut renderer = Renderer::new(window.clone());
         let t0 = Instant::now();
