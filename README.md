@@ -1,10 +1,15 @@
 # Hushfold Library
 
-A cozy first-person "tidy the magical library" game in Rust: ~11,700 books in
-~2,300 series lie in piles across a moonlit hall. Gather armfuls, find each
-book's category, series and volume slot, and file it. Lumens earned from filing
-buy abilities that make the work progressively smoother, up to paper-crane
-familiars that shelve on their own.
+A cozy first-person "tidy the magical library" game in Rust: books lie in piles
+across a moonlit library. Gather armfuls, find each book's category, series and
+volume slot, and file it. Lumens earned from filing buy abilities that make the
+work progressively smoother, up to paper-crane familiars that shelve on their own.
+
+Two libraries, each with its own save (switch on the pause screen):
+- **The Hall**: one storey, ~11,700 books in ~2,300 series, two wings.
+- **The Great Library** (in development): three storeys round a skylit atrium,
+  twelve department rooms opened one by one, ~118,000 books. Its skills and
+  balance are still those of the Hall.
 
 Prebuilt Linux and Windows binaries are on the
 [releases page](https://github.com/computer-whisperer/hushfold/releases), or build it yourself:
@@ -31,17 +36,18 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | F3 | performance overlay |
 | F11 | fullscreen (remembered) |
 | F12 | screenshot to `~/Pictures` (`%USERPROFILE%\Pictures` on Windows) |
-| Esc | pause: settings (look speed, invert, field of view, volumes), save-and-quit, and start over |
+| Esc | pause: which library, settings (look speed, invert, field of view, volumes), save-and-quit, and start over |
 
-Progress autosaves every 20 s and on pause or quit. The save lives in
-`$XDG_DATA_HOME/hushfold/save.json` on Linux and `%APPDATA%\hushfold\save.json` on
-Windows; **Start over** on the pause screen replaces it with a fresh library (settings,
-in `settings.json` beside it, are kept).
+Progress autosaves every 20 s and on pause or quit. Saves live in
+`$XDG_DATA_HOME/hushfold/` on Linux and `%APPDATA%\hushfold\` on Windows:
+`save.json` for the Hall, `great.json` for the Great Library. **Start over** on the
+pause screen replaces the current library's save with a fresh one (settings, in
+`settings.json` beside them, and the other library are kept).
 
 ## How filing works
 
-- Each category owns three bookcases on one side of an aisle; the sign and
-  lantern above the middle case name it. Signs of categories you carry show
+- Each category owns three bookcases (five in the Great Library) on one side of
+  an aisle; the sign and lantern above the middle case name it. Signs of categories you carry show
   through the stacks, marked "other side" when their shelves face away from you. Lanterns brighten with progress and
   burn in the category's colour once it is complete.
 - Within a category, series are alphabetical (ignoring leading articles), top
@@ -49,7 +55,11 @@ in `settings.json` beside it, are kept).
 - Empty slots show as faint outlines in the series' colour; outlines of series
   you are carrying glow, with a glint sweeping through them. Click anywhere on a
   series' run to file a volume you carry; it flies to its exact slot.
-- The East Wing is veiled until 60% of the West Wing is home.
+- The Hall's East Wing is veiled until 60% of the West Wing is home. In the
+  Great Library each room is veiled until half the books of the rooms opened
+  before it are home; a department's books start in its own room, the atrium or
+  rooms that open earlier. Colour tells a book's department there, and the
+  spine pattern its category.
 - Books are loose: they lie where they fall, piles slump when you pull books
   out from underneath, and tossed books tumble, bounce off the furniture and
   land in a scatter. Toss a category's books toward its shelves to pre-sort a
@@ -65,15 +75,18 @@ Familiar Wings.
 
 ## Technical notes
 
-- wgpu 29 + winit 0.30 + egui 0.34. Everything is a unit box: one instanced
-  draw for all books and one for the static hall, with procedural materials
+- wgpu 29 + winit 0.30 + egui 0.34. Everything is a unit box, drawn instanced
+  with procedural materials
   (wood grain, spines with patterns and volume numerals, paper edges, planks,
   stone, rug) selected per instance in `src/shader.wgsl`.
-- Up to 64 point lights in a forward pass, 4× MSAA HDR, a 6-level bloom chain
-  and ACES tonemapping. Held books are drawn in a second pass with cleared
-  depth so they never clip into shelves.
-- All book transforms are re-uploaded every frame (~19k instances, ~1.2 MB).
-  CPU frame time is ~0.25 ms; GPU ~1–2 ms at 1864×2088 on an RX 6900 XT.
+- Up to 64 point lights in a forward pass (the nearest), 4× MSAA HDR, a 6-level
+  bloom chain and ACES tonemapping. Held books are drawn in a second pass with
+  cleared depth so they never clip into shelves.
+- Books lying still and the outlines of empty slots live in chunks of space on
+  the GPU, re-uploaded only when something in a chunk changes; chunks out of
+  view are skipped.
+  CPU frame time is ~0.15 ms in the Hall and ~0.75 ms in the Great Library
+  (~360 and ~185 fps unpaced at 1864×2088 on an RX 6900 XT).
   `HUSHFOLD_UNPACED=1` renders without compositor pacing for benchmarking.
 - All audio is synthesized at startup (`src/audio.rs`): book thunks, page
   rustles, pentatonic chimes, fire crackle and a generative music-box loop.
@@ -90,11 +103,13 @@ Familiar Wings.
   audio sanity.
 - Scripted runs for screenshots and smoke tests:
   `HUSHFOLD_UNPACED=1 HUSHFOLD_SCRIPT=script.txt HUSHFOLD_SHOT_DIR=out cargo run --release`.
-  Scripted runs use a fixed 60 Hz step and never touch the real save. Commands
+  Scripted runs use a fixed 60 Hz step and never touch the real save; they start
+  in the Hall unless `HUSHFOLD_LIBRARY=great`. Commands
   (one per line): `pose x y z yaw pitch`, `wait frames`, `walk fwd frames`,
   `click`, `cycle n`, `charge` / `throw` (hold and release the toss), `sift`,
   `facepile`, `faceslot`, `facefam i`, `lookat x y z dist`, `fill category fraction`,
-  `take category n`, `unveil`, `grant lumens`, `buy <Upgrade>`, `menu on|off`,
+  `take category n`, `unveil`, `library hall|great` (a fresh one), `grant lumens`,
+  `buy <Upgrade>`, `menu on|off`,
   `intro on|off|confirm`, `newgame`, `stats on|off`, `shot name`, `print` (includes where a charging
   toss would land), `printactive`, `quit`. `fill` and `take` pull books from
   anywhere in the piles, which then settle.

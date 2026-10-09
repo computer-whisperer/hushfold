@@ -85,16 +85,21 @@ shelved to a fraction: the East Wing opens at 60% of the West. A closed gate is
 a solid to walking, throwing, gathering, aiming and routes; gate states follow
 from what is shelved, so saves don't store them.
 
-Pacing is tuned with two ignored tests (`--ignored --nocapture`): `familiar_throughput`
+Pacing is tuned with ignored tests (`--ignored --nocapture`): `familiar_throughput`
 runs the real familiar code headless to measure books/s per Wings level, and
-`pacing_simulation` plays an idealised bot (the pile with the least walking per
-book, clicking until its arms are full, nearest slot, cheapest upgrade; it never
-tosses or sifts) using those rates. The late-game engine is Deeper Arms IV ×
+`pacing_simulation` (the Hall) and `pacing_great_library` play an idealised bot
+(the pile with the least walking per book, clicking until its arms are full,
+nearest slot, cheapest upgrade, walking measured on the nav field; it never
+tosses or sifts, and picks up only books whose shelves are open) using those rates. The late-game engine is Deeper Arms IV ×
 Shelving Aura, so the aura's books-per-second rate is the main dial. History:
 - 0.1.0 (aura 6/15/40 books/s, 11 m at III): ~1.0 h, the whole East Wing in ~16 min.
 - 0.1.1: ~1.4 h, the East Wing the last ~30 min, last upgrade affordable at ~86% shelved.
 - Loose piles: ~1.5 h, the East Wing still the last ~30 min, last upgrade at ~92%.
   Piles now spread, and the bot walks to the strays at their edges.
+- Same game, honest walking (the bot used to walk through bookcases): ~2.0 h.
+- The Great Library with the Hall's skills: ~16.6 h; every upgrade bought by
+  2.8 h, every department open by ~7 h, then a flat ~6–7k books an hour. The
+  skills run out in the first sixth; phase 3 rebuilds them for this.
 
 ## Rendering
 Box-only geometry, per-instance `kind` selects procedural material in WGSL

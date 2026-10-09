@@ -1352,6 +1352,9 @@ impl Game {
         let wings = self.level(Upg::Wings) as usize;
         let (speed, cap) = WINGS_LEVELS[wings];
         let cruise = 4.9f32;
+        let open: Vec<bool> = (0..self.lib.catalog.departments.len())
+            .map(|d| self.dept_open(d))
+            .collect();
         let mut fams = std::mem::take(&mut self.familiars);
         for (fi, fam) in fams.iter_mut().enumerate() {
             fam.phase += dt * 9.0;
@@ -1368,8 +1371,9 @@ impl Game {
                 } else {
                     let (nav, rng) = (&self.nav, &mut self.rng);
                     let at = fam.pos;
-                    let pile = (self.loose).best_pile(|_, c, _| {
-                        nav.open_at(c)
+                    let fileable = |b: u32| open[self.lib.dept_of(self.lib.category_of_book(b))];
+                    let pile = (self.loose).best_pile(|_, c, books| {
+                        (nav.open_at(c) && books.iter().any(|&b| fileable(b)))
                             .then(|| (c + Vec3::Y * 1.5).distance(at) + rng.gen_range(0.0..4.0))
                     });
                     match pile {
@@ -1411,7 +1415,10 @@ impl Game {
                 match fam.task {
                     FamTask::ToPile(lv, top) => {
                         // Someone may have cleared it meanwhile; then this comes back empty.
-                        for b in self.loose.gather(lv, Vec2::new(top.x, top.z), 0.45, cap, |_| true) {
+                        // Only books whose shelves are open: the rest stay put.
+                        let lib = &self.lib;
+                        let fileable = |b: u32| open[lib.dept_of(lib.category_of_book(b))];
+                        for b in self.loose.gather(lv, Vec2::new(top.x, top.z), 0.45, cap, fileable) {
                             self.state[b as usize] = BookState::Carried(fi as u8);
                             fam.carry.push(b);
                         }
@@ -1464,7 +1471,8 @@ impl Game {
         let p = self.player.pos;
         let nav = &self.nav;
         // Nearby and substantial: the cell with the most books for the walk.
-        let Some((_, top)) = (self.loose).best_pile(|_, c, n| nav.open_at(c).then(|| (c.distance(p) + 3.0) / n as f32))
+        let Some((_, top)) =
+            (self.loose).best_pile(|_, c, n| nav.open_at(c).then(|| (c.distance(p) + 3.0) / n.len() as f32))
         else {
             return;
         };
@@ -2195,71 +2203,94 @@ mod tests {
         assert_eq!(h, 7532805995221069936, "hall fingerprint");
     }
 
-    /// Pacing estimate: a bot that walks (at real speeds) to the nearest pile, gathers an
-    /// armful, files it in nearest-slot order, and greedily buys the cheapest upgrade.
-    /// Familiars shelve at the rates `familiar_throughput` measures; the aura is
-    /// approximated. Run with `--ignored --nocapture`.
-    #[test]
-    #[ignore]
-    fn pacing_simulation() {
-        let mut g = Game::new(Layout::Hall);
+    /// Pacing estimate: a bot that walks (at real speeds, round furniture and up
+    /// stairs) to the pile with the least walking per book, gathers an armful, files
+    /// it nearest slot first, and greedily buys the cheapest upgrade. It never tosses
+    /// or sifts, but it only picks up books whose shelves are open, as if sorting by
+    /// eye cost nothing: in the Great Library that makes it a lower bound. Familiars
+    /// shelve at the rates `familiar_throughput` measures; the aura is approximated.
+    /// Returns hours.
+    fn simulate(layout: Layout) -> f32 {
+        let mut g = Game::new(layout);
         let mut audio = crate::audio::Audio::silent();
         let mut t = 0.0f32;
         let mut pos = g.player.pos;
         let mut next_report = 0.0;
         let speed = |g: &Game| [4.0, 5.5, 7.0][g.level(Upg::Slippers) as usize] * 1.3; // some hurrying
-        while g.total_shelved() < g.total_books() && t < 60.0 * 60.0 * 20.0 {
+        let book_dept: Vec<usize> = (0..g.lib.books.len() as u32)
+            .map(|b| g.lib.dept_of(g.lib.category_of_book(b)))
+            .collect();
+        while g.total_shelved() < g.total_books() && t < 60.0 * 60.0 * 30.0 {
+            let open: Vec<bool> = (0..g.dept_total.len()).map(|d| g.dept_open(d)).collect();
+            let fileable = |b: u32| open[book_dept[b as usize]];
+            let count = |books: &[u32]| books.iter().filter(|&&b| fileable(b)).count();
             // Familiars: each files ~one book per (flight time + handling), approximated.
             let fams = g.level(Upg::Familiar) as f32;
             let trip_start = t;
-            // Gather, as a click does: the top of the nearest pile.
             // Where a player would go: the fewest seconds of walking per book gathered.
-            let cap = g.capacity();
-            let walk = speed(&g);
-            let Some((lv, top)) = g.loose.best_pile(|_, c, n| {
-                g.nav
-                    .open_at(c)
-                    .then(|| (c.distance(pos) / walk + 1.0) / n.min(cap) as f32)
+            let (cap, walk) = (g.capacity(), speed(&g));
+            g.nav.update(pos);
+            let Some((lv, top)) = g.loose.best_pile(|_, c, books| {
+                let n = count(books);
+                (n > 0 && g.nav.open_at(c)).then(|| (g.nav.distance(pos, c) / walk + 1.0) / n.min(cap) as f32)
             }) else {
                 break;
             };
-            let top = Vec3::new(top.x, 0.0, top.z);
+            let floor = g.lib.ground_at(Vec2::new(top.x, top.z), top.y).unwrap_or(0.0);
+            let at = g.nav.standable_near(Vec3::new(top.x, floor, top.z));
             let reach = g.gather_reach();
-            t += (top.distance(pos) - reach).max(0.0) / speed(&g) + 1.0;
-            pos = top;
+            let d = g.nav.distance(pos, at);
+            if !d.is_finite() {
+                break;
+            }
+            t += (d - reach).max(0.0) / walk + 1.0;
+            pos = at;
             // Click, and click again at whatever is within reach until the arms are full.
             let mut target = Some(top);
             while let Some(p) = target {
-                let room = g.capacity() - g.held.len();
+                let room = cap - g.held.len();
                 let radius = 0.35 + 0.05 * (room as f32).sqrt();
-                for b in g.loose.gather(lv, Vec2::new(p.x, p.z), radius, room, |_| true) {
+                for b in g.loose.gather(lv, Vec2::new(p.x, p.z), radius, room, fileable) {
                     g.state[b as usize] = BookState::Held;
                     g.held.push(b);
                 }
-                if g.held.len() == g.capacity() {
+                if g.held.len() == cap {
                     break;
                 }
-                target = g
-                    .loose
-                    .best_pile(|l, c, n| (l == lv && c.distance(pos) < reach && g.nav.open_at(c)).then(|| -(n as f32)))
+                target = (g.loose)
+                    .best_pile(|l, c, books| {
+                        (l == lv && c.distance(pos) < reach && count(books) > 0).then(|| -(count(books) as f32))
+                    })
                     .map(|(_, top)| top);
                 t += 0.4;
             }
-            // File, nearest slot first; a click files one book, or a whole series with Bundle.
+            // File, nearest slot on foot first; a click files one book, or a whole
+            // series with Bundle. Walks between slots are measured on the field from
+            // where the armful was gathered.
+            g.nav.update(pos);
             let (aura_r, aura_rate) = AURA_LEVELS[g.level(Upg::Aura) as usize];
+            let mut here = pos;
+            let mut here_d = 0.0f32;
             while !g.held.is_empty() {
-                let (i, _) = g
-                    .held
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &b)| (i, g.lib.books[b as usize].slot_pos.distance(pos)))
-                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                let (i, d) = (g.held.iter().enumerate())
+                    .map(|(i, &b)| {
+                        let to = g.approach(b);
+                        let d = g.nav.distance(pos, to);
+                        (i, if d.is_finite() { d } else { pos.distance(to) })
+                    })
+                    .min_by(|a, b| (a.1 - here_d).abs().total_cmp(&(b.1 - here_d).abs()))
                     .unwrap();
                 let b = g.held[i];
-                let slot = g.lib.books[b as usize].slot_pos;
-                let d = Vec3::new(slot.x - pos.x, 0.0, slot.z - pos.z).length();
-                let walk = (d - aura_r.max(1.8)).max(0.0);
-                pos += Vec3::new(slot.x - pos.x, 0.0, slot.z - pos.z).normalize_or_zero() * walk;
+                let to = g.approach(b);
+                let same_floor = (to.y - here.y).abs() < 1.0;
+                let flat = Vec2::new(to.x - here.x, to.z - here.z).length();
+                let hop = if same_floor {
+                    flat.max((d - here_d).abs())
+                } else {
+                    (d - here_d).abs().max(flat)
+                };
+                let walk_m = (hop - aura_r.max(1.8)).max(0.0);
+                (here, here_d) = (to, d);
                 let s = g.lib.books[b as usize].series;
                 let batch: Vec<u32> = if g.level(Upg::Bundle) > 0 {
                     g.held
@@ -2277,22 +2308,29 @@ mod tests {
                 } else {
                     click
                 };
-                t += walk / speed(&g) + file;
+                t += walk_m / walk + file;
                 g.held.retain(|x| !batch.contains(x));
                 let mut thunks = 0;
                 for x in batch {
                     g.on_shelved(x, &mut audio, &mut thunks);
                 }
             }
+            pos = here;
             // Familiars over the elapsed trip, at measured rates per Wings level.
             let rate = [0.095, 0.17, 0.25][g.level(Upg::Wings) as usize] * fams;
-            let fam_books = (rate * (t - trip_start)) as usize;
-            let mut left = fam_books;
+            let mut left = (rate * (t - trip_start)) as usize;
+            let open: Vec<bool> = (0..g.dept_total.len()).map(|d| g.dept_open(d)).collect();
+            let fileable = |b: u32| open[book_dept[b as usize]];
             while left > 0 {
-                let Some((lv, top)) = g.loose.best_pile(|_, c, _| g.nav.open_at(c).then(|| c.length())) else {
+                let Some((lv, top)) = g.loose.best_pile(|_, c, books| {
+                    (g.nav.open_at(c) && books.iter().any(|&b| fileable(b))).then(|| c.distance(pos))
+                }) else {
                     break;
                 };
-                let books = g.loose.gather(lv, Vec2::new(top.x, top.z), 0.45, left, |_| true);
+                let books = g.loose.gather(lv, Vec2::new(top.x, top.z), 0.45, left, fileable);
+                if books.is_empty() {
+                    break;
+                }
                 left -= books.len();
                 for b in books {
                     let mut thunks = 0;
@@ -2323,11 +2361,12 @@ mod tests {
                 }
             }
             if t >= next_report {
-                let depts: Vec<String> = (g.dept_shelved.iter().zip(&g.dept_total))
-                    .map(|(&s, &n)| format!("{:.0}%", 100.0 * s as f32 / n as f32))
+                let depts: Vec<String> = (g.dept_shelved.iter().zip(&g.dept_total).enumerate())
+                    .filter(|&(d, _)| g.dept_open(d))
+                    .map(|(_, (&s, &n))| format!("{:.0}%", 100.0 * s as f32 / n as f32))
                     .collect();
                 println!(
-                    "{:6.1} min  shelved {:5} / {}  departments {}",
+                    "{:6.1} min  shelved {:6} / {}  open departments {}",
                     t / 60.0,
                     g.total_shelved(),
                     g.total_books(),
@@ -2337,6 +2376,43 @@ mod tests {
             }
         }
         println!("done at {:.1} h, shelved {}", t / 3600.0, g.total_shelved());
+        t / 3600.0
+    }
+
+    /// Every slot's approach (the aisle in front of it) is a walk away from the start,
+    /// with every gate open.
+    #[test]
+    fn every_slot_can_be_walked_to() {
+        for layout in Layout::ALL {
+            let mut g = Game::new(layout);
+            g.open_all_gates();
+            let from = g.player.pos;
+            g.nav.update(from);
+            let stuck: Vec<u32> = (0..g.lib.books.len() as u32)
+                .filter(|&b| !g.nav.distance(from, g.approach(b)).is_finite())
+                .collect();
+            assert!(
+                stuck.is_empty(),
+                "{layout:?}: {} slots unreachable, e.g. book {} approach {}",
+                stuck.len(),
+                stuck[0],
+                g.approach(stuck[0])
+            );
+        }
+    }
+
+    /// Run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn pacing_simulation() {
+        simulate(Layout::Hall);
+    }
+
+    /// Run with `--ignored --nocapture`; takes a while.
+    #[test]
+    #[ignore]
+    fn pacing_great_library() {
+        simulate(Layout::Great);
     }
 
     /// Measures what familiars actually shelve per second, by running the real familiar
@@ -2621,7 +2697,10 @@ mod tests {
                         BookState::Shelved => g.lib.books[b as usize].slot_pos,
                         _ => g.loose.pose(b).0,
                     };
-                    assert!(at.cmpge(ch.min).all() && at.cmple(ch.max).all(), "book {b} outside its chunk");
+                    assert!(
+                        at.cmpge(ch.min).all() && at.cmple(ch.max).all(),
+                        "book {b} outside its chunk"
+                    );
                 }
             }
             for b in 0..g.lib.books.len() as u32 {

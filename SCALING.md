@@ -85,7 +85,11 @@ over 8 h; the player's own Toss and Sift stay the fastest coarse tools.
    culling and per-room light lists (the shader loops every light per pixel).
    Catalogue gains departments (16 categories → ~100 in ~10 departments).
    Design below; built in steps: world model (Hall only, generating exactly as
-   before), rendering, the Great Library and choosing it, a pacing baseline.
+   before), the Great Library and choosing it, rendering, a pacing baseline.
+   **Built; awaiting playtest.** Baseline (the Hall's skills, an idealised bot
+   that never tosses or sifts but picks up only fileable books): ~16.6 h, every
+   upgrade bought by 2.8 h, then flat. The same bot now takes the Hall in ~2.0 h
+   (it walks round furniture now; it used to walk through it, hence ~1.5 h).
 3. Skill tree rebuilt around the hierarchy levels: reading (pile tinting by
    department, coarse sense, room-scoped Sort Sense), coarse moves (Toss range and
    landing, Sift filters, carts, restorable lifts and chutes), staging (labelled

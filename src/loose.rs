@@ -1016,9 +1016,9 @@ impl Loose {
     }
 
     /// The top of the best pile: of the 0.5 m cells holding books, the one `score`
-    /// rates lowest, given the level, the cell's centre at floor height and how many
-    /// books lie in it (`None` rules a cell out). Returns the level and the top.
-    pub fn best_pile(&self, mut score: impl FnMut(usize, Vec3, usize) -> Option<f32>) -> Option<(usize, Vec3)> {
+    /// rates lowest, given the level, the cell's centre at floor height and the books
+    /// lying in it (`None` rules a cell out). Returns the level and the top.
+    pub fn best_pile(&self, mut score: impl FnMut(usize, Vec3, &[u32]) -> Option<f32>) -> Option<(usize, Vec3)> {
         let mut best: Option<(f32, usize, usize)> = None;
         for (lv, g) in self.grids.iter().enumerate() {
             for (k, bucket) in g.buckets.iter().enumerate() {
@@ -1030,7 +1030,7 @@ impl Loose {
                     g.y,
                     g.min.y + ((k / g.bw) as f32 + 0.5) * BUCKET,
                 );
-                if let Some(s) = score(lv, c, bucket.len())
+                if let Some(s) = score(lv, c, bucket)
                     && best.is_none_or(|(bs, _, _)| s < bs)
                 {
                     best = Some((s, lv, k));

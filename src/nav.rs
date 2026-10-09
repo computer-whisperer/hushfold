@@ -358,6 +358,31 @@ impl Nav {
         })
     }
 
+    /// The middle of the free cell nearest `p` on its floor (where a player would
+    /// stand to reach something on a table, say), or `p` if none is near.
+    #[cfg(test)]
+    pub fn standable_near(&self, p: Vec3) -> Vec3 {
+        let Some(n) = self.locate(p) else { return p };
+        let (layer, i) = self.layer_of(n);
+        let (x, z) = ((i % layer.w) as i32, (i / layer.w) as i32);
+        let at = Vec2::new(p.x, p.z);
+        let mut best: Option<(f32, usize)> = None;
+        for dz in -6..=6 {
+            for dx in -6..=6 {
+                let (nx, nz) = (x + dx, z + dz);
+                if nx < 0 || nz < 0 || nx >= layer.w as i32 || nz >= layer.h as i32 {
+                    continue;
+                }
+                let m = n - i + nz as usize * layer.w + nx as usize;
+                let d = layer.center(m - (n - i)).distance(at);
+                if self.free(m) && best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, m));
+                }
+            }
+        }
+        best.map_or(p, |(_, m)| self.node_pos(m))
+    }
+
     /// Recompute the distance field if the player has changed cell (or a gate has
     /// changed).
     pub fn update(&mut self, from: Vec3) {
