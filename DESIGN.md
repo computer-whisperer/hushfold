@@ -392,7 +392,12 @@ front of their cases; recharge 60 / 45 s). Spells live in `game/spells.rs`.
 A book flies home only from before its face with nothing that stops books
 between it and the front of its slot (`Library::reaches_front`; the Aura, Rush
 and Homing Toss), and its flight is a cubic curve with both inner points 0.4 m
-in front of the slot, so it lines up there and goes in straight. The aura and
+in front of the slot, so it lines up there and goes in straight. Where something
+stands across that (in an Alchemical Wing alcove's corners a row's last 0.3 m of
+shelf is behind the end of the back case, 16 cm off its face; two runs in the
+Hearth Library likewise), it lines up close in along the face where the room can
+see it, and glides in along the face (`Library::line_up`, about 500 slots); a
+shelver hovers 0.15 m out from there. The aura and
 the rush used to reach through the double-sided cases, flying books through
 the back; about 40% of what they saved the pacing bot was from the far side.
 Charmed books rise from the heap, fly a way planned over a walking field from the

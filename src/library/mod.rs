@@ -18,7 +18,7 @@ use crate::catalog::{self, Catalogue, Series};
 use crate::gfx::mesh::{self, Mesh, Shape, circle};
 use crate::gfx::{Inst, kind};
 use crate::text::{self, Glyph, Lettering, Style};
-use crate::world::{Gate, Level, NOSING, SLAB, Slab, Stairs, Stops, World};
+use crate::world::{Gate, Level, NOSING, SLAB, Slab, Stairs, Stops, World, ray_box};
 use glam::{Mat3, Quat, Vec2, Vec3};
 use motion::{Motion, Mover};
 use rand::prelude::*;
@@ -163,6 +163,8 @@ pub struct BookInfo {
     pub row: u8,
     pub slot_pos: Vec3,
     pub slot_rot: Quat,
+    /// Where it lines up before sliding into its slot (`slot_front`).
+    pub front: Vec3,
 }
 
 /// Which library to build.
@@ -378,7 +380,87 @@ impl Library {
             Layout::Hall => hall::build(&mut lib, &mut rng),
             Layout::Great => great::build(&mut lib, &mut rng),
         }
+        lib.line_up();
         lib
+    }
+
+    /// Where books line up before sliding into their slots: straight out from each,
+    /// SLOT_FRONT clear of its face; but where something stands across that (a case
+    /// meeting the end of the face in an alcove's corner), the nearest point close in
+    /// along the face that is open to the room, so the book glides in along the face,
+    /// and the aura, homing and familiars reach it as they reach any other. Run once
+    /// everything that stops books stands.
+    fn line_up(&mut self) {
+        // Open: reached straight on from LOOK_OUT further out, and clear on from there
+        // to the mouth of the slot.
+        const LOOK_OUT: f32 = 0.5;
+        let solids: Vec<(Vec3, Vec3)> = (self.world.solids().iter())
+            .filter(|s| s.stops.has(Stops::BOOKS))
+            .map(|s| (s.min, s.max))
+            .collect();
+        let mut on_face = vec![Vec::new(); self.faces.len()];
+        for (b, info) in self.books.iter().enumerate() {
+            on_face[info.face as usize].push(b);
+        }
+        for (f, books) in on_face.into_iter().enumerate() {
+            let (center, normal, right) = (self.faces[f].center, self.faces[f].normal, self.faces[f].right);
+            // What stands before the face, clear of its own case, within reach of a
+            // front or a glide along the face.
+            let reach = UNIT_W * 0.5 + 1.3;
+            let corners = [-reach, reach].map(|a| {
+                [0.05, SLOT_FRONT + LOOK_OUT]
+                    .map(|o| [0.0, UNIT_H].map(|y| center + right * a + normal * o + Vec3::Y * y))
+            });
+            let corners = corners.as_flattened().as_flattened();
+            let lo = corners.iter().fold(Vec3::MAX, |m, &p| m.min(p));
+            let hi = corners.iter().fold(Vec3::MIN, |m, &p| m.max(p));
+            let near: Vec<(Vec3, Vec3)> = (solids.iter())
+                .filter(|(mn, mx)| mn.cmplt(hi).all() && mx.cmpgt(lo).all())
+                .copied()
+                .collect();
+            if near.is_empty() {
+                continue;
+            }
+            let inside = |p: Vec3| near.iter().any(|(mn, mx)| p.cmpgt(*mn).all() && p.cmplt(*mx).all());
+            let clear = |a: Vec3, b: Vec3| {
+                let (d, len) = ((b - a).normalize(), a.distance(b));
+                near.iter()
+                    .all(|&(mn, mx)| ray_box(a, d, mn, mx).is_none_or(|t| t >= len))
+            };
+            for b in books {
+                let slot = self.books[b].slot_pos;
+                let deep = (center - slot).dot(normal);
+                let at = |along: f32, out: f32| slot + right * along + normal * (deep + out);
+                let mouth = at(0.0, 0.06);
+                let open = |p: Vec3| !inside(p) && clear(p + normal * LOOK_OUT, p) && clear(p, mouth);
+                if open(self.books[b].front) {
+                    continue;
+                }
+                // Along the face either way, out from it no further than it can glide,
+                // a step clear of where it first opens.
+                let mut best: Option<(f32, Vec3)> = None;
+                for out in [SLOT_FRONT, 0.3, 0.2, 0.12] {
+                    for e in [-1.0f32, 1.0] {
+                        let Some(k) = (1..=12).find(|&k| open(at(e * k as f32 * 0.1, out))) else {
+                            continue;
+                        };
+                        let k = if open(at(e * (k + 1) as f32 * 0.1, out)) {
+                            k + 1
+                        } else {
+                            k
+                        };
+                        let along = k as f32 * 0.1;
+                        let cost = along + (SLOT_FRONT - out);
+                        if best.is_none_or(|(c, _)| cost < c) {
+                            best = Some((cost, at(e * along, out)));
+                        }
+                    }
+                }
+                if let Some((_, p)) = best {
+                    self.books[b].front = p;
+                }
+            }
+        }
     }
 
     pub fn dept_of(&self, category: usize) -> usize {
@@ -415,11 +497,9 @@ impl Library {
     }
 
     /// Where book `b` lines up before sliding into its slot: in front of its face,
-    /// clear of the case.
+    /// clear of the case (see `line_up`).
     pub fn slot_front(&self, b: u32) -> Vec3 {
-        let info = &self.books[b as usize];
-        let face = &self.faces[info.face as usize];
-        info.slot_pos + face.normal * ((face.center - info.slot_pos).dot(face.normal) + SLOT_FRONT)
+        self.books[b as usize].front
     }
 
     /// Whether book `b` can fly home from `from`: from before its face, with nothing
@@ -724,6 +804,7 @@ impl Library {
                         row: row as u8,
                         slot_pos: pos,
                         slot_rot: fr,
+                        front: pos + fnormal * ((fc - pos).dot(fnormal) + SLOT_FRONT),
                     });
                     self.series_books[sid as usize].push(id);
                     self.category_books[cat] += 1;
@@ -964,6 +1045,29 @@ mod tests {
             println!("{f}");
         }
         assert!(found.is_empty(), "{} coplanar overlapping faces", found.len());
+    }
+
+    /// Every slot is open to what sends books home from a distance (the aura, the rush,
+    /// homing, the familiars): from a little before where its book lines up, there is
+    /// nothing in the way. (Before `line_up`, the corners of the Alchemical Wing's
+    /// alcoves and of two runs in the Hearth Library had some 500 shut.)
+    #[test]
+    fn every_slot_is_open_to_the_room() {
+        for layout in Layout::ALL {
+            let lib = Library::generate(layout, 7);
+            let shut: Vec<u32> = (0..lib.books.len() as u32)
+                .filter(|&b| {
+                    let face = &lib.faces[lib.books[b as usize].face as usize];
+                    !lib.reaches_front(b, lib.slot_front(b) + face.normal * 0.5)
+                })
+                .collect();
+            assert!(
+                shut.is_empty(),
+                "{layout:?}: {} slots shut, as {:?}",
+                shut.len(),
+                shut.first()
+            );
+        }
     }
 
     /// No case stands far from a sign naming its category, however its category's

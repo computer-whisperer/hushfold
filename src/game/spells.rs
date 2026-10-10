@@ -471,6 +471,29 @@ mod tests {
         g.held.push(b);
     }
 
+    /// The Shelving Aura sends home, from inside an Alchemical Wing alcove, books whose
+    /// slots are in its corner, half behind the end of the back case.
+    #[test]
+    fn the_aura_reaches_an_alcoves_corner() {
+        let mut g = Game::new(Layout::Great);
+        let mut audio = Audio::silent();
+        g.open_all_gates();
+        g.upg[upg_index(Upg::Aura)] = 3;
+        let books = crate::game::familiar::tests::corner_books(&g);
+        let face = &g.lib.faces[g.lib.books[books[0] as usize].face as usize];
+        g.player.pos = Vec3::new(face.center.x, 0.0, face.center.z) + face.normal * 1.5;
+        for &b in &books {
+            hold(&mut g, b);
+        }
+        for _ in 0..60 * 10 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
+        }
+        let filed = (books.iter())
+            .filter(|&&b| g.state[b as usize] == BookState::Shelved)
+            .count();
+        assert_eq!(filed, books.len(), "{filed} of {} filed", books.len());
+    }
+
     /// Summon Series brings the loose volumes of the active book's series in reach
     /// to the arms; at its last level from anywhere.
     #[test]

@@ -829,9 +829,10 @@ impl Game {
             Task::Fetch { at, .. } => at + Vec3::Y * 0.45,
             Task::Deliver(at) => at + Vec3::Y * 1.0,
             Task::File => {
-                let b = self.familiars[i].carry[0] as usize;
-                let f = &self.lib.faces[self.lib.books[b].face as usize];
-                self.lib.books[b].slot_pos + f.normal * 0.55 + Vec3::Y * 0.1
+                // A little further out than the book lines up.
+                let b = self.familiars[i].carry[0];
+                let f = &self.lib.faces[self.lib.books[b as usize].face as usize];
+                self.lib.slot_front(b) + f.normal * 0.15 + Vec3::Y * 0.1
             }
             Task::Home => post.at + Vec3::Y * PERCH_H,
             Task::Idle => from,
@@ -994,7 +995,7 @@ impl Game {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::world::SLAB;
 
@@ -1044,6 +1045,25 @@ mod tests {
         for &b in &others {
             g.state[b as usize] = BookState::Shelved;
         }
+    }
+
+    /// The resting books whose slots are in the corner of an Alchemical Wing alcove,
+    /// on the first face that has any: those that can't be reached straight on.
+    pub(in crate::game) fn corner_books(g: &Game) -> Vec<u32> {
+        let blocked = |b: u32| {
+            let info = &g.lib.books[b as usize];
+            let face = &g.lib.faces[info.face as usize];
+            let out = (face.center - info.slot_pos).dot(face.normal) + crate::library::SLOT_FRONT;
+            let straight = info.slot_pos + face.normal * out;
+            !g.lib.world.clear(straight + face.normal * 0.5, straight, Stops::BOOKS)
+        };
+        let all = 0..g.lib.books.len() as u32;
+        let first = (all.clone())
+            .find(|&b| g.lib.dept_of_book(b) == 1 && blocked(b))
+            .expect("a corner");
+        let face = g.lib.books[first as usize].face;
+        all.filter(|&b| g.lib.books[b as usize].face == face && blocked(b) && g.loose.is_resting(b))
+            .collect()
     }
 
     /// Toss `books` (taken from wherever they lie) to land round `at`.
@@ -1192,6 +1212,29 @@ mod tests {
             }
             assert!(tried >= 2, "{layout:?}: {tried} faces tried");
         }
+    }
+
+    /// A shelver posted in an Alchemical Wing alcove files the books whose slots are in
+    /// its corner, half behind the end of the back case: they line up close in along
+    /// the face (`Library::line_up`), and it hovers out from there, never in the case.
+    #[test]
+    fn a_shelver_files_into_an_alcoves_corner() {
+        let mut g = Game::new(Layout::Great);
+        g.open_all_gates();
+        let corner = corner_books(&g);
+        let face = &g.lib.faces[g.lib.books[corner[0] as usize].face as usize];
+        let post = g.nav.standable_near(face.center + face.normal * 1.2);
+        let books: Vec<u32> = corner.into_iter().step_by(3).take(5).collect();
+        drop_round(&mut g, &books, post);
+        clear_round(&mut g, post, &books);
+        g.spawn_familiar(Role::Shelver);
+        g.post_familiar(0, post);
+        run(&mut g, 40.0);
+        let filed = books
+            .iter()
+            .filter(|&&b| g.state[b as usize] == BookState::Shelved)
+            .count();
+        assert_eq!(filed, books.len(), "{filed} of {} filed", books.len());
     }
 
     /// A courier posted a little way from its room's drop leaves the pile there alone
