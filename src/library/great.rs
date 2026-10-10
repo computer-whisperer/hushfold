@@ -123,7 +123,7 @@ fn floor_y(level: usize) -> f32 {
 }
 
 /// The two lengths (across) of the atrium wall whose door is at `d`, either side of it.
-fn wall_pieces(d: f32) -> [(f32, f32); 2] {
+fn wall_pieces(d: f32) -> [Span; 2] {
     let h = WALL_T * 0.5;
     [(-ATRIUM - h, d - DOOR_HALF), (d + DOOR_HALF, ATRIUM + h)]
 }
@@ -357,8 +357,10 @@ impl Library {
         }
     }
 
-    /// The atrium's walls and doors, the galleries' fronts and railings, the beams
-    /// under its ceilings, and the reading floor in the well.
+    /// The atrium's walls with their doors (each in a stone frame with its
+    /// department's sign), the galleries' fronts, railings and lamps, the beams under
+    /// its ceilings, the well's piers and its floating lanterns, and the reading floor
+    /// at the bottom of the well.
     fn build_atrium(&mut self, newels: &mut Vec<Vec3>) {
         for l in 0..STOREYS {
             let y = floor_y(l);
@@ -386,7 +388,7 @@ impl Library {
                     let stairs = STAIRWAYS
                         .iter()
                         .any(|f| f.side == si && (f.level == l || f.level + 1 == l));
-                    let spans: &[(f32, f32)] = if stairs {
+                    let spans: &[Span] = if stairs {
                         &[(-WELL, -STAIR_HALF_RUN), (STAIR_HALF_RUN, WELL)]
                     } else {
                         &[(-WELL, WELL)]
@@ -395,13 +397,14 @@ impl Library {
                         let o = WELL + RAIL_T * 0.5;
                         self.railing(side.at3(a0, o, y), side.at3(a1, o, y), newels);
                     }
-                    if !stairs {
-                        for a in [-4.5, 4.5] {
-                            self.lamp_standard(side.at3(a, WELL + RAIL_T * 0.5, y));
-                        }
+                    // Lamps on the railing: a pair along it, or one in the middle of
+                    // each length either side of the stairs.
+                    let lamps = if stairs { [-7.25, 7.25] } else { [-4.5, 4.5] };
+                    for a in lamps {
+                        self.lamp_standard(side.at3(a, WELL + RAIL_T * 0.5, y));
                     }
                     let stairwell = STAIRWAYS.iter().any(|f| f.side == si && f.level + 1 == l);
-                    let edges: &[(f32, f32)] = if stairwell {
+                    let edges: &[Span] = if stairwell {
                         &[(-WELL, -STAIR_HALF_RUN), (STAIR_HALF_RUN, WELL)]
                     } else {
                         &[(-WELL, WELL)]
@@ -439,9 +442,10 @@ impl Library {
         self.chandelier(Vec3::new(0.0, STOREY + 3.0, 0.0), SKY);
     }
 
-    /// Department `r`'s room, on storey `r / 4` off side `r % 4`: its walls, the
-    /// doorway from the atrium with the department's sign over it and its gate, and
-    /// then what stands inside, which is the department's own (`rooms::furnish`).
+    /// Department `r`'s room, on storey `r / 4` off side `r % 4`: its walls (the one it
+    /// shares with the atrium, with the door's frame and sign, is `build_atrium`'s),
+    /// the gate in its door, and then what stands inside, which is the department's
+    /// own (`rooms::furnish`).
     fn build_room(&mut self, rng: &mut StdRng, r: usize, titles: &mut HashSet<String>) {
         let (l, side) = (r / 4, SIDES[r % 4]);
         let y = floor_y(l);
@@ -603,7 +607,7 @@ impl Library {
 }
 
 /// A box in `side`'s frame: `a` across, `o` out from the atrium's centre, `y` up.
-fn piece(side: Side, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) -> Inst {
+fn piece(side: Side, a: Span, o: Span, y: Span, kind: u32, rgb: [f32; 3]) -> Inst {
     let (mn, mx) = side.rect(a.0, a.1, o.0, o.1);
     let (lo, hi) = box3(mn, mx, y.0, y.1);
     Inst::minmax(lo, hi, kind, rgb)
@@ -611,7 +615,7 @@ fn piece(side: Side, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb
 
 /// A box in the plane of a wall on `side`: centred `at` (across, up), `o` its span off
 /// the wall, `size` (along, up), turned `angle` from level.
-fn in_wall(side: Side, at: (f32, f32), o: (f32, f32), size: (f32, f32), angle: f32, look: (u32, [f32; 4])) -> Inst {
+fn in_wall(side: Side, at: (f32, f32), o: Span, size: (f32, f32), angle: f32, look: (u32, [f32; 4])) -> Inst {
     let across = side.across3();
     let x = across * angle.cos() + Vec3::Y * angle.sin();
     let up = Vec3::Y * angle.cos() - across * angle.sin();
@@ -627,7 +631,7 @@ fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
 /// The atrium's dressing: what stands on its walls, under its ceilings, along its
 /// galleries, round its doors, beside its stairs and over the well.
 impl Library {
-    fn part(&mut self, side: Side, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) {
+    fn part(&mut self, side: Side, a: Span, o: Span, y: Span, kind: u32, rgb: [f32; 3]) {
         self.decor(piece(side, a, o, y, kind, rgb));
     }
 
@@ -730,7 +734,7 @@ impl Library {
     /// A blind arch on the wall on `side` over the bay `l..r` (between pilasters'
     /// faces) of the storey with its floor at `y`, springing from imposts: a ring of
     /// voussoirs with a keystone, round a darker recess.
-    fn blind_arch(&mut self, side: Side, (l, r): (f32, f32), y: f32) {
+    fn blind_arch(&mut self, side: Side, (l, r): Span, y: f32) {
         const RECESS: [f32; 3] = [0.2, 0.18, 0.16];
         let spring = y + SPRING;
         let (c, ri) = ((l + r) * 0.5, (r - l) * 0.5);
@@ -777,10 +781,10 @@ impl Library {
         // A layer standing `front`..`back` off the wall over `a` across and `y` up;
         // and one turned on its corner, centred `at`, `w` on a side. Layers further
         // forward hide the ones behind, and are laid down first.
-        let flat = |lib: &mut Self, a, (front, back): (f32, f32), y, (kind, rgb): (u32, [f32; 3])| {
+        let flat = |lib: &mut Self, a, (front, back): Span, y, (kind, rgb): (u32, [f32; 3])| {
             lib.part(side, a, (FACE - front, FACE - back), y, kind, rgb);
         };
-        let turned = |lib: &mut Self, at, (front, back): (f32, f32), w: f32, (kind, rgb): (u32, [f32; 3])| {
+        let turned = |lib: &mut Self, at, (front, back): Span, w: f32, (kind, rgb): (u32, [f32; 3])| {
             let o = (FACE - front, FACE - back);
             lib.decor(in_wall(side, at, o, (w, w), FRAC_PI_4, (kind, rgba(rgb, 1.0))));
         };
@@ -845,8 +849,8 @@ impl Library {
     /// The front of a gallery along `spans` of `side`'s edge of the well, under the
     /// floor at `y`: a lipped cornice, a panelled frieze with a moulding under it, and
     /// a console where each beam under it comes to the edge.
-    fn gallery_front(&mut self, side: Side, y: f32, spans: &[(f32, f32)]) {
-        let wood = |lib: &mut Self, a: (f32, f32), depth: f32, (y0, y1): (f32, f32), rgb: [f32; 3]| {
+    fn gallery_front(&mut self, side: Side, y: f32, spans: &[Span]) {
+        let wood = |lib: &mut Self, a: Span, depth: f32, (y0, y1): Span, rgb: [f32; 3]| {
             lib.part(side, a, (WELL - depth, WELL), (y + y0, y + y1), kind::WOOD, rgb);
         };
         for &(a0, a1) in spans {
@@ -879,25 +883,22 @@ impl Library {
         }
     }
 
-    /// A lamp on a post standing in a gallery's railing at `foot`.
+    /// A lamp on a post standing in a gallery's railing at `foot`: a lantern of
+    /// glass between gilt corner posts.
     fn lamp_standard(&mut self, foot: Vec3) {
-        self.decor(Inst::aabox(
-            foot + Vec3::Y * 0.78,
-            Vec3::new(0.11, 1.56, 0.11),
-            kind::WOOD,
-            WALNUT,
-        ));
-        for (y, w, h) in [(1.58, 0.2, 0.04), (1.865, 0.22, 0.05), (1.935, 0.06, 0.09)] {
-            self.decor(Inst::aabox(foot + Vec3::Y * y, Vec3::new(w, h, w), kind::METAL, GILT));
+        let gilt = |lib: &mut Self, at: Vec3, size: Vec3| lib.decor(Inst::aabox(foot + at, size, kind::METAL, GILT));
+        for (x, z) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            gilt(self, Vec3::new(x * 0.08, 1.72, z * 0.08), Vec3::new(0.03, 0.24, 0.03));
         }
-        let mut glow = Inst::aabox(
-            foot + Vec3::Y * 1.72,
-            Vec3::new(0.15, 0.24, 0.15),
-            kind::EMISSIVE,
-            [1.0, 0.62, 0.26],
-        );
-        glow.color[3] = 2.0;
+        for (y, w, h) in [(1.58, 0.2, 0.04), (1.865, 0.22, 0.05), (1.935, 0.06, 0.09)] {
+            gilt(self, Vec3::Y * y, Vec3::new(w, h, w));
+        }
+        let glass = Vec3::new(0.15, 0.24, 0.15);
+        let mut glow = Inst::aabox(foot + Vec3::Y * 1.72, glass, kind::EMISSIVE, [1.0, 0.62, 0.26]);
+        glow.color[3] = 1.5;
         self.decor(glow);
+        let post = Vec3::new(0.11, 1.56, 0.11);
+        self.decor(Inst::aabox(foot + Vec3::Y * 0.78, post, kind::WOOD, WALNUT));
     }
 
     /// The stone frame round the door from the atrium into department `dept`'s room
@@ -932,7 +933,7 @@ impl Library {
             self.decor(in_wall(side, at, o, (0.24, 0.24), FRAC_PI_4, gem));
         }
         // A stone `a` across from the door, `depth` off the wall, `ys` up from the floor.
-        let stone = |lib: &mut Self, (a0, a1): (f32, f32), depth: f32, (y0, y1): (f32, f32), rgb: [f32; 3]| {
+        let stone = |lib: &mut Self, (a0, a1): Span, depth: f32, (y0, y1): Span, rgb: [f32; 3]| {
             let (a, o, ys) = ((d + a0, d + a1), (FACE - depth, FACE), (y + y0, y + y1));
             lib.part(side, a, o, ys, kind::STONE, rgb);
         };
@@ -967,7 +968,7 @@ impl Library {
             // `o` from the stone's face out `depth`.
             let o = |depth: f32| ((stone + out * depth).min(stone), (stone + out * depth).max(stone));
             let oc = |depth: f32| stone + out * depth * 0.5;
-            let wood = |lib: &mut Self, a: (f32, f32), depth: f32, y: (f32, f32), rgb: [f32; 3]| {
+            let wood = |lib: &mut Self, a: Span, depth: f32, y: Span, rgb: [f32; 3]| {
                 lib.part(side, a, o(depth), y, kind::WOOD, rgb);
             };
             let along = |a: f32, dy: f32, depth: f32| side.at3(a, oc(depth), under(a) + dy);
@@ -1005,7 +1006,7 @@ impl Library {
         // The high end, under the floor above.
         let head = y1 - SLAB;
         let (o0, o1) = (WELL, WELL + STAIR_W);
-        let end = |lib: &mut Self, o: (f32, f32), depth: f32, y: (f32, f32), rgb: [f32; 3]| {
+        let end = |lib: &mut Self, o: Span, depth: f32, y: Span, rgb: [f32; 3]| {
             lib.part(side, (r, r + depth), o, y, kind::WOOD, rgb);
         };
         let panel = (o0 + 0.26, o1 - 0.26);
