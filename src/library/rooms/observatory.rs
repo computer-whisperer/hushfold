@@ -4,6 +4,7 @@
 //! an orrery stands in the court between them. Cases line the walls round about.
 
 use super::*;
+use std::f32::consts::{FRAC_PI_2, PI};
 
 /// Half the width of the nave through the ranges.
 const NAVE: f32 = 2.0;
@@ -29,30 +30,39 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     telescope(lib, frame);
 }
 
-/// A ring of `n` rods round `c` in the plane of `u` and `v` (unit, at right angles).
-#[allow(clippy::too_many_arguments)]
-fn ring(lib: &mut Library, c: Vec3, u: Vec3, v: Vec3, r: f32, n: usize, w: f32, kind: u32, rgba: [f32; 4]) {
-    let at = |k: usize| {
-        let t = k as f32 / n as f32 * TAU;
-        c + (u * libm::cosf(t) + v * libm::sinf(t)) * r
-    };
-    for k in 0..n {
-        // A touch long, so the rods close at the joints.
-        let (p, q) = (at(k), at(k + 1));
-        let m = (p - q) * 0.04;
-        rod(lib, p + m, q - m, w, w, kind, rgba);
-    }
+/// `n` points round a circle `r` across in xy, anticlockwise.
+fn circle(n: usize, r: f32) -> Vec<Vec2> {
+    (0..n)
+        .map(|k| {
+            let t = k as f32 / n as f32 * TAU;
+            Vec2::new(libm::cosf(t), libm::sinf(t)) * r
+        })
+        .collect()
 }
 
-/// A rough ball: a cube and the same cube turned two ways.
-fn ball(lib: &mut Library, c: Vec3, s: f32, kind: u32, rgba: [f32; 4]) {
-    for rot in [
-        Quat::from_rotation_y(0.4),
-        Quat::from_rotation_y(1.2) * Quat::from_rotation_x(0.785),
-        Quat::from_rotation_z(0.785) * Quat::from_rotation_y(0.3),
-    ] {
-        lib.decor(Inst::new(c, rot, Vec3::splat(s), kind, rgba, 0));
-    }
+/// A flat band round `c` in the plane of `u` and `v` (unit, at right angles), `r` to
+/// its middle, `w` wide and `d` thick.
+fn band(
+    lib: &mut Library,
+    c: Vec3,
+    (u, v): (Vec3, Vec3),
+    (r, w, d): (f32, f32, f32),
+    kind: u32,
+    rgba: [f32; 4],
+) -> Inst {
+    let segs = if r < 0.5 { 32 } else { 64 };
+    let ring = Mesh::ring(&circle(segs, r + w * 0.5), &circle(segs, r - w * 0.5), d);
+    let turn = Quat::from_mat3(&Mat3::from_cols(u, v, u.cross(v)));
+    lib.shape(ring).at(c, turn, kind, rgba)
+}
+
+/// A round rod (`stick`, a cylinder) from `p` to `q`, `w` across.
+fn bar(stick: Shape, p: Vec3, q: Vec3, w: f32, kind: u32, rgba: [f32; 4]) -> Inst {
+    let v = q - p;
+    let turn = Quat::from_rotation_arc(Vec3::Y, v.normalize());
+    stick
+        .sized(Vec3::new(w, v.length(), w))
+        .inst((p + q) * 0.5, turn, kind, rgba)
 }
 
 /// Shelve `cat` across `faces` (all facing one way), left to right as you face them.
@@ -129,38 +139,43 @@ fn walls(lib: &mut Library, frame: &RoomFrame) {
     for (a0, a1) in [(-inner + t, -7.45), (-1.95, -1.6), (1.6, 1.95), (7.45, inner - t)] {
         lib.wainscot(frame.y, frame.rect(a0, a1, far - t, far), -side.out);
     }
-    // The tall window: leaded glass in a stone surround, with a sill.
+    // The tall window: leaded glass under a round head in a stone surround, with a
+    // keystone and a sill. Outlines across (x) and up (y) from the floor at the wall.
     let (out, up) = (frame.out(), Vec3::Y);
-    let glass = |lib: &mut Library, hw: f32, y0: f32, y1: f32| {
-        let (lo, hi) = frame.boxed(-hw, hw, far - 0.04, far + 0.04, y0, y1);
-        let mut g = Inst::minmax(lo, hi, kind::GLASS, [0.32, 0.42, 0.85]);
-        g.color[3] = 1.25;
-        lib.decor(g);
+    let wall = Quat::from_mat3(&Mat3::from_cols(frame.across(), up, frame.across().cross(up)));
+    let (spring, r) = (4.0, 1.2);
+    let head = |r: f32, from: f32, to: f32| -> Vec<Vec2> {
+        (0..=32)
+            .map(|k| {
+                let t = from + (to - from) * k as f32 / 32.0;
+                Vec2::new(libm::cosf(t) * r, spring + libm::sinf(t) * r)
+            })
+            .collect()
     };
-    // A round head, in steps, each step's glass and the stone beside it.
-    for (hw, y0, y1, stone) in [
-        (1.2, 1.0, 4.4, 1.5),
-        (1.05, 4.4, 4.75, 1.45),
-        (0.8, 4.75, 4.98, 1.3),
-        (0.45, 4.98, 5.1, 1.05),
-    ] {
-        glass(lib, hw, y0, y1);
-        for (a0, a1) in [(-stone, -hw), (hw, stone)] {
-            lib.decor(piece(
-                frame,
-                (a0, a1),
-                (far - 0.08, far),
-                (y0, y1),
-                kind::STONE,
-                PALE_STONE,
-            ));
-        }
+    let mut opening = vec![Vec2::new(-r - 0.02, 1.0), Vec2::new(r + 0.02, 1.0)];
+    opening.extend(head(r + 0.02, 0.0, PI));
+    let glass = lib.shape(Mesh::prism(&opening, 0.08));
+    lib.decor(glass.at(frame.at(0.0, far, 0.0), wall, kind::GLASS, [0.32, 0.42, 0.85, 1.25]));
+    let mut arch = vec![Vec2::new(-1.5, spring)];
+    arch.extend(head(r, PI, 0.0));
+    arch.extend([Vec2::new(1.5, spring), Vec2::new(1.5, 5.36), Vec2::new(-1.5, 5.36)]);
+    let arch = lib.shape(Mesh::prism(&arch, 0.08));
+    lib.decor(arch.at(frame.at(0.0, far - 0.04, 0.0), wall, kind::STONE, rgba(PALE_STONE, 1.0)));
+    for (a0, a1) in [(-1.5, -r), (r, 1.5)] {
+        lib.decor(piece(
+            frame,
+            (a0, a1),
+            (far - 0.08, far),
+            (1.0, spring),
+            kind::STONE,
+            PALE_STONE,
+        ));
     }
     lib.decor(piece(
         frame,
-        (-0.75, 0.75),
-        (far - 0.08, far),
-        (5.1, 5.35),
+        (-0.13, 0.13),
+        (far - 0.12, far),
+        (spring + r - 0.08, 5.36),
         kind::STONE,
         PALE_STONE,
     ));
@@ -230,17 +245,15 @@ fn chart(lib: &mut Library, c: Vec3, n: Vec3, seed: u32) {
     for k in 0..4 {
         rod(lib, pts[k], pts[k + 1], 0.008, 0.008, kind::PLAIN, ink);
     }
-    ring(
+    let hoop = band(
         lib,
         face,
-        right,
-        Vec3::Y,
-        0.42,
-        16,
-        0.01,
+        (right, Vec3::Y),
+        (0.42, 0.012, 0.004),
         kind::PLAIN,
         [0.45, 0.22, 0.08, 1.0],
     );
+    lib.decor(hoop);
 }
 
 /// The ceiling painted as the night sky: a zodiac ring of brass, constellations
@@ -268,22 +281,42 @@ fn sky(lib: &mut Library, frame: &RoomFrame) {
     let (u, v) = (frame.across(), frame.out());
     let y = h - 0.07;
     let centre = frame.at(0.0, COURT, y);
-    let gold = [0.7, 0.5, 0.2, 1.0];
-    ring(lib, centre, u, v, 6.4, 48, 0.07, kind::METAL, gold);
-    ring(lib, centre, u, v, 5.9, 48, 0.035, kind::METAL, gold);
+    // The zodiac: two gilt bands with the twelve houses between them, each marked with
+    // a boss, turning once in half an hour.
+    let mut zodiac = Mesh::ring(&circle(128, 6.46), &circle(128, 6.34), 0.05);
+    zodiac.add(
+        &Mesh::ring(&circle(128, 5.93), &circle(128, 5.87), 0.035),
+        Vec3::ZERO,
+        Quat::IDENTITY,
+        Vec3::ONE,
+    );
+    let (spoke, boss) = (Mesh::cube(), Mesh::cylinder(16));
     for k in 0..12 {
         let t = k as f32 / 12.0 * TAU;
-        let dir = u * libm::cosf(t) + v * libm::sinf(t);
-        rod(
-            lib,
-            centre + dir * 5.9,
-            centre + dir * 6.4,
-            0.05,
-            0.05,
-            kind::METAL,
-            gold,
+        let dir = Vec3::new(libm::cosf(t), libm::sinf(t), 0.0);
+        zodiac.add(
+            &spoke,
+            dir * 6.13,
+            Quat::from_rotation_z(t),
+            Vec3::new(0.44, 0.045, 0.04),
         );
+        let mid = Quat::from_rotation_z(t + TAU / 24.0);
+        let at = mid * Vec3::X * 6.13;
+        zodiac.add(&boss, at, Quat::from_rotation_x(FRAC_PI_2), Vec3::new(0.12, 0.03, 0.12));
     }
+    let zodiac = lib.shape(zodiac);
+    let turn = Quat::from_mat3(&Mat3::from_cols(u, v, u.cross(v)));
+    let m = lib.mover(
+        centre,
+        Motion::Spin {
+            axis: Vec3::Y,
+            rate: TAU / 1800.0,
+        },
+        0.0,
+        None,
+    );
+    let gold = [0.7, 0.5, 0.2, 1.0];
+    lib.moving(m, zodiac.at(centre, turn, kind::METAL, gold));
     // Constellations in the room's frame (a, o), their stars' brightness, and which
     // stars are joined.
     type Figure = (&'static [(f32, f32, f32)], &'static [(usize, usize)]);
@@ -376,32 +409,36 @@ fn star(lib: &mut Library, p: Vec3, s: f32, bright: f32) {
     ));
 }
 
-/// The orrery in the court: a stone plinth, a brass column, the sun glowing at the
-/// top and the planets on their arms about it.
+/// How long the orrery's earth takes to go round its sun (seconds); the other planets
+/// keep their years to it.
+const YEAR: f32 = 120.0;
+
+/// The orrery in the court: a marble drum, a brass column, the sun glowing at the top
+/// and the planets going round it on their arms, each in its own year, the moon round
+/// the earth.
 fn orrery(lib: &mut Library, frame: &RoomFrame) {
     let base = frame.at(0.0, COURT, 0.0);
     let up = Vec3::Y;
-    lib.solid(
-        piece(
-            frame,
-            (-0.7, 0.7),
-            (COURT - 0.7, COURT + 0.7),
-            (0.0, 0.85),
-            kind::STONE,
-            PALE_STONE,
-        ),
-        Stops::ALL,
-    );
-    for (hw, y0, y1) in [(0.8, 0.0, 0.12), (0.8, 0.85, 0.94)] {
-        lib.decor(piece(
-            frame,
-            (-hw, hw),
-            (COURT - hw, COURT + hw),
-            (y0, y1),
-            kind::STONE,
-            PALE_STONE,
-        ));
-    }
+    guard(lib, frame, (-0.7, 0.7), (COURT - 0.7, COURT + 0.7), 0.85);
+    let v = Vec2::new;
+    let drum = lib.shape(Mesh::lathe(
+        &[
+            v(0.0, 0.0),
+            v(0.8, 0.0),
+            v(0.8, 0.1),
+            v(0.74, 0.13),
+            v(0.7, 0.18),
+            v(0.7, 0.8),
+            v(0.74, 0.83),
+            v(0.8, 0.86),
+            v(0.8, 0.94),
+            v(0.0, 0.94),
+        ],
+        64,
+    ));
+    let mut marble = drum.at(base, Quat::IDENTITY, kind::STONE, rgba(PALE_STONE, 1.0));
+    marble.param = 1;
+    lib.decor(marble);
     // A meridian line of brass let into the floor, from the door to the window, with
     // a ring round the plinth.
     let gold = [0.55, 0.38, 0.13];
@@ -425,94 +462,109 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
             ));
         }
     }
-    let rgba = [gold[0], gold[1], gold[2], 1.0];
-    ring(
+    let flat = (Vec3::X, Vec3::Z);
+    let inlay = band(
         lib,
         base + up * 0.004,
-        Vec3::X,
-        Vec3::Z,
-        1.25,
-        32,
-        0.03,
+        flat,
+        (1.25, 0.04, 0.008),
         kind::METAL,
-        rgba,
+        rgba(gold, 1.0),
     );
-    // A brass ring round the top of the plinth, and the column.
-    ring(
-        lib,
-        base + up * 0.97,
-        Vec3::X,
-        Vec3::Z,
-        0.62,
+    lib.decor(inlay);
+    // A brass hoop round the top of the drum, and the column.
+    let hoop = lib.shape(Mesh::torus(0.08, 64, 10)).scaled(0.62);
+    lib.decor(hoop.at(base + up * 0.965, Quat::IDENTITY, kind::METAL, BRASS_BRIGHT));
+    let column = lib.shape(Mesh::lathe(
+        &[
+            v(0.0, 0.94),
+            v(0.1, 0.94),
+            v(0.1, 0.97),
+            v(0.06, 1.0),
+            v(0.04, 1.06),
+            v(0.03, 1.2),
+            v(0.03, 1.74),
+            v(0.05, 1.76),
+            v(0.06, 1.79),
+            v(0.0, 1.79),
+        ],
         24,
-        0.05,
-        kind::METAL,
-        BRASS_BRIGHT,
-    );
-    rod(
-        lib,
-        base + up * 0.94,
-        base + up * 1.78,
-        0.07,
-        0.07,
-        kind::METAL,
-        BRASS_BRIGHT,
-    );
+    ));
+    lib.decor(column.at(base, Quat::IDENTITY, kind::METAL, BRASS_BRIGHT));
     let sun = base + up * 1.9;
-    ball(lib, sun, 0.24, kind::CRYSTAL, [1.0, 0.72, 0.3, 1.0]);
+    let ball = lib.shape(Mesh::sphere(32));
+    lib.decor(
+        ball.sized(Vec3::splat(0.24))
+            .inst(sun, Quat::IDENTITY, kind::CRYSTAL, [1.0, 0.72, 0.3, 1.4]),
+    );
     // Its light a little above it, so it lights the court rather than flooding itself.
     lib.light(sun + up * 0.7, 5.5, [1.0, 0.7, 0.35], 0.9, LightKind::Static);
     // The sun's armillary ring, tipped to the ecliptic.
     let tilt = Quat::from_rotation_x(0.41);
-    ring(
-        lib,
-        sun,
-        tilt * Vec3::X,
-        tilt * Vec3::Z,
-        0.36,
-        20,
-        0.02,
-        kind::METAL,
-        BRASS_BRIGHT,
-    );
-    // (angle, reach, height, size, colour) of each planet.
-    let planets: [(f32, f32, f32, f32, [f32; 3]); 6] = [
-        (0.3, 0.42, 1.72, 0.06, [0.6, 0.56, 0.52]),
-        (2.5, 0.62, 1.64, 0.09, [0.92, 0.82, 0.55]),
-        (4.4, 0.84, 1.56, 0.1, [0.22, 0.42, 0.85]),
-        (1.2, 1.05, 1.48, 0.08, [0.82, 0.3, 0.14]),
-        (5.4, 1.3, 1.4, 0.17, [0.8, 0.64, 0.44]),
-        (3.4, 1.52, 1.32, 0.14, [0.86, 0.76, 0.5]),
+    let ecliptic = lib.shape(Mesh::torus(0.06, 48, 8)).scaled(0.36);
+    lib.decor(ecliptic.at(sun, tilt, kind::METAL, BRASS_BRIGHT));
+    // (angle, reach, height, size, colour, years) of each planet.
+    let planets: [(f32, f32, f32, f32, [f32; 3], f32); 6] = [
+        (0.3, 0.42, 1.72, 0.06, [0.6, 0.56, 0.52], 0.24),
+        (2.5, 0.62, 1.64, 0.09, [0.92, 0.82, 0.55], 0.62),
+        (4.4, 0.84, 1.56, 0.1, [0.22, 0.42, 0.85], 1.0),
+        (1.2, 1.05, 1.48, 0.08, [0.82, 0.3, 0.14], 1.88),
+        (5.4, 1.3, 1.4, 0.17, [0.8, 0.64, 0.44], 11.9),
+        (3.4, 1.52, 1.32, 0.14, [0.86, 0.76, 0.5], 29.5),
     ];
-    for (k, &(t, r, h, s, rgb)) in planets.iter().enumerate() {
+    let stick = lib.shape(Mesh::cylinder(12));
+    let sleeve = lib.shape(Mesh::cylinder(24)).sized(Vec3::new(0.085, 0.035, 0.085));
+    for (k, &(t, r, h, s, rgb, years)) in planets.iter().enumerate() {
+        let spin = Motion::Spin {
+            axis: up,
+            rate: TAU / (YEAR * years),
+        };
+        let arm = lib.mover(base, spin, 0.0, None);
         let dir = Vec3::new(libm::cosf(t), 0.0, libm::sinf(t));
         let hub = base + up * h;
         let tip = hub + dir * r;
-        rod(lib, hub, tip, 0.022, 0.022, kind::METAL, BRASS_BRIGHT);
-        rod(lib, tip, tip + up * 0.14, 0.018, 0.018, kind::METAL, BRASS_BRIGHT);
+        lib.moving(arm, sleeve.inst(hub, Quat::IDENTITY, kind::METAL, BRASS_BRIGHT));
+        lib.moving(arm, bar(stick, hub, tip + dir * 0.01, 0.02, kind::METAL, BRASS_BRIGHT));
+        lib.moving(arm, bar(stick, tip, tip + up * 0.14, 0.016, kind::METAL, BRASS_BRIGHT));
         let p = tip + up * (0.14 + s * 0.5);
-        ball(lib, p, s, kind::METAL, [rgb[0], rgb[1], rgb[2], 1.0]);
-        if k == 2 {
-            // The earth's moon on its own little arm.
-            let m = p + Vec3::new(libm::sinf(t), 0.0, -libm::cosf(t)) * 0.16;
-            rod(lib, p, m, 0.01, 0.01, kind::METAL, BRASS_BRIGHT);
-            ball(lib, m, 0.035, kind::METAL, [0.7, 0.7, 0.68, 1.0]);
-        }
+        // Each world turned a little on its axis, so its shading isn't the same.
+        let lean = Quat::from_rotation_z(0.2 + k as f32 * 0.3);
+        lib.moving(
+            arm,
+            ball.sized(Vec3::splat(s)).inst(p, lean, kind::METAL, rgba(rgb, 1.0)),
+        );
         if k == 5 {
-            let rot = Quat::from_rotation_y(0.7) * Quat::from_rotation_x(0.45);
-            lib.decor(Inst::new(
+            let rings = Quat::from_rotation_y(0.7) * Quat::from_rotation_x(0.45);
+            let ring = band(
+                lib,
                 p,
-                rot,
-                Vec3::new(0.38, 0.012, 0.38),
+                (rings * Vec3::X, rings * Vec3::Z),
+                (0.15, 0.07, 0.006),
                 kind::METAL,
                 [0.7, 0.62, 0.42, 1.0],
-                0,
-            ));
+            );
+            lib.moving(arm, ring);
+        }
+        if k == 2 {
+            // The moon round the earth on its own little arm, a month to the year.
+            let month = Motion::Spin {
+                axis: up,
+                rate: TAU / (YEAR / 12.0),
+            };
+            let moon = lib.mover(p, month, 0.0, Some(arm));
+            let m = p + Vec3::new(libm::sinf(t), 0.0, -libm::cosf(t)) * 0.16;
+            lib.moving(moon, bar(stick, p, m, 0.01, kind::METAL, BRASS_BRIGHT));
+            lib.moving(
+                moon,
+                ball.sized(Vec3::splat(0.035))
+                    .inst(m, Quat::IDENTITY, kind::METAL, [0.7, 0.7, 0.68, 1.0]),
+            );
         }
     }
 }
 
-/// The great telescope on its cabinet beside the window, looking up and out of it.
+/// The great telescope on its cabinet beside the window, looking up and out of it,
+/// and now and then sweeping a little across the sky and back.
 fn telescope(lib: &mut Library, frame: &RoomFrame) {
     let (a, o, h) = SCOPE;
     let (up, across) = (Vec3::Y, frame.across());
@@ -536,66 +588,99 @@ fn telescope(lib: &mut Library, frame: &RoomFrame) {
         wood(lib, 0.45, o - 0.88, o - 0.85, y, y + 0.24, [0.2, 0.1, 0.045]);
     }
     let pivot = frame.at(a, o, h);
-    rod(
-        lib,
-        frame.at(a, o, 0.96),
-        pivot - up * 0.25,
-        0.16,
-        0.16,
-        kind::METAL,
-        IRON,
-    );
+    let foot = frame.at(a, o, 0.96);
+    let v = Vec2::new;
+    let pillar = lib.shape(Mesh::lathe(
+        &[
+            v(0.0, 0.0),
+            v(0.2, 0.0),
+            v(0.2, 0.04),
+            v(0.12, 0.08),
+            v(0.08, 0.16),
+            v(0.065, 0.3),
+            v(0.065, 0.86),
+            v(0.09, 0.89),
+            v(0.09, 0.94),
+            v(0.0, 0.94),
+        ],
+        32,
+    ));
+    lib.decor(pillar.at(foot, Quat::IDENTITY, kind::METAL, IRON));
     // The tube looks at the top of the window, turned toward it.
     let d = (frame.at(-0.3, RoomFrame::O_FAR, 4.4) - pivot).normalize();
     let axle = d.cross(up).normalize();
+    // The fork turns on the pillar's head, the tube tips in the fork: each swings
+    // slowly, out of step with the other.
+    let sweep = Motion::Swing {
+        axis: up,
+        amp: 0.09,
+        period: 71.0,
+    };
+    let fork = lib.mover(pivot, sweep, 0.0, None);
+    let stick = lib.shape(Mesh::cylinder(16));
+    let collar = stick.sized(Vec3::new(0.2, 0.06, 0.2));
+    lib.moving(fork, collar.inst(pivot - up * 0.22, Quat::IDENTITY, kind::METAL, IRON));
     let turn = Quat::from_rotation_arc(across, axle);
     for s in [-1.0f32, 1.0] {
         let c = pivot - up * 0.1 + axle * s * 0.24;
-        lib.decor(Inst::new(c, turn, frame.size(0.04, 0.42, 0.2), kind::METAL, IRON, 0));
+        lib.moving(
+            fork,
+            Inst::new(c, turn, frame.size(0.04, 0.42, 0.2), kind::METAL, IRON, 0),
+        );
     }
-    rod(
-        lib,
-        pivot - axle * 0.3,
-        pivot + axle * 0.3,
-        0.05,
-        0.05,
-        kind::METAL,
-        IRON,
+    lib.moving(
+        fork,
+        bar(stick, pivot - axle * 0.3, pivot + axle * 0.3, 0.05, kind::METAL, IRON),
     );
-    // Eight-sided, banded, with an eyepiece below and a finder alongside.
-    let rot = Quat::from_rotation_arc(Vec3::Y, d);
-    let tube = |lib: &mut Library, t: f32, len: f32, w: f32, rgba: [f32; 4]| {
-        for twist in [0.0f32, 0.785] {
-            let r = rot * Quat::from_rotation_y(twist);
-            lib.decor(Inst::new(pivot + d * t, r, Vec3::new(w, len, w), kind::METAL, rgba, 0));
-        }
+    let tip = Motion::Swing {
+        axis: axle,
+        amp: 0.02,
+        period: 43.0,
     };
-    tube(lib, 0.2, 3.0, 0.3, SCOPE_BRASS);
-    for t in [-1.0f32, 0.35, 1.55] {
-        tube(lib, t, 0.08, 0.34, [0.36, 0.23, 0.07, 1.0]);
+    let scope = lib.mover(pivot, tip, 0.0, Some(fork));
+    // Tapering a little toward the eye, along the tube's own y from the pivot.
+    let tube = lib.shape(Mesh::lathe(
+        &[v(0.0, -1.3), v(0.13, -1.3), v(0.15, 1.65), v(0.0, 1.65)],
+        40,
+    ));
+    let rot = Quat::from_rotation_arc(Vec3::Y, d);
+    lib.moving(scope, tube.at(pivot, rot, kind::METAL, SCOPE_BRASS));
+    let bands = [0.36, 0.23, 0.07, 1.0];
+    let ring = |t: f32, w: f32, len: f32, rgba: [f32; 4]| {
+        let at = pivot + d * t;
+        stick.sized(Vec3::new(w, len, w)).inst(at, rot, kind::METAL, rgba)
+    };
+    for (t, w) in [(-1.0f32, 0.31), (0.35, 0.335), (1.55, 0.35)] {
+        lib.moving(scope, ring(t, w, 0.08, bands));
     }
-    tube(lib, 1.68, 0.06, 0.33, IRON);
-    let low = pivot + d * -1.3;
-    rod(lib, low, low - d * 0.25, 0.09, 0.09, kind::METAL, IRON);
+    // The dew cap, the eyepiece in its drawtube, and the finder alongside on brackets.
+    lib.moving(scope, ring(1.69, 0.33, 0.08, IRON));
+    lib.moving(scope, ring(-1.36, 0.09, 0.12, IRON));
+    lib.moving(scope, ring(-1.45, 0.06, 0.08, SCOPE_BRASS));
     let above = axle.cross(d).normalize();
-    rod(
-        lib,
-        pivot + above * 0.24 - d * 0.2,
-        pivot + above * 0.24 + d * 0.7,
-        0.06,
-        0.06,
-        kind::METAL,
-        SCOPE_BRASS,
+    let finder = pivot + above * 0.24;
+    lib.moving(
+        scope,
+        bar(
+            stick,
+            finder - d * 0.2,
+            finder + d * 0.7,
+            0.06,
+            kind::METAL,
+            SCOPE_BRASS,
+        ),
     );
     for t in [-0.1f32, 0.55] {
-        rod(
-            lib,
-            pivot + d * t + above * 0.13,
-            pivot + d * t + above * 0.21,
-            0.02,
-            0.02,
-            kind::METAL,
-            IRON,
+        lib.moving(
+            scope,
+            bar(
+                stick,
+                pivot + d * t + above * 0.13,
+                pivot + d * t + above * 0.21,
+                0.02,
+                kind::METAL,
+                IRON,
+            ),
         );
     }
 }

@@ -5,6 +5,7 @@
 //! glows faintly in the floor before it.
 
 use super::*;
+use std::f32::consts::{FRAC_PI_2, PI};
 
 /// Clear width of an alcove, between the faces either side of it.
 const BAY: f32 = 3.0;
@@ -23,6 +24,8 @@ const BRICK: [f32; 3] = [0.42, 0.2, 0.13];
 const COPPER: [f32; 4] = [0.62, 0.3, 0.14, 1.0];
 const IRON: [f32; 4] = [0.07, 0.07, 0.08, 1.0];
 const OAK: [f32; 3] = [0.2, 0.11, 0.05];
+const BRASS_LIT: [f32; 4] = [0.6, 0.42, 0.15, 1.0];
+const CORK: [f32; 4] = [0.42, 0.28, 0.14, 1.0];
 /// What the flasks on the benches hold.
 const POTIONS: [[f32; 3]; 6] = [
     [0.25, 0.85, 0.35],
@@ -46,35 +49,196 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     shelves(lib, frame, rng, titles);
     walls(lib, frame);
     furnace(lib, frame);
+    let glass = Glassware::new(lib);
     for s in [-1.0f32, 1.0] {
-        bench(lib, frame, s);
+        bench(lib, frame, s, &glass);
     }
-    pipes(lib, frame);
-    circle(lib, frame);
+    pipes(lib, frame, &glass);
+    transmutation(lib, frame);
 }
 
-/// A ring of `n` rods round `c` in the plane of `u` and `v` (unit, at right angles).
-#[allow(clippy::too_many_arguments)]
-fn ring(lib: &mut Library, c: Vec3, u: Vec3, v: Vec3, r: f32, n: usize, w: f32, kind: u32, rgba: [f32; 4]) {
-    let at = |k: usize| {
-        let t = k as f32 / n as f32 * TAU;
-        c + (u * libm::cosf(t) + v * libm::sinf(t)) * r
-    };
-    for k in 0..n {
-        let (p, q) = (at(k), at(k + 1));
-        let m = (p - q) * 0.04;
-        rod(lib, p + m, q - m, w, w, kind, rgba);
-    }
+/// `n` points round a circle `r` across in xy, anticlockwise.
+fn circle(n: usize, r: f32) -> Vec<Vec2> {
+    (0..n)
+        .map(|k| {
+            let t = k as f32 / n as f32 * TAU;
+            Vec2::new(libm::cosf(t), libm::sinf(t)) * r
+        })
+        .collect()
 }
 
-/// A vessel standing on `foot`: a round belly `w` across and a narrower shoulder,
-/// and a neck `neck` long above them.
-fn vessel(lib: &mut Library, foot: Vec3, w: f32, neck: f32, kind: u32, rgba: [f32; 4]) {
-    octo(lib, foot + Vec3::Y * (w * 0.35), w, w * 0.7, kind, rgba);
-    octo(lib, foot + Vec3::Y * (w * 0.5), w * 0.7, w, kind, rgba);
-    if neck > 0.0 {
-        let top = foot + Vec3::Y * w;
-        octo(lib, top + Vec3::Y * (neck * 0.5), w * 0.22, neck, kind, rgba);
+/// A flat band round `c` in the plane of `u` and `v` (unit, at right angles), `r` to
+/// its middle, `w` wide and `d` thick.
+fn band(
+    lib: &mut Library,
+    c: Vec3,
+    (u, v): (Vec3, Vec3),
+    (r, w, d): (f32, f32, f32),
+    kind: u32,
+    rgba: [f32; 4],
+) -> Inst {
+    let ring = Mesh::ring(&circle(64, r + w * 0.5), &circle(64, r - w * 0.5), d);
+    let turn = Quat::from_mat3(&Mat3::from_cols(u, v, u.cross(v)));
+    lib.shape(ring).at(c, turn, kind, rgba)
+}
+
+/// A round rod (`stick`, a cylinder) from `p` to `q`, `w` across.
+fn bar(stick: Shape, p: Vec3, q: Vec3, w: f32, kind: u32, rgba: [f32; 4]) -> Inst {
+    let v = q - p;
+    let turn = Quat::from_rotation_arc(Vec3::Y, v.normalize());
+    stick
+        .sized(Vec3::new(w, v.length(), w))
+        .inst((p + q) * 0.5, turn, kind, rgba)
+}
+
+/// A turned piece from its profile, (radius, height) up its outside.
+fn turned(lib: &mut Library, profile: &[(f32, f32)], segs: usize) -> Shape {
+    let p: Vec<Vec2> = profile.iter().map(|&(r, h)| Vec2::new(r, h)).collect();
+    lib.shape(Mesh::lathe(&p, segs))
+}
+
+/// The path through `pts` with each corner rounded off, up to `r` either side of it.
+fn rounded(pts: &[Vec3], r: f32) -> Vec<Vec3> {
+    let mut out = vec![pts[0]];
+    for w in pts.windows(3) {
+        let (a, b, c) = (w[0], w[1], w[2]);
+        let (to_a, to_c) = ((a - b).normalize(), (c - b).normalize());
+        let r = r.min(a.distance(b) * 0.45).min(b.distance(c) * 0.45);
+        let bend = PI - libm::acosf(to_a.dot(to_c).clamp(-1.0, 1.0));
+        let n = libm::ceilf(bend / 0.2).max(1.0) as usize;
+        let (p, q) = (b + to_a * r, b + to_c * r);
+        out.extend((0..=n).map(|k| {
+            let t = k as f32 / n as f32;
+            p * ((1.0 - t) * (1.0 - t)) + b * (2.0 * t * (1.0 - t)) + q * (t * t)
+        }));
+    }
+    out.push(pts[pts.len() - 1]);
+    out
+}
+
+/// Clear glass, faintly blue.
+const GLASS: [f32; 4] = [0.8, 0.9, 1.0, 0.08];
+
+/// The room's glassware, each a vessel of clear glass and what it holds, made with its
+/// foot on the axis and a unit across: `scaled` to its width.
+struct Glassware {
+    round: [Shape; 2],
+    cone: [Shape; 2],
+    bottle: [Shape; 2],
+    tube: [Shape; 2],
+    retort: [Shape; 2],
+    /// A cork ring for a round-bottomed vessel to stand in.
+    cork: Shape,
+}
+
+impl Glassware {
+    fn new(lib: &mut Library) -> Glassware {
+        let v = Vec2::new;
+        // A bowl's curve from its foot round to `to` radians above the level of its
+        // middle, `r` round about the height `y`.
+        let bowl = |r: f32, y: f32, to: f32| -> Vec<Vec2> {
+            (0..=12)
+                .map(|k| {
+                    let t = -FRAC_PI_2 + (to + FRAC_PI_2) * k as f32 / 12.0;
+                    v(libm::cosf(t) * r, y + libm::sinf(t) * r)
+                })
+                .collect()
+        };
+        let lathe = |lib: &mut Library, p: &[Vec2]| lib.shape(Mesh::lathe(p, 24));
+        // Liquid filling a bowl up to `to`.
+        let fill = |r: f32, y: f32, to: f32| {
+            let mut p = bowl(r, y, to);
+            p.push(v(0.0, y + libm::sinf(to) * r));
+            p
+        };
+        // A round-bottomed flask: a ball and a long neck, open at its lip.
+        let mut p = bowl(0.5, 0.5, 1.22);
+        p.extend([v(0.16, 1.05), v(0.15, 1.55), v(0.19, 1.6), v(0.18, 1.64)]);
+        let round = [lathe(lib, &p), lathe(lib, &fill(0.47, 0.5, -0.1))];
+        // A conical flask.
+        let p = [
+            (0.0, 0.0),
+            (0.44, 0.0),
+            (0.5, 0.04),
+            (0.49, 0.1),
+            (0.17, 0.82),
+            (0.15, 0.9),
+            (0.15, 1.12),
+            (0.18, 1.15),
+            (0.17, 1.18),
+        ]
+        .map(Vec2::from);
+        let liquid = [
+            (0.0, 0.02),
+            (0.44, 0.02),
+            (0.465, 0.05),
+            (0.455, 0.1),
+            (0.36, 0.32),
+            (0.0, 0.32),
+        ];
+        let cone = [lathe(lib, &p), lathe(lib, &liquid.map(Vec2::from))];
+        // A reagent bottle with a narrow mouth.
+        let p = [
+            (0.0, 0.0),
+            (0.46, 0.0),
+            (0.5, 0.05),
+            (0.5, 1.15),
+            (0.44, 1.3),
+            (0.24, 1.42),
+            (0.2, 1.5),
+            (0.2, 1.68),
+            (0.24, 1.72),
+            (0.22, 1.76),
+        ]
+        .map(Vec2::from);
+        let liquid = [(0.0, 0.02), (0.46, 0.02), (0.47, 0.06), (0.47, 0.8), (0.0, 0.8)];
+        let bottle = [lathe(lib, &p), lathe(lib, &liquid.map(Vec2::from))];
+        // A test tube.
+        let mut p = bowl(0.5, 0.5, 0.0);
+        p.extend([v(0.5, 7.0), v(0.58, 7.08)]);
+        let mut liquid = bowl(0.42, 0.5, 0.0);
+        liquid.extend([v(0.42, 5.4), v(0.0, 5.4)]);
+        let tube = [lathe(lib, &p), lathe(lib, &liquid)];
+        // A retort: a ball, its neck drawn up, over and down, narrowing as it goes.
+        let mut retort = Mesh::lathe(&bowl(0.5, 0.5, FRAC_PI_2), 24);
+        let (p0, c, p1) = (v(0.18, 0.92), v(0.75, 1.45), v(1.75, 0.45));
+        let neck: Vec<Vec3> = (0..=12)
+            .map(|k| {
+                let t = k as f32 / 12.0;
+                let q = p0 * ((1.0 - t) * (1.0 - t)) + c * (2.0 * t * (1.0 - t)) + p1 * (t * t);
+                q.extend(0.0)
+            })
+            .collect();
+        retort.add(
+            &Mesh::sweep(&neck, &[0.15, 0.05], &circle(12, 1.0), false),
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            Vec3::ONE,
+        );
+        let retort = [lib.shape(retort), round[1]];
+        let cork = lib.shape(Mesh::torus(0.6, 16, 8));
+        Glassware {
+            round,
+            cone,
+            bottle,
+            tube,
+            retort,
+            cork,
+        }
+    }
+
+    /// A vessel (`glass` and what it holds) standing on `foot`, `w` across, turned
+    /// `yaw`, holding `liquid` (a crystal's colour and glow).
+    fn stand(&self, lib: &mut Library, [glass, fill]: [Shape; 2], foot: Vec3, yaw: f32, w: f32, liquid: [f32; 4]) {
+        let turn = Quat::from_rotation_y(yaw);
+        lib.translucent(glass.scaled(w).at(foot, turn, kind::CLEAR, GLASS));
+        lib.decor(fill.scaled(w).at(foot, turn, kind::CRYSTAL, liquid));
+    }
+
+    /// A cork ring on `foot` for a round-bottomed vessel `w` across to stand in.
+    fn cork(&self, lib: &mut Library, foot: Vec3, w: f32) {
+        let ring = self.cork.scaled(w * 0.28);
+        lib.decor(ring.inst(foot + Vec3::Y * (ring.size.y * 0.5), Quat::IDENTITY, kind::WOOD, CORK));
     }
 }
 
@@ -157,6 +321,63 @@ fn backboard(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         DARK_WOOD,
     ));
     let mut rng = StdRng::seed_from_u64(0xa1c4_e31a ^ (a * 10.0) as i64 as u64);
+    // Squat jars, tall ones and bottles, a lid or a stopper on each.
+    let jars = [
+        turned(
+            lib,
+            &[
+                (0.0, 0.0),
+                (0.44, 0.0),
+                (0.5, 0.06),
+                (0.5, 0.86),
+                (0.42, 0.96),
+                (0.4, 1.0),
+                (0.0, 1.0),
+            ],
+            20,
+        ),
+        turned(
+            lib,
+            &[
+                (0.0, 0.0),
+                (0.46, 0.0),
+                (0.5, 0.05),
+                (0.48, 0.7),
+                (0.3, 0.85),
+                (0.22, 0.9),
+                (0.22, 1.0),
+                (0.0, 1.0),
+            ],
+            20,
+        ),
+        turned(
+            lib,
+            &[
+                (0.0, 0.0),
+                (0.42, 0.0),
+                (0.5, 0.15),
+                (0.5, 0.55),
+                (0.38, 0.75),
+                (0.3, 0.85),
+                (0.33, 1.0),
+                (0.0, 1.0),
+            ],
+            20,
+        ),
+    ];
+    let lid = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.5, 0.0),
+            (0.5, 0.5),
+            (0.3, 0.8),
+            (0.12, 0.85),
+            (0.1, 1.0),
+            (0.0, 1.0),
+        ],
+        16,
+    );
     for y in [0.95f32, 1.65, 2.35] {
         let board = (a - hw + 0.08, a + hw - 0.08);
         lib.decor(piece(
@@ -177,16 +398,14 @@ fn backboard(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
                 (JARS[rng.gen_range(0..JARS.len())], 0.0)
             };
             let h = rng.gen_range(0.9..1.6f32) * w;
-            octo(
-                lib,
-                foot + Vec3::Y * (h * 0.5),
-                w,
-                h,
-                kind::CRYSTAL,
-                [rgb[0], rgb[1], rgb[2], glow],
-            );
-            let lid = [0.28, 0.16, 0.07, 1.0];
-            octo(lib, foot + Vec3::Y * (h + 0.02), w * 0.8, 0.04, kind::WOOD, lid);
+            let k = rng.gen_range(0..jars.len());
+            let jar = jars[k].sized(Vec3::new(w, h, w));
+            let turn = Quat::from_rotation_y(rng.gen_range(0.0..TAU));
+            lib.decor(jar.at(foot, turn, kind::CRYSTAL, [rgb[0], rgb[1], rgb[2], glow]));
+            // Its lid as wide as its mouth.
+            let mouth = [0.88, 0.48, 0.66][k] * w;
+            let lid = lid.sized(Vec3::new(mouth, 0.04, mouth));
+            lib.decor(lid.at(foot + Vec3::Y * (h - 0.01), turn, kind::WOOD, [0.28, 0.16, 0.07, 1.0]));
             x += w + rng.gen_range(0.06..0.16);
         }
     }
@@ -287,8 +506,9 @@ fn great_work(lib: &mut Library, frame: &RoomFrame) {
     ));
     let c = frame.at(0.0, far - 0.075, 2.5);
     let ink = [0.15, 0.08, 0.05, 1.0];
-    ring(lib, c, u, up, 0.75, 28, 0.02, kind::PLAIN, ink);
     let r = 0.75;
+    let hoop = band(lib, c, (u, up), (r, 0.02, 0.012), kind::PLAIN, ink);
+    lib.decor(hoop);
     for k in 0..3 {
         let t = TAU / 4.0 + k as f32 * TAU / 3.0;
         let p = |t: f32| c + (u * libm::cosf(t) + up * libm::sinf(t)) * r;
@@ -361,7 +581,7 @@ fn furnace(lib: &mut Library, frame: &RoomFrame) {
         kind::STONE,
         [0.36, 0.33, 0.29],
     ));
-    // The fire: a bed of coals and a few tongues of flame, flickering.
+    // The fire: a bed of coals and the flames over it.
     let mut coals = piece(
         frame,
         (-0.4, 0.4),
@@ -373,17 +593,17 @@ fn furnace(lib: &mut Library, frame: &RoomFrame) {
     coals.color[3] = 5.0;
     coals.param = 1;
     lib.decor(coals);
-    for (k, a) in [-0.22f32, 0.0, 0.2].iter().enumerate() {
-        let h = 0.3 + 0.1 * k as f32;
-        lib.decor(Inst::new(
-            frame.at(*a, f + 0.45, 0.4 + h * 0.5),
-            Quat::from_rotation_y(0.6 + k as f32),
-            Vec3::new(0.13, h, 0.13),
-            kind::EMISSIVE,
-            [1.0, 0.55, 0.15, 7.0],
-            1,
-        ));
-    }
+    let mut fire = piece(
+        frame,
+        (-0.36, 0.36),
+        (f + 0.18, f + 0.66),
+        (0.38, 1.0),
+        kind::FIRE,
+        [1.0, 0.5, 0.15],
+    );
+    fire.color[3] = 2.5;
+    fire.param = 1;
+    lib.translucent(fire);
     lib.light(
         frame.at(0.0, f - 0.7, 0.9),
         9.5,
@@ -415,41 +635,47 @@ fn furnace(lib: &mut Library, frame: &RoomFrame) {
             lib.decor(vent);
         }
     }
-    let copper = [COPPER[0], COPPER[1], COPPER[2]];
-    let half = (b - f) * 0.5;
-    for (k, (hw, ho)) in [
-        (0.9f32, half - 0.05),
-        (0.7, half - 0.25),
-        (0.5, half - 0.45),
-        (0.32, half - 0.6),
-    ]
-    .iter()
-    .enumerate()
-    {
-        let y0 = 2.6 + k as f32 * 0.22;
-        lib.decor(piece(
-            frame,
-            (-hw, *hw),
-            (mid - ho, mid + ho),
-            (y0, y0 + 0.22),
+    // A round copper hood flaring over the tower, and the flue up from it, banded.
+    let top = frame.at(0.0, mid, 2.6);
+    let hood = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (1.05, 0.0),
+            (1.05, 0.06),
+            (0.97, 0.1),
+            (0.62, 0.42),
+            (0.34, 0.7),
+            (0.24, 0.8),
+            (0.24, 0.88),
+            (0.0, 0.88),
+        ],
+        48,
+    );
+    lib.decor(hood.at(top, Quat::IDENTITY, kind::METAL, COPPER));
+    let flue = lib.shape(Mesh::cylinder(32));
+    let (y0, y1) = (top.y + 0.88, frame.y + RoomFrame::HEIGHT);
+    let at = |y: f32| Vec3::new(top.x, y, top.z);
+    lib.decor(flue.sized(Vec3::new(0.38, y1 - y0, 0.38)).inst(
+        at((y0 + y1) * 0.5),
+        Quat::IDENTITY,
+        kind::METAL,
+        COPPER,
+    ));
+    for y in [y0 + 0.4, frame.y + 4.4, y1 - 0.3] {
+        lib.decor(flue.sized(Vec3::new(0.43, 0.06, 0.43)).inst(
+            at(y),
+            Quat::IDENTITY,
             kind::METAL,
-            copper,
+            [0.5, 0.25, 0.1, 1.0],
         ));
     }
-    lib.decor(piece(
-        frame,
-        (-0.2, 0.2),
-        (mid - 0.2, mid + 0.2),
-        (3.48, RoomFrame::HEIGHT),
-        kind::METAL,
-        copper,
-    ));
 }
 
-/// A long workbench down the nave on side `s`: legs and a shelf under, and on it an
-/// alembic over a brazier, flasks, a rack of tubes, a mortar, books, scales and a
-/// candle; a copper worm-tub at its far end.
-fn bench(lib: &mut Library, frame: &RoomFrame, s: f32) {
+/// A long workbench down the nave on side `s`: legs and a shelf under, and on it a
+/// copper alembic over a brazier, a flask bubbling over a spirit lamp, glassware, a
+/// rack of tubes, a mortar, books, a balance and a candle.
+fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
     let (o0, o1) = BENCH_O;
     let a = s * BENCH_A;
     let top = 0.94;
@@ -485,72 +711,200 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32) {
         WALNUT,
     ));
     let at = |da: f32, o: f32, y: f32| frame.at(a + s * da, o, top + y);
+    let (up, out) = (Vec3::Y, frame.out());
     let mut rng = StdRng::seed_from_u64(0xbe4c_0000 ^ (s > 0.0) as u64);
-    // The alembic: a brazier, the gourd on it, the head and its beak running down to
-    // a receiver.
-    let brazier = at(0.0, o0 + 0.8, 0.07);
-    octo(lib, brazier, 0.32, 0.14, kind::METAL, IRON);
-    let embers = brazier + Vec3::Y * 0.075;
-    let rot = Quat::from_rotation_y(0.6);
-    lib.decor(Inst::new(
-        embers,
-        rot,
-        Vec3::new(0.24, 0.02, 0.24),
+    let stick = lib.shape(Mesh::cylinder(12));
+    // The alembic: an iron brazier with its fire, the copper gourd on it, the head
+    // over that and its beak running down to a glass receiver.
+    let brazier = at(0.0, o0 + 0.8, 0.0);
+    let bowl = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.09, 0.0),
+            (0.09, 0.015),
+            (0.05, 0.03),
+            (0.05, 0.07),
+            (0.15, 0.09),
+            (0.17, 0.14),
+            (0.155, 0.14),
+            (0.0, 0.11),
+        ],
+        32,
+    );
+    lib.decor(bowl.at(brazier, Quat::IDENTITY, kind::METAL, IRON));
+    let coals = stick.sized(Vec3::new(0.29, 0.01, 0.29)).inst(
+        brazier + up * 0.113,
+        Quat::IDENTITY,
         kind::EMISSIVE,
         [1.0, 0.3, 0.06, 3.0],
+    );
+    lib.decor(Inst { param: 1, ..coals });
+    lib.translucent(Inst::new(
+        brazier + up * 0.15,
+        Quat::from_rotation_y(0.6),
+        Vec3::new(0.2, 0.07, 0.2),
+        kind::FIRE,
+        [1.0, 0.5, 0.15, 2.0],
         1,
     ));
-    let gourd = brazier + Vec3::Y * 0.07;
-    vessel(lib, gourd, 0.32, 0.22, kind::METAL, COPPER);
-    let head = gourd + Vec3::Y * 0.6;
-    octo(lib, head, 0.17, 0.13, kind::METAL, COPPER);
-    let receiver = at(0.05, o0 + 1.55, 0.0);
-    rod(lib, head, receiver + Vec3::Y * 0.26, 0.03, 0.03, kind::METAL, COPPER);
-    vessel(lib, receiver, 0.2, 0.08, kind::CRYSTAL, [1.0, 0.6, 0.15, 0.5]);
-    // Flasks, some with something in them that glows.
-    for k in 0..5 {
-        let o = o0 + 2.0 + k as f32 * 0.22 + rng.gen_range(-0.04..0.04);
-        let da = rng.gen_range(-0.25..0.25f32);
-        let w = rng.gen_range(0.1..0.17f32);
+    let gourd = brazier + up * 0.135;
+    let still = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.08, 0.0),
+            (0.14, 0.04),
+            (0.165, 0.12),
+            (0.15, 0.22),
+            (0.09, 0.3),
+            (0.065, 0.36),
+            (0.075, 0.4),
+            (0.0, 0.4),
+        ],
+        32,
+    );
+    lib.decor(still.at(gourd, Quat::IDENTITY, kind::METAL, COPPER));
+    let head = gourd + up * 0.4;
+    let cap = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.075, 0.0),
+            (0.12, 0.03),
+            (0.125, 0.07),
+            (0.1, 0.12),
+            (0.05, 0.16),
+            (0.02, 0.18),
+            (0.0, 0.19),
+        ],
+        32,
+    );
+    lib.decor(cap.at(head, Quat::IDENTITY, kind::METAL, COPPER));
+    let receiver = at(0.05, o0 + 1.6, 0.0);
+    glass.cork(lib, receiver, 0.2);
+    let foot = receiver + up * 0.02;
+    glass.stand(lib, glass.round, foot, 0.0, 0.2, [1.0, 0.6, 0.15, 0.5]);
+    // The beak, drooping a little from the head into the receiver's neck.
+    let toward = (receiver - head).with_y(0.0).normalize();
+    let spout = head + up * 0.05 + toward * 0.11;
+    let mouth = foot + up * 0.31;
+    let droop = (spout + mouth) * 0.5 + up * 0.03;
+    let beak: Vec<Vec3> = (0..=8)
+        .map(|k| {
+            let t = k as f32 / 8.0;
+            spout * ((1.0 - t) * (1.0 - t)) + droop * (2.0 * t * (1.0 - t)) + mouth * (t * t) - spout
+        })
+        .collect();
+    let beak = lib.shape(Mesh::sweep(&beak, &[1.0, 0.6], &circle(10, 0.022), true));
+    lib.decor(beak.at(spout, Quat::IDENTITY, kind::METAL, COPPER));
+    // A flask bubbling on a tripod over a spirit lamp, its steam rising.
+    let lamp = at(-0.22, o0 + 2.2, 0.0);
+    let burner = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.05, 0.0),
+            (0.055, 0.01),
+            (0.055, 0.04),
+            (0.035, 0.055),
+            (0.012, 0.062),
+            (0.0, 0.062),
+        ],
+        24,
+    );
+    lib.decor(burner.at(lamp, Quat::IDENTITY, kind::METAL, BRASS_LIT));
+    let wick = stick.sized(Vec3::new(0.008, 0.016, 0.008));
+    lib.decor(wick.inst(lamp + up * 0.068, Quat::IDENTITY, kind::PLAIN, [0.1, 0.08, 0.06, 1.0]));
+    lib.translucent(Inst::new(
+        lamp + up * 0.1,
+        Quat::IDENTITY,
+        Vec3::new(0.022, 0.055, 0.022),
+        kind::FIRE,
+        [1.0, 0.6, 0.25, 2.0],
+        0,
+    ));
+    lib.light(lamp + up * 0.12, 2.2, [1.0, 0.65, 0.3], 0.35, LightKind::Flicker);
+    let hoop = lamp + up * 0.2;
+    let ring = lib.shape(Mesh::torus(0.12, 32, 8)).scaled(0.055);
+    lib.decor(ring.at(hoop, Quat::IDENTITY, kind::METAL, IRON));
+    for k in 0..3 {
+        let t = k as f32 / 3.0 * TAU + 0.4;
+        let d = Vec3::new(libm::cosf(t), 0.0, libm::sinf(t));
+        lib.decor(bar(stick, hoop + d * 0.055, lamp + d * 0.1, 0.008, kind::METAL, IRON));
+    }
+    let w = 0.13;
+    let flask = lamp + up * 0.17;
+    let brew = POTIONS[if s > 0.0 { 2 } else { 0 }];
+    glass.stand(lib, glass.round, flask, 0.0, w, rgba(brew, 1.0));
+    let steam = stick.sized(Vec3::new(0.1, 0.5, 0.1));
+    lib.translucent(steam.inst(
+        flask + up * (w * 1.64 + 0.27),
+        Quat::IDENTITY,
+        kind::MIST,
+        [0.85, 0.88, 0.9, 0.5],
+    ));
+    // Flasks, a bottle and a retort, some with something in them that glows.
+    let vessels = [
+        (glass.cone, 0.12),
+        (glass.round, 0.11),
+        (glass.bottle, 0.08),
+        (glass.retort, 0.12),
+    ];
+    for k in 0..4 {
+        let o = o0 + 2.6 + k as f32 * 0.24 + rng.gen_range(-0.03..0.03);
+        let da = rng.gen_range(-0.2..0.25f32);
+        let (vessel, w) = vessels[(k + (s > 0.0) as usize) % vessels.len()];
         let rgb = POTIONS[(k + (s > 0.0) as usize * 3) % POTIONS.len()];
         let glow = if k % 2 == 0 { 1.0 } else { 0.12 };
-        vessel(
-            lib,
-            at(da, o, 0.0),
-            w,
-            0.12,
-            kind::CRYSTAL,
-            [rgb[0], rgb[1], rgb[2], glow],
-        );
+        let mut foot = at(da, o, 0.0);
+        // Round-bottomed ones stand in cork rings.
+        if vessel[1] == glass.round[1] {
+            glass.cork(lib, foot, w);
+            foot += up * (0.1 * w);
+        }
+        glass.stand(lib, vessel, foot, rng.gen_range(0.0..TAU), w, rgba(rgb, glow));
     }
     // A rack of tubes.
     let rack = at(-0.2, o0 + 3.3, 0.08);
     lib.decor(Inst::aabox(rack, frame.size(0.12, 0.16, 0.5), kind::WOOD, WALNUT));
     for k in 0..5 {
-        let p = rack + frame.out() * (-0.2 + k as f32 * 0.1);
+        let p = rack + out * (-0.2 + k as f32 * 0.1);
         let rgb = POTIONS[(k * 2 + 1) % POTIONS.len()];
-        rod(
-            lib,
-            p - Vec3::Y * 0.05,
-            p + Vec3::Y * 0.2,
-            0.04,
-            0.04,
-            kind::CRYSTAL,
-            [rgb[0], rgb[1], rgb[2], 0.3],
-        );
+        glass.stand(lib, glass.tube, p - up * 0.05, 0.0, 0.035, rgba(rgb, 0.3));
     }
     // A mortar and pestle.
     let mortar = at(0.2, o0 + 3.9, 0.0);
-    vessel(lib, mortar, 0.2, 0.0, kind::STONE, [0.5, 0.47, 0.42, 1.0]);
-    rod(
+    let bowl = turned(
         lib,
-        mortar + Vec3::Y * 0.15,
-        mortar + Vec3::new(0.08, 0.32, 0.05),
-        0.035,
-        0.035,
-        kind::STONE,
-        [0.55, 0.5, 0.45, 1.0],
+        &[
+            (0.0, 0.0),
+            (0.07, 0.0),
+            (0.09, 0.015),
+            (0.1, 0.06),
+            (0.105, 0.1),
+            (0.085, 0.1),
+            (0.07, 0.05),
+            (0.0, 0.035),
+        ],
+        24,
     );
+    lib.decor(bowl.at(mortar, Quat::IDENTITY, kind::STONE, [0.5, 0.47, 0.42, 1.0]));
+    let pestle = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.022, 0.0),
+            (0.026, 0.02),
+            (0.02, 0.06),
+            (0.013, 0.2),
+            (0.018, 0.24),
+            (0.0, 0.25),
+        ],
+        16,
+    );
+    let lean = Quat::from_rotation_arc(Vec3::Y, Vec3::new(0.3, 1.0, 0.2).normalize());
+    lib.decor(pestle.at(mortar + up * 0.04, lean, kind::STONE, [0.55, 0.5, 0.45, 1.0]));
     // Books in a pile, one lying open.
     let mut y = 0.0;
     for (k, rgb) in [[0.35, 0.1, 0.06], [0.12, 0.2, 0.1], [0.3, 0.2, 0.08]]
@@ -582,41 +936,93 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32) {
             0,
         ));
     }
-    // A brass balance.
+    // A brass balance, its beam rocking a hair and the pans hanging level from it.
     let scale = at(-0.2, o0 + 5.2, 0.0);
-    let brass = [0.6, 0.42, 0.15, 1.0];
-    rod(lib, scale, scale + Vec3::Y * 0.4, 0.025, 0.025, kind::METAL, brass);
-    let beam = frame.out() * 0.2;
-    rod(
+    let pillar = turned(
         lib,
-        scale + Vec3::Y * 0.4 - beam,
-        scale + Vec3::Y * 0.4 + beam,
-        0.02,
-        0.02,
-        kind::METAL,
-        brass,
+        &[
+            (0.0, 0.0),
+            (0.07, 0.0),
+            (0.07, 0.015),
+            (0.03, 0.03),
+            (0.012, 0.05),
+            (0.012, 0.39),
+            (0.02, 0.4),
+            (0.0, 0.41),
+        ],
+        20,
+    );
+    lib.decor(pillar.at(scale, Quat::IDENTITY, kind::METAL, BRASS_LIT));
+    let pivot = scale + up * 0.4;
+    let beam = out * 0.2;
+    let phase = if s > 0.0 { 4.0 } else { 0.0 };
+    let rock = |axis: Vec3| Motion::Swing {
+        axis,
+        amp: 0.05,
+        period: 9.0,
+    };
+    let m = lib.mover(pivot, rock(frame.across()), phase, None);
+    lib.moving(m, bar(stick, pivot - beam, pivot + beam, 0.014, kind::METAL, BRASS_LIT));
+    lib.moving(
+        m,
+        bar(
+            stick,
+            pivot - up * 0.01,
+            pivot + up * 0.09,
+            0.008,
+            kind::METAL,
+            BRASS_LIT,
+        ),
+    );
+    let dish = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.03, 0.0),
+            (0.06, 0.012),
+            (0.065, 0.02),
+            (0.058, 0.02),
+            (0.0, 0.008),
+        ],
+        24,
     );
     for e in [-1.0f32, 1.0] {
-        let pan = scale + Vec3::Y * 0.22 + beam * e;
-        rod(lib, pan, pan + Vec3::Y * 0.18, 0.006, 0.006, kind::METAL, brass);
-        octo(lib, pan, 0.12, 0.015, kind::METAL, brass);
+        let hook = pivot + beam * e;
+        let pan = lib.mover(hook, rock(-frame.across()), phase, Some(m));
+        let low = hook - up * 0.18;
+        lib.moving(pan, bar(stick, low, hook, 0.005, kind::METAL, BRASS_LIT));
+        lib.moving(pan, dish.at(low, Quat::IDENTITY, kind::METAL, BRASS_LIT));
     }
-    // A candle.
+    // A candle in its stick.
     let candle = at(0.3, o0 + 0.25, 0.0);
-    lib.decor(Inst::aabox(
-        candle + Vec3::Y * 0.09,
-        Vec3::new(0.05, 0.18, 0.05),
-        kind::PLAIN,
-        [0.8, 0.75, 0.6],
-    ));
-    let flame = Vec3::new(0.025, 0.05, 0.025);
-    lib.decor(Inst::new(
-        candle + Vec3::Y * 0.21,
+    let holder = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.045, 0.0),
+            (0.05, 0.01),
+            (0.045, 0.015),
+            (0.015, 0.02),
+            (0.015, 0.04),
+            (0.022, 0.045),
+            (0.0, 0.045),
+        ],
+        20,
+    );
+    lib.decor(holder.at(candle, Quat::IDENTITY, kind::METAL, BRASS_LIT));
+    let wax = turned(
+        lib,
+        &[(0.0, 0.0), (0.02, 0.0), (0.02, 0.15), (0.015, 0.16), (0.0, 0.16)],
+        16,
+    );
+    lib.decor(wax.at(candle + up * 0.045, Quat::IDENTITY, kind::PLAIN, [0.8, 0.75, 0.6, 1.0]));
+    lib.translucent(Inst::new(
+        candle + up * 0.235,
         Quat::IDENTITY,
-        flame,
-        kind::EMISSIVE,
-        [1.0, 0.55, 0.18, 12.0],
-        1,
+        Vec3::new(0.022, 0.05, 0.022),
+        kind::FIRE,
+        [1.0, 0.6, 0.25, 2.0],
+        0,
     ));
     // Crates on the shelf below.
     for k in 0..4 {
@@ -636,56 +1042,81 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32) {
 }
 
 /// Copper pipes from the athanor's flue, out under the ceiling and over each bench,
-/// down into a worm of coiled pipe in a tub at its end.
-fn pipes(lib: &mut Library, frame: &RoomFrame) {
+/// down into a worm: a coil standing in a tub of water on the bench, the pipe out at
+/// its foot and down to a flask.
+fn pipes(lib: &mut Library, frame: &RoomFrame, glass: &Glassware) {
     let y = RoomFrame::HEIGHT - 0.42;
     let flue = (FURNACE_O.0 + FURNACE_O.1) * 0.5;
     let turn = BENCH_O.1 - 0.45;
+    let (u, v, up) = (frame.across(), frame.out(), Vec3::Y);
+    let stick = lib.shape(Mesh::cylinder(16));
+    let tub = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.23, 0.0),
+            (0.25, 0.02),
+            (0.27, 0.28),
+            (0.26, 0.55),
+            (0.24, 0.55),
+            (0.235, 0.5),
+            (0.0, 0.5),
+        ],
+        40,
+    );
+    let hoop = lib.shape(Mesh::torus(0.06, 40, 8));
+    let (r, turns) = (0.17, 3.5);
     for s in [-1.0f32, 1.0] {
-        let pts = [
-            frame.at(s * 0.2, flue, 4.4),
+        let base = frame.at(s * BENCH_A, turn, 0.94);
+        // Round and round from the top, ending toward the door.
+        let coil = |t: f32| {
+            let th = FRAC_PI_2 + s * t * TAU;
+            base + (u * libm::cosf(th) + v * libm::sinf(th)) * r + up * (0.92 - 0.12 * t)
+        };
+        let mut pts = vec![
+            frame.at(s * 0.12, flue, 4.4),
             frame.at(s * 1.0, flue, 4.4),
             frame.at(s * 1.0, flue, y),
             frame.at(s * BENCH_A, flue, y),
-            frame.at(s * BENCH_A, turn, y),
-            frame.at(s * BENCH_A, turn, 1.75),
+            frame.at(s * BENCH_A, turn + r, y),
         ];
-        // Every other length a touch thicker, so none shares a face with the next.
-        for (k, w) in pts.windows(2).enumerate() {
-            rod(
-                lib,
-                w[0],
-                w[1],
-                0.09 + 0.006 * (k % 2) as f32,
-                0.09 + 0.006 * (k % 2) as f32,
+        let n = (turns * 8.0) as usize;
+        pts.extend((0..=n).map(|k| coil(k as f32 / 8.0)));
+        let spout = base - v * 0.37 + up * 0.2;
+        pts.extend([base - v * 0.34 + up * 0.5, spout]);
+        let path: Vec<Vec3> = rounded(&pts, 0.25).iter().map(|p| *p - base).collect();
+        let pipe = lib.shape(Mesh::sweep(&path, &[1.0], &circle(12, 0.045), true));
+        lib.decor(pipe.at(base, Quat::IDENTITY, kind::METAL, COPPER));
+        // A coupling halfway along each straight run.
+        for w in pts[..5].windows(2) {
+            let (mid, d) = ((w[0] + w[1]) * 0.5, (w[1] - w[0]).normalize());
+            lib.decor(bar(
+                stick,
+                mid - d * 0.03,
+                mid + d * 0.03,
+                0.12,
                 kind::METAL,
-                COPPER,
-            );
-        }
-        for p in &pts[1..5] {
-            let flange = [0.5, 0.25, 0.1, 1.0];
-            lib.decor(Inst::new(
-                *p,
-                Quat::from_rotation_y(0.785),
-                Vec3::splat(0.15),
-                kind::METAL,
-                flange,
-                0,
+                [0.5, 0.25, 0.1, 1.0],
             ));
         }
-        // The worm: a coil in a tub on the bench.
-        let tub = frame.at(s * BENCH_A, turn, 0.94);
-        octo(lib, tub + Vec3::Y * 0.3, 0.5, 0.6, kind::WOOD, [0.26, 0.15, 0.07, 1.0]);
-        for k in 0..4 {
-            let c = tub + Vec3::Y * (0.65 + k as f32 * 0.09);
-            ring(lib, c, Vec3::X, Vec3::Z, 0.2, 10, 0.035, kind::METAL, COPPER);
+        // The tub, hooped, its water dark.
+        lib.decor(tub.at(base, Quat::IDENTITY, kind::WOOD, [0.26, 0.15, 0.07, 1.0]));
+        for (h, rr) in [(0.08f32, 0.255f32), (0.44, 0.27)] {
+            lib.decor(hoop.scaled(rr).at(base + up * h, Quat::IDENTITY, kind::METAL, IRON));
         }
+        let water = stick.sized(Vec3::new(0.47, 0.01, 0.47));
+        lib.decor(water.inst(base + up * 0.505, Quat::IDENTITY, kind::CRYSTAL, [0.05, 0.09, 0.1, 0.0]));
+        // The flask it drips into.
+        let flask = spout.with_y(base.y);
+        glass.cork(lib, flask, 0.1);
+        glass.stand(lib, glass.round, flask + up * 0.01, 0.0, 0.1, [0.85, 0.75, 0.35, 0.3]);
     }
 }
 
 /// A transmutation circle let into the floor before the athanor, its lines faintly
-/// alight: a circle, a square in it, a triangle in that, a circle in that.
-fn circle(lib: &mut Library, frame: &RoomFrame) {
+/// alight: a circle, a square in it, a triangle in that, a circle in that; and over it,
+/// out of reach, a red stone turning slowly as it floats.
+fn transmutation(lib: &mut Library, frame: &RoomFrame) {
     let c = frame.at(0.0, CIRCLE_O, 0.006);
     let (u, v) = (frame.across(), frame.out());
     let glow = [0.55, 0.35, 1.0, 1.4];
@@ -710,11 +1141,9 @@ fn circle(lib: &mut Library, frame: &RoomFrame) {
     let q = std::f32::consts::FRAC_PI_4;
     // The square's own circle, which the triangle stands in, and the triangle's.
     let (square, triangle) = (r * libm::sinf(q), r * libm::sinf(q) * 0.5);
-    let n = 28;
-    for k in 0..n {
-        let (t0, t1) = (k as f32 / n as f32 * TAU, (k + 1) as f32 / n as f32 * TAU);
-        line(lib, pt(r, t0), pt(r, t1));
-        line(lib, pt(triangle, t0), pt(triangle, t1));
+    for radius in [r, triangle] {
+        let ring = band(lib, c, (u, v), (radius, 0.03, 0.006), kind::EMISSIVE, glow);
+        lib.decor(Inst { param: 1, ..ring });
     }
     for k in 0..4 {
         let t = q + k as f32 * TAU / 4.0;
@@ -724,4 +1153,34 @@ fn circle(lib: &mut Library, frame: &RoomFrame) {
         let t = -TAU / 4.0 + k as f32 * TAU / 3.0;
         line(lib, pt(square, t), pt(square, t + TAU / 3.0));
     }
+    let stone = frame.at(0.0, CIRCLE_O, 2.6);
+    let float = Motion::Bob {
+        amp: 0.06,
+        period: 7.0,
+        rock: 0.0,
+    };
+    let float = lib.mover(stone, float, 0.0, None);
+    lib.light_riding(float, stone, 3.5, [1.0, 0.3, 0.2], 0.45, LightKind::Static);
+    let spin = lib.mover(
+        stone,
+        Motion::Spin {
+            axis: Vec3::Y,
+            rate: 0.25,
+        },
+        0.0,
+        Some(float),
+    );
+    // A cube stood on its corner.
+    let corner = Quat::from_rotation_x(0.6155) * Quat::from_rotation_z(std::f32::consts::FRAC_PI_4);
+    lib.moving(
+        spin,
+        Inst::new(
+            stone,
+            corner,
+            Vec3::splat(0.13),
+            kind::CRYSTAL,
+            [0.95, 0.12, 0.08, 1.6],
+            0,
+        ),
+    );
 }
