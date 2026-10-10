@@ -152,6 +152,10 @@ pub struct Label {
     pub pos: Vec3,
     pub normal: Vec3,
     pub text: String,
+    /// The height of the sign's letters (an em), and half the height of its board,
+    /// in metres.
+    pub em: f32,
+    pub half: f32,
     pub kind: LabelKind,
     pub level: usize,
 }
@@ -349,10 +353,11 @@ impl Library {
         let (mid_center, mid_rot, normal) = (mid.center, mid.rot(), mid.normal);
         let sign_pos = mid_center + Vec3::Y * (UNIT_H + 0.42) + normal * 0.02;
         let ccol = catalog::category_color(&self.catalog.categories[cat]);
+        let board = Vec3::new(2.0, 0.42, 0.05);
         let plaque = Inst::new(
             sign_pos,
             mid_rot,
-            Vec3::new(2.0, 0.42, 0.05),
+            board,
             kind::PLAQUE,
             [ccol[0], ccol[1], ccol[2], 0.08],
             0,
@@ -370,6 +375,8 @@ impl Library {
             pos: sign_pos + normal * 0.04,
             normal,
             text: name,
+            em: SIGN_LETTERS.em,
+            half: board.y * 0.5,
             kind: LabelKind::Category(cat),
             level: self.world.level_at(mid_center),
         });

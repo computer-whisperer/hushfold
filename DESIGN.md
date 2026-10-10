@@ -419,7 +419,8 @@ ink) or glows; small letters are set a little bolder, and those under about four
 pixels to the em fade out rather than shimmer. Names are therefore read in the
 world, at the distance their size allows (a category board from ~20 m at 1000
 pixels tall, a shelf's keys from ~3 m); only the Signposts' guides are drawn over
-the scene.
+the scene, and never over a board in view: its name stands above the board while
+its own letters are under 12 px to the em, and then only its marker does.
 
 Books have a pipeline and fragment shader of their own (`fs_book`): their material
 needs more than the rest of the scene's, whose shader sits at 64 registers on the

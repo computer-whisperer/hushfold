@@ -58,7 +58,8 @@ pause screen replaces the current library's save with a fresh one (settings, in
   Library four to six, laid out as its room has them: rows, wall cases, alcoves);
   the sign and lantern above the middle case name it. With Signposts, signs of
   categories you carry show through the stacks, marked "other side" when their shelves face
-  away from you. Lanterns brighten with progress and burn in the category's colour once it is
+  away from you; one in plain view is only marked, or named above its board when
+  too far off to read. Lanterns brighten with progress and burn in the category's colour once it is
   complete.
 - Within a category, series are alphabetical (ignoring leading articles), top
   shelf to bottom, left to right. Shelf edges carry their letter ranges.

@@ -932,20 +932,16 @@ impl Library {
         let out = side.out3();
         let rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Y.cross(-out), Vec3::Y, -out));
         let sign = side.at3(d, FACE - 0.175, y + 4.42);
-        self.decor(Inst::new(
-            sign,
-            rot,
-            Vec3::new(3.3, 0.5, 0.05),
-            kind::PLAQUE,
-            rgba(dcol, 0.12),
-            0,
-        ));
+        let board = Vec3::new(3.3, 0.5, 0.05);
+        self.decor(Inst::new(sign, rot, board, kind::PLAQUE, rgba(dcol, 0.12), 0));
         let name = self.catalog.departments[dept].name.clone();
         self.inscribe(&name.to_uppercase(), DEPT_LETTERS, sign - out * 0.025, -out, 3.0);
         self.labels.push(Label {
             pos: sign - out * 0.04,
             normal: -out,
             text: name,
+            em: DEPT_LETTERS.em,
+            half: board.y * 0.5,
             kind: LabelKind::Department(dept),
             level,
         });

@@ -115,7 +115,8 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
 
     // ---- Signposts: the signs of the categories (and departments) you carry, from
     // anywhere on your floor (dimmed when hidden). Signs are otherwise lettered in the
-    // world.
+    // world, so one in plain view is not lettered over: its name stands clear above
+    // it, and once its own letters are big enough to read, only the marker does.
     let mut carrying = vec![false; g.lib.catalog.categories.len()];
     let mut carrying_dept = vec![false; g.lib.catalog.departments.len()];
     for &b in &g.held {
@@ -138,30 +139,31 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         let Some(p) = project(&vp, l.pos, screen) else { continue };
         let size = (22.0 * 6.0 / to_eye.length().max(3.0)).clamp(16.0, 26.0);
         let pulse = (0.8 + 0.2 * libm::sinf(g.time * 3.0)) * if seen { 1.0 } else { 0.55 };
-        painter.text(
-            p,
-            Align2::CENTER_CENTER,
-            &l.text,
-            serif(size),
-            GOLD.gamma_multiply(pulse),
-        );
-        if !facing {
-            // Cases are double-sided: say when the shelves are round the back.
-            painter.text(
-                p + Vec2::new(0.0, size * 0.75),
-                Align2::CENTER_TOP,
-                "other side",
-                serif(size * 0.6),
-                GOLD.gamma_multiply(pulse * 0.8),
-            );
-        }
-        painter.text(
-            p + Vec2::new(0.0, -size),
-            Align2::CENTER_BOTTOM,
-            "▼",
-            serif(size * 0.6),
-            GOLD.gamma_multiply(pulse),
-        );
+        let gold = GOLD.gamma_multiply(pulse);
+        let marker = if seen {
+            let top = project(&vp, l.pos + glam::Vec3::Y * (l.half + 0.03), screen).unwrap_or(p);
+            let em_px = project(&vp, l.pos + glam::Vec3::Y * l.em, screen).map_or(0.0, |q| p.y - q.y);
+            if em_px >= 12.0 {
+                top
+            } else {
+                painter.text(top, Align2::CENTER_BOTTOM, &l.text, serif(size), gold);
+                top + Vec2::new(0.0, -size)
+            }
+        } else {
+            painter.text(p, Align2::CENTER_CENTER, &l.text, serif(size), gold);
+            if !facing {
+                // Cases are double-sided: say when the shelves are round the back.
+                painter.text(
+                    p + Vec2::new(0.0, size * 0.75),
+                    Align2::CENTER_TOP,
+                    "other side",
+                    serif(size * 0.6),
+                    GOLD.gamma_multiply(pulse * 0.8),
+                );
+            }
+            p + Vec2::new(0.0, -size)
+        };
+        painter.text(marker, Align2::CENTER_BOTTOM, "▼", serif(size * 0.6), gold);
     }
 
     // ---- The compass: Sort Sense's marker on the slot, or Wayfinding's on the way
