@@ -94,6 +94,7 @@ impl Banks {
                     Sfx::Step => (0..16).map(|_| step(&mut rng)).collect(),
                     Sfx::Hop => (0..6).map(|_| hop(&mut rng)).collect(),
                     Sfx::Alight => (0..6).map(|_| alight(&mut rng)).collect(),
+                    Sfx::Wade => (0..12).map(|_| wade(&mut rng)).collect(),
                 };
                 bank.into_iter().map(Clip::from).collect()
             })
@@ -654,6 +655,26 @@ fn alight(rng: &mut StdRng) -> Vec<f32> {
         ar(t, 0.01, 0.05)
     });
     lowpass2(&mut out, 3000.0);
+    finish(out, 1.0)
+}
+
+/// A footfall into a heap of books: the heel muffled under them, covers knocking and
+/// pages shuffling aside.
+fn wade(rng: &mut StdRng) -> Vec<f32> {
+    let len = rng.gen_range(0.2..0.28);
+    let mut out = vec![0.0; secs(len + 0.15)];
+    mode(&mut out, 0, rng.gen_range(70.0..90.0), 0.5, 0.03);
+    let rate = rng.gen_range(80.0..120.0);
+    crinkles(&mut out, rng, 0, len, rate, 0.45, (900.0, 3000.0));
+    burst(&mut out, rng, 0, len, (200.0, 900.0), 0.3, |t| {
+        (1.0 - t / len).max(0.0).powi(2)
+    });
+    for _ in 0..rng.gen_range(2..=3) {
+        let at = secs(rng.gen_range(0.0..len * 0.6));
+        mode(&mut out, at, rng.gen_range(260.0..420.0), 0.18, 0.012);
+        mode(&mut out, at, rng.gen_range(120.0..170.0), 0.22, 0.02);
+    }
+    lowpass2(&mut out, 4000.0);
     finish(out, 1.0)
 }
 

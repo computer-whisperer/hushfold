@@ -77,6 +77,9 @@ pause screen replaces the current library's save with a fresh one (settings, in
   out from underneath, and tossed books tumble, bounce off the furniture and
   land in a scatter. Toss a category's books toward its shelves to pre-sort a
   pile, then gather the heap you made.
+- Wading through heaps slows you, more the deeper they are (knee-deep, to about
+  half), and you can't jump far out of them; a chest-high heap can't be walked
+  into. Clearing the heaps in your way frees your feet.
 
 ## Upgrades
 

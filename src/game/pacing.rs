@@ -1,8 +1,9 @@
 //! The pacing bot: plays a library headless with the real mechanisms, to measure how
 //! long it takes and when skills are bought.
 //!
-//! It walks at real speeds on the nav field (round furniture, up stairs) to the
-//! pile that gives the most books per second of walking and gathers an armful. A
+//! It walks at real speeds on the nav field (round furniture, up stairs; slowed by the
+//! books it wades through on the way, which the field doesn't go round) to the pile
+//! that gives the most books per second of walking and gathers an armful. A
 //! plain scoop takes the top of the pile whatever it is, and books it can't file
 //! yet are set down where it stands; with Sifting Touch it seeks the group (the
 //! coarsest it has) with the most books in reach and scoops only that; further
@@ -180,11 +181,19 @@ impl Bot {
         if !d.is_finite() {
             return None;
         }
+        let path = if g.nav.clear(self.pos, to) {
+            vec![self.pos, to]
+        } else {
+            let mut way = g.nav.way_back(&g.walk, to).unwrap_or_default();
+            way.reverse();
+            [vec![self.pos], way, vec![to]].concat()
+        };
+        let secs = (d - short).max(0.0) / speed * wading_along(&self.g, &path);
         let floors = (self.g.lib.world.level_at(to) as f32 - self.g.lib.world.level_at(self.pos) as f32).abs();
         // A flight of stairs is ~11 m of walking.
         self.climbing += floors * 11.0 / speed;
-        self.t += (d - short).max(0.0) / speed;
-        self.spent[0] += (d - short).max(0.0) / speed;
+        self.t += secs;
+        self.spent[0] += secs;
         self.pos = to;
         Some(d)
     }
@@ -453,6 +462,7 @@ impl Bot {
                 reach = 1.8;
             }
             let walk_m = (hop - reach.max(1.8)).max(0.0);
+            let wade = wading_along(g, &[here, to]);
             // Reading where it goes, unless Sort Sense (in the book's room at I) or
             // Glimpse shows it: the run, and the cases the first time this trip.
             let s = g.lib.books[b as usize].series;
@@ -512,8 +522,9 @@ impl Bot {
             } else {
                 FILE_CLICK
             };
-            self.t += walk_m / speed + file;
-            self.spent[2] += walk_m / speed;
+            let walk = walk_m / speed * wade;
+            self.t += walk + file;
+            self.spent[2] += walk;
             self.spent[3] += file;
             g.held.retain(|x| !batch.contains(x));
             let mut thunks = 0;
@@ -649,6 +660,26 @@ impl Bot {
             }
         }
     }
+}
+
+/// How many times longer walking `path` takes than on clear floor, for the books
+/// lying along it.
+fn wading_along(g: &Game, path: &[Vec3]) -> f32 {
+    let world = &g.lib.world;
+    let (mut len, mut time) = (0.0, 0.0);
+    for w in path.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let l = Vec2::new(b.x - a.x, b.z - a.z).length();
+        let n = (l / 0.25).ceil().max(1.0) as usize;
+        for i in 0..n {
+            let p = a.lerp(b, (i as f32 + 0.5) / n as f32);
+            let xz = Vec2::new(p.x, p.z);
+            let floor = world.ground(xz, p.y + 0.5).unwrap_or(p.y);
+            time += l / n as f32 / wading(g.books_about(world.level_at(p), xz, floor).1);
+        }
+        len += l;
+    }
+    if len > 0.0 { time / len } else { 1.0 }
 }
 
 /// Play `layout` to the end (or 30 hours); returns hours.

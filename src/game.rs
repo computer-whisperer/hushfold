@@ -32,6 +32,13 @@ pub const SEED: u64 = 0x4855_5348_464f_4c44;
 const EYE: f32 = 1.62;
 /// How fast a jump leaves the floor: half a metre high under `loose::GRAVITY`.
 const JUMP_SPEED: f32 = 3.0;
+/// Books about the legs slow walking: to 1 / (1 + WADE × their depth in metres), so
+/// ankle-deep ×0.8, knee-deep ×0.5, waist-deep ×0.3.
+const WADE: f32 = 2.5;
+/// Books lying deeper than this (chest-high) stop a body walking into them; one
+/// already in them wades out until they are this much shallower.
+const HEAP_WALL: f32 = 1.3;
+const HEAP_CLEAR: f32 = 0.3;
 const SHELF_REACH: f32 = 4.2;
 const HAND_VISIBLE: usize = 8;
 /// Shelving Aura by level: (radius in metres, books per second).
@@ -51,6 +58,11 @@ const LONG_TOSS: [(f32, f32); 3] = [(12.0, 1.0), (16.0, 0.7), (20.0, 0.45)];
 /// Homing Toss by level: how far from its slot (along the floor, in front of its
 /// shelf) a tossed book may land and still slip into it.
 const HOMING: [f32; 3] = [0.0, 2.0, 3.5];
+
+/// The share of walking speed left with books `depth` metres up the legs.
+fn wading(depth: f32) -> f32 {
+    1.0 / (1.0 + WADE * depth)
+}
 
 /// Vertical FOV: `v_deg` on wide windows, widened on narrow ones so the horizontal
 /// FOV never drops below `v_deg` × 85/70 (85° at the default 70°).
@@ -488,6 +500,9 @@ pub struct Player {
     pub bob: f32,
     /// Standing on a floor or stair (not in the air).
     pub grounded: bool,
+    /// In a heap too deep to walk into (books fell round them), and not yet waded
+    /// clear of it.
+    pub in_heap: bool,
 }
 
 impl Player {
@@ -722,6 +737,7 @@ impl Game {
                 pitch: -0.05,
                 bob: 0.0,
                 grounded: true,
+                in_heap: false,
             },
             lumens: 0,
             earned: 0,
@@ -907,16 +923,30 @@ impl Game {
         let bob_before = self.player.bob;
         let grounded = self.player.grounded;
         let landed = self.update_player(dt, input);
-        // A soft footfall each time the walking bob touches down.
+        // A soft footfall each time the walking bob touches down; in books, the heel
+        // muffled and the pages shuffling, more the deeper they are.
+        let p = self.player.pos;
+        let books = || self.books_about(self.lib.world.level_at(p), Vec2::new(p.x, p.z), p.y).1;
         let footfall = |bob: f32| (bob * 2.0 / PI).floor();
         if can_play && footfall(self.player.bob) != footfall(bob_before) {
-            audio.play(Sfx::Step, if input.sprint { 0.16 } else { 0.12 });
+            let deep = books();
+            audio.play(
+                Sfx::Step,
+                if input.sprint { 0.16 } else { 0.12 } * (1.0 - 1.5 * deep).max(0.3),
+            );
+            if deep > 0.03 {
+                audio.play(Sfx::Wade, (0.08 + 0.25 * deep).min(0.35));
+            }
         }
         if can_play && grounded && !self.player.grounded && self.player.vel.y > 0.0 {
             audio.play(Sfx::Hop, 0.3);
         }
         if can_play && let Some(speed) = landed {
-            audio.play(Sfx::Alight, (speed / 6.0).clamp(0.15, 1.0));
+            let deep = books();
+            audio.play(Sfx::Alight, (speed / 6.0).clamp(0.15, 1.0) * (1.0 - deep).max(0.3));
+            if deep > 0.03 {
+                audio.play(Sfx::Wade, (0.15 + 0.3 * deep).min(0.5));
+            }
         }
         self.aim = if can_play { self.compute_aim() } else { Aim::None };
 
@@ -1013,6 +1043,26 @@ impl Game {
         }
     }
 
+    /// The books about a body standing at `xz` on level `lv`, averaged across it: how
+    /// deep they lie, and how far up the legs they come with the feet at `feet` (in
+    /// the air, less than their depth).
+    fn books_about(&self, lv: usize, xz: Vec2, feet: f32) -> (f32, f32) {
+        let r = BODY_R * 0.6;
+        let (mut deep, mut up) = (0.0, 0.0);
+        for o in [
+            Vec2::ZERO,
+            Vec2::new(r, 0.0),
+            Vec2::new(-r, 0.0),
+            Vec2::new(0.0, r),
+            Vec2::new(0.0, -r),
+        ] {
+            let d = self.loose.depth_at(lv, xz + o);
+            deep += d;
+            up += d.min((self.loose.height_at(lv, xz + o) - feet).max(0.0));
+        }
+        (deep / 5.0, up / 5.0)
+    }
+
     /// Walk, jump and fall; the speed of a landing, if one came this frame.
     fn update_player(&mut self, dt: f32, input: &Input) -> Option<f32> {
         let (yaw, pitch) = (self.player.yaw + input.look.x, self.player.pitch - input.look.y);
@@ -1024,13 +1074,20 @@ impl Game {
         if wish.length_squared() > 1.0 {
             wish = wish.normalize();
         }
-        let base = [4.0, 5.5, 7.0][self.upg[upg_index(Upg::Slippers)] as usize];
-        let speed = if input.sprint { base * 1.6 } else { base };
-        let k = 1.0 - (-dt * 10.0).exp();
-        let walk = Vec3::new(self.player.vel.x, 0.0, self.player.vel.z).lerp(wish * speed, k);
         let pos = self.player.pos;
         let world = &self.lib.world;
-        let lv = &world.levels[world.level_at(pos)];
+        let level = world.level_at(pos);
+        // Books about the legs slow the walk, hurrying helps less in them, and a jump
+        // out of them is weaker. A chest-high heap stops those coming at it, but one
+        // in it (books fell round them) wades out.
+        let (here, legs) = self.books_about(level, Vec2::new(pos.x, pos.z), pos.y);
+        let wade = wading(legs);
+        let in_heap = here > HEAP_WALL || (self.player.in_heap && here > HEAP_WALL - HEAP_CLEAR);
+        let base = [4.0, 5.5, 7.0][self.upg[upg_index(Upg::Slippers)] as usize] * wade;
+        let speed = if input.sprint { base * (1.0 + 0.6 * wade) } else { base };
+        let k = 1.0 - (-dt * 10.0).exp();
+        let walk = Vec3::new(self.player.vel.x, 0.0, self.player.vel.z).lerp(wish * speed, k);
+        let lv = &world.levels[level];
         let (lo, hi) = (lv.min + BODY_R + 0.1, lv.max - BODY_R - 0.1);
         // In steps short enough that nothing thin (a veil, a rail) is stepped over.
         let total = Vec2::new(walk.x, walk.z) * dt;
@@ -1040,7 +1097,7 @@ impl Game {
         let mut vy = self.player.vel.y;
         let mut grounded = self.player.grounded;
         if grounded && input.jump {
-            vy = JUMP_SPEED;
+            vy = JUMP_SPEED * wade.sqrt();
             grounded = false;
         }
         let mut landed = None;
@@ -1076,8 +1133,9 @@ impl Game {
             np.x = np.x.clamp(lo.x, hi.x);
             np.z = np.z.clamp(lo.y, hi.y);
             // A rise too high to step onto is a wall: slide along it if one axis is
-            // clear, else stay.
-            let walled = |x: f32, z: f32| world.rises_at(Vec2::new(x, z), low, feet);
+            // clear, else stay. So is a chest-high heap, to one not in it.
+            let deep = |x: f32, z: f32| self.books_about(level, Vec2::new(x, z), feet).0 > HEAP_WALL;
+            let walled = |x: f32, z: f32| world.rises_at(Vec2::new(x, z), low, feet) || (!in_heap && deep(x, z));
             if walled(np.x, np.z) {
                 if !walled(np.x, from.z) {
                     np.z = from.z;
@@ -1115,6 +1173,7 @@ impl Game {
         let p = &mut self.player;
         p.vel = Vec3::new(walk.x, vy, walk.z);
         p.grounded = grounded;
+        p.in_heap = in_heap;
         if grounded {
             p.bob += Vec2::new(np.x - p.pos.x, np.z - p.pos.z).length() * 1.4;
         }
@@ -3253,6 +3312,143 @@ mod tests {
         }
         assert!((top + BODY_H - beam).abs() < 1e-4, "head rose to {}", top + BODY_H);
         assert!(g.player.grounded && g.player.pos == p);
+    }
+
+    /// Stand the player still at `pos`, facing `yaw`.
+    fn stand(g: &mut Game, pos: Vec3, yaw: f32) {
+        g.player = Player {
+            pos,
+            vel: Vec3::ZERO,
+            yaw,
+            pitch: 0.0,
+            bob: 0.0,
+            grounded: true,
+            in_heap: false,
+        };
+    }
+
+    /// A spot in the Hall where the books lie knee-deep all round (to half a metre
+    /// off along x), facing along +x.
+    fn knee_deep(g: &mut Game) -> Vec3 {
+        let deep = |g: &Game, p: Vec3| g.books_about(0, Vec2::new(p.x, p.z), p.y).0;
+        let l = &g.lib.world.levels[0];
+        let (min, max) = (l.min, l.max);
+        let mut z = min.y;
+        while z < max.y {
+            let mut x = min.x;
+            while x < max.x {
+                let p = Vec3::new(x, l.y, z);
+                let all = (0..=10).map(|i| p + Vec3::X * (i as f32 * 0.05));
+                if g.nav.free_at(p)
+                    && all
+                        .clone()
+                        .all(|q| g.nav.free_at(q) && (0.4..0.6).contains(&deep(g, q)))
+                {
+                    stand(g, p, PI / 2.0);
+                    return p;
+                }
+                x += 0.25;
+            }
+            z += 0.25;
+        }
+        panic!("no knee-deep books in the Hall");
+    }
+
+    /// How far the player walks (or hurries) in a third of a second from where they
+    /// stand.
+    fn stride(g: &mut Game, sprint: bool) -> f32 {
+        let mut audio = crate::audio::Audio::silent();
+        let start = g.player.pos;
+        let walk = Input {
+            forward: 1.0,
+            sprint,
+            ..Input::default()
+        };
+        for _ in 0..20 {
+            g.update(1.0 / 60.0, &walk, &mut audio, true);
+        }
+        g.player.pos.distance(start)
+    }
+
+    /// Books knee-deep halve the walk, and hurrying through them gains less.
+    #[test]
+    fn books_slow_the_walk() {
+        let mut g = Game::new(Layout::Hall);
+        let start = g.player.pos;
+        assert_eq!(g.books_about(0, Vec2::new(start.x, start.z), start.y).0, 0.0);
+        let (clear, clear_hurry) = (stride(&mut g, false), {
+            stand(&mut g, start, 0.0);
+            stride(&mut g, true)
+        });
+        knee_deep(&mut g);
+        let wading = stride(&mut g, false);
+        knee_deep(&mut g);
+        let hurrying = stride(&mut g, true);
+        assert!(
+            (0.4..0.6).contains(&(wading / clear)),
+            "{wading} m wading, {clear} m clear"
+        );
+        assert!(
+            hurrying / wading < clear_hurry / clear - 0.15,
+            "hurrying gains {} wading, {} clear",
+            hurrying / wading,
+            clear_hurry / clear
+        );
+    }
+
+    /// A jump out of knee-deep books is about half as high.
+    #[test]
+    fn jumps_out_of_books_are_lower() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = crate::audio::Audio::silent();
+        let start = knee_deep(&mut g);
+        let jump = Input {
+            jump: true,
+            ..Input::default()
+        };
+        g.update(1.0 / 60.0, &jump, &mut audio, true);
+        let mut top = start.y;
+        for _ in 0..60 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
+            top = top.max(g.player.pos.y);
+        }
+        assert!((0.15..0.3).contains(&(top - start.y)), "rose {}", top - start.y);
+    }
+
+    /// The great heap in the atrium is a wall from outside, chest-high, but one
+    /// standing in it (a charm's books fell round them) can wade out.
+    #[test]
+    fn chest_high_heaps_are_walls_but_can_be_waded_out_of() {
+        let mut g = Game::new(Layout::Great);
+        let deep = |g: &Game| {
+            let p = g.player.pos;
+            g.books_about(0, Vec2::new(p.x, p.z), p.y).0
+        };
+        let mut audio = crate::audio::Audio::silent();
+        let walk = Input {
+            forward: 1.0,
+            ..Input::default()
+        };
+        stand(&mut g, Vec3::ZERO, 0.0);
+        assert!(deep(&g) > 2.0, "the great heap is {} m deep", deep(&g));
+        // Heading for the middle from every side.
+        for k in 0..8 {
+            let yaw = k as f32 * PI / 4.0;
+            let from = Vec3::new(yaw.sin(), 0.0, -yaw.cos()) * -6.0;
+            stand(&mut g, from, yaw);
+            let mut most = 0.0f32;
+            for _ in 0..60 * 4 {
+                g.update(1.0 / 60.0, &walk, &mut audio, true);
+                most = most.max(deep(&g));
+            }
+            assert!((1.0..=HEAP_WALL).contains(&most), "from {from}: {most} m deep");
+        }
+        // Out from the middle.
+        stand(&mut g, Vec3::ZERO, 0.0);
+        for _ in 0..60 * 8 {
+            g.update(1.0 / 60.0, &walk, &mut audio, true);
+        }
+        assert!(deep(&g) < 0.3, "still {} m deep at {}", deep(&g), g.player.pos);
     }
 
     /// The stairs are solid stone: walking into a flight from its high end on the

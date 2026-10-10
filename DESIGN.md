@@ -35,7 +35,18 @@ floors and stair slopes and are stopped by solids, floor edges, stair stone and
 closed gates. The player can jump half a metre, but solids are never floors: in
 the air, what is in the way reaches down to the ground underneath, so a jump
 clears nothing (no landing on or inside a table, case or rail), and it stops
-rising under whatever overhangs. Sight is stopped by solids that stop it, floors, stair stone and closed gates; books build
+rising under whatever overhangs. Loose books underfoot slow walking by how deep
+they lie about the legs (books only, not what they lie on; averaged across the
+body): to 1 / (1 + 2.5 × depth), so ankle-deep ×0.8, knee-deep ×0.5, waist-deep
+×0.3, with Swift Slippers scaling it like the rest of the walk. Hurrying gains less
+in them, and a jump out of them is lower (its speed times the root of that share),
+so a hop clears strays but not a mound. Books deeper than 1.3 m (chest-high, the
+great heap in the atrium at the start) are a wall to one walking into them; one
+standing in such a heap (a charm's books fell round them) wades out of it freely
+until the books are under a metre. Footfalls in books are muffled and shuffle pages.
+The walking field (`nav.rs`) doesn't go round heaps: keeping them in it would mean
+re-reading the heaps at every refill and teaching its straight-line shortcuts
+about them, so the compass may point through a heap. Sight is stopped by solids that stop it, floors, stair stone and closed gates; books build
 their heightfields from the same world. Generation (`src/library/`) declares each
 piece once: `decor` (drawn only), `solid` (drawn, and in the way), or parts drawn
 with one `collide` box standing for them. Shared pieces (bookcases double-sided
@@ -313,6 +324,12 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   Library's second room at a quarter of the Observatory, from half): the Hall 1.60 →
   1.57 h, the East Wing open at ~55 min (from ~65); the Great Library 9.85 → 9.87 h,
   its second room at ~65 min (from ~95). Costs not refit for it.
+- Wading (the bot charged for the books along its walks): the Hall 1.57 → 1.55 h,
+  unchanged within the run-to-run spread (its heaps lie off the aisles in front of
+  the cases, and walking to them is ~2% of the bot's time); the Great Library
+  9.87 → 10.28 h, 1,866 books shelved in the first hour (from 2,010). Costs not
+  refit for it. A person walks a larger share of the time than the bot, so wading
+  will cost them more.
 
 ## Rendering
 Box-only geometry; each instance's `kind` picks a procedural material in WGSL:

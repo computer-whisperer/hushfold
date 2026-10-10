@@ -200,6 +200,7 @@ fn usual_volume(s: Sfx) -> f32 {
         Sfx::Step => 0.12,
         Sfx::Hop => 0.3,
         Sfx::Alight => 0.5,
+        Sfx::Wade => 0.2,
     }
 }
 

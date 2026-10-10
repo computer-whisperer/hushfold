@@ -502,6 +502,14 @@ impl Loose {
         self.grids[lv].height(p)
     }
 
+    /// How deep the books lie at `p` on level `lv`, over the floor, stairs or furniture
+    /// under them.
+    pub fn depth_at(&self, lv: usize, p: Vec2) -> f32 {
+        let g = &self.grids[lv];
+        let k = g.cell(p);
+        g.top_k(k) - g.base_k(k)
+    }
+
     // ---------------------------------------------------------------- books
 
     pub fn is_resting(&self, b: u32) -> bool {

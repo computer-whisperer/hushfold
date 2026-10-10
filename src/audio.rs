@@ -53,10 +53,12 @@ pub enum Sfx {
     Hop,
     /// Landing on the floor; louder the harder the fall.
     Alight,
+    /// A footfall into a heap of books; louder the deeper it is.
+    Wade,
 }
 
 impl Sfx {
-    pub const ALL: [Sfx; 17] = [
+    pub const ALL: [Sfx; 18] = [
         Sfx::Thunk,
         Sfx::Rustle,
         Sfx::Whoosh,
@@ -74,6 +76,7 @@ impl Sfx {
         Sfx::Step,
         Sfx::Hop,
         Sfx::Alight,
+        Sfx::Wade,
     ];
 }
 
