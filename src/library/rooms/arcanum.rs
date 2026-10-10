@@ -37,61 +37,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     }
 }
 
-/// The room's frame as a rotation: local x along `a`, y up, z along -`o` (toward the
-/// door's wall).
-fn turn(f: &RoomFrame) -> Quat {
-    Quat::from_mat3(&Mat3::from_cols(f.across(), Vec3::Y, -f.out()))
-}
-
-/// Drawn only: the box over `a`, `o`, and heights `y` above the floor.
-fn slab(lib: &mut Library, f: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) {
-    let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, y.0, y.1);
-    lib.decor(Inst::minmax(lo, hi, kind, rgb));
-}
-
-/// In the way of everything: the floor box over `a`, `o`, `h` high.
-fn guard(lib: &mut Library, f: &RoomFrame, a: (f32, f32), o: (f32, f32), h: f32) {
-    let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, 0.0, h);
-    lib.collide(lo, hi, Stops::ALL);
-}
-
-/// A piece of furniture's place: its origin on the floor and its turn. Its parts are
-/// given in its own frame (x across the room, y up, z toward the door's wall, unless
-/// it is turned).
-struct Spot {
-    at: Vec3,
-    q: Quat,
-}
-
-impl Spot {
-    fn new(f: &RoomFrame, a: f32, o: f32, yaw: f32) -> Spot {
-        Spot {
-            at: f.at(a, o, 0.0),
-            q: turn(f) * Quat::from_rotation_y(yaw),
-        }
-    }
-
-    fn part(&self, lib: &mut Library, p: Vec3, size: Vec3, q: Quat, kind: u32, color: [f32; 4]) {
-        lib.decor(Inst::new(self.at + self.q * p, self.q * q, size, kind, color, 0));
-    }
-
-    /// An unturned part.
-    fn block(&self, lib: &mut Library, p: Vec3, size: Vec3, kind: u32, color: [f32; 4]) {
-        self.part(lib, p, size, Quat::IDENTITY, kind, color);
-    }
-}
-
-fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
-    [rgb[0], rgb[1], rgb[2], w]
-}
-
-/// Faces left to right as you face them (all facing the same way).
-fn lr(mut faces: Vec<(Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
-    let right = Vec3::Y.cross(faces[0].1);
-    faces.sort_by(|p, q| p.0.dot(right).total_cmp(&q.0.dot(right)));
-    faces
-}
-
 /// The wall cases, read round the room from the door's left as one chain (near
 /// wall, left wall, far wall, right wall, near wall) cut into four categories of six;
 /// and the ward, whose inner faces make two categories of four (each reading round
@@ -107,11 +52,11 @@ fn shelves(lib: &mut Library, f: &RoomFrame, rng: &mut StdRng, titles: &mut Hash
     let right = SIDE_CASES.map(|o| lib.wall_bookcase(f.at(ah, o, 0.0), -across));
     let near_right = NEAR_RIGHT.map(|a| lib.wall_bookcase(f.at(a, RoomFrame::O_NEAR, 0.0), out));
     let chain = [
-        lr(near_left.to_vec()),
-        lr(left.to_vec()),
-        lr(far),
-        lr(right.to_vec()),
-        lr(near_right.to_vec()),
+        left_to_right(near_left.to_vec()),
+        left_to_right(left.to_vec()),
+        left_to_right(far),
+        left_to_right(right.to_vec()),
+        left_to_right(near_right.to_vec()),
     ]
     .concat();
     // The ward's sides (far, right, near, left as `a` and `o` run), each side's faces
@@ -144,8 +89,8 @@ fn shelves(lib: &mut Library, f: &RoomFrame, rng: &mut StdRng, titles: &mut Hash
             }
         }
     }
-    let [far_in, right_in, near_in, left_in] = inner.map(lr);
-    let [far_out, right_out, near_out, left_out] = outer.map(lr);
+    let [far_in, right_in, near_in, left_in] = inner.map(left_to_right);
+    let [far_out, right_out, near_out, left_out] = outer.map(left_to_right);
     let mut groups: Vec<Vec<(Vec3, Vec3)>> = chain.chunks(6).map(|c| c.to_vec()).collect();
     groups.push([far_out, left_out].concat());
     groups.push([near_out, right_out].concat());
@@ -300,7 +245,7 @@ fn pillars(lib: &mut Library, f: &RoomFrame) {
 fn crystal(lib: &mut Library, f: &RoomFrame, p: Vec3, size: f32, lean: f32) {
     let at = Spot {
         at: f.at(p.x, p.z, p.y),
-        q: turn(f) * Quat::from_rotation_z(lean) * Quat::from_rotation_y(lean * 2.0),
+        q: f.turn() * Quat::from_rotation_z(lean) * Quat::from_rotation_y(lean * 2.0),
     };
     let w = size * 0.3;
     let body = size * 0.55;

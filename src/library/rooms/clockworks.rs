@@ -44,15 +44,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     ceiling(lib, frame);
 }
 
-/// Faces of a straight run, left to right as you face them.
-fn run(mut faces: Vec<(Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
-    faces.sort_by(|p, q| {
-        let right = Vec3::Y.cross(p.1);
-        p.0.dot(right).total_cmp(&q.0.dot(right))
-    });
-    faces
-}
-
 /// A bay's faces in reading order, as someone standing in it sees them: along the
 /// arm on their left, across the back, along the arm on their right.
 fn bay_order(back: (Vec3, Vec3), a: Vec<(Vec3, Vec3)>, b: Vec<(Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
@@ -62,26 +53,10 @@ fn bay_order(back: (Vec3, Vec3), a: Vec<(Vec3, Vec3)>, b: Vec<(Vec3, Vec3)>) -> 
     } else {
         (b, a)
     };
-    let mut out = run(left);
+    let mut out = left_to_right(left);
     out.push(back);
-    out.extend(run(right_arm));
+    out.extend(left_to_right(right_arm));
     out
-}
-
-/// A box over `a` × `o` (each low, high), `y` above the floor.
-fn part(frame: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) -> Inst {
-    let (lo, hi) = frame.boxed(a.0, a.1, o.0, o.1, y.0, y.1);
-    Inst::minmax(lo, hi, kind, rgb)
-}
-
-/// In the way of everything over `a` × `o`, from the floor to `h`.
-fn block(lib: &mut Library, frame: &RoomFrame, a: (f32, f32), o: (f32, f32), h: f32) {
-    let (lo, hi) = frame.boxed(a.0, a.1, o.0, o.1, 0.0, h);
-    lib.collide(lo, hi, Stops::ALL);
-}
-
-fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
-    [rgb[0], rgb[1], rgb[2], w]
 }
 
 /// The rotation laying a part out on a plane facing `n`: x along `radial` (in the
@@ -162,7 +137,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
     let (o0, o1) = (PILLAR_O, PILLAR_O + PILLAR_LEN);
     let h = RoomFrame::HEIGHT;
     lib.solid(
-        part(
+        piece(
             frame,
             (a - hw, a + hw),
             (o0, o1),
@@ -184,14 +159,14 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
     }
     let end = lib.wall_bookcase(frame.at(a, o1, 0.0), out);
     // Round its far end: along one side, the end, back along the other.
-    let mut faces = run(plus);
+    let mut faces = left_to_right(plus);
     faces.push(end);
-    faces.extend(run(minus));
+    faces.extend(left_to_right(minus));
     lib.add_category(rng, cat, &faces, titles);
     // The corners at the far end, where side cases and end case leave a notch.
     for s in [-1.0f32, 1.0] {
         let (x0, x1) = (a + s * (hw + 0.005), a + s * (hw + WALL_D - 0.01));
-        let corner = part(
+        let corner = piece(
             frame,
             (x0.min(x1), x0.max(x1)),
             (o1 + 0.005, o1 + WALL_D - 0.01),
@@ -203,7 +178,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
     }
     // The clock turret over the near end, up to the ceiling, with a dial on its face.
     let t = (a - hw + 0.3, a + hw - 0.3);
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         t,
         (o0, o0 + TURRET),
@@ -211,7 +186,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
         kind::WOOD,
         CASEWORK,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (t.0 - 0.06, t.1 + 0.06),
         (o0 - 0.06, o0 + TURRET + 0.06),
@@ -219,7 +194,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
         kind::WOOD,
         WALNUT,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (t.0 - 0.05, t.1 + 0.05),
         (o0 - 0.05, o0 + TURRET + 0.05),
@@ -239,7 +214,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
     // The movement standing on the pillar's top, behind the turret.
     let top = CASE_TOP + 0.12;
     let mid = o0 + TURRET + (PILLAR_LEN - TURRET) * 0.5;
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.5, a + 0.5),
         (o0 + TURRET + 0.1, o1 - 0.2),
@@ -260,7 +235,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
         wheel(0.52, 10, 0.06).turned(a * 2.0),
     );
     for (d_o, y0) in [(-0.45, 0.95), (0.95, 0.62)] {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (a - 0.03, a + 0.03),
             (mid + d_o - 0.03, mid + d_o + 0.03),
@@ -271,7 +246,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
     }
     // The open front: a plinth and posts round the works, a pendulum hanging in it.
     let face = o0 - 0.01;
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 1.05, a + 1.05),
         (o0 - 0.32, face),
@@ -281,7 +256,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
     ));
     for s in [-1.0f32, 1.0] {
         let x = a + s * 0.95;
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.1, x + 0.1),
             (o0 - 0.28, face),
@@ -290,7 +265,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
             WALNUT,
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 1.08, a + 1.08),
         (o0 - 0.34, face),
@@ -298,7 +273,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
         kind::WOOD,
         WALNUT,
     ));
-    block(lib, frame, (a - 1.08, a + 1.08), (o0 - 0.34, o0), 3.25);
+    guard(lib, frame, (a - 1.08, a + 1.08), (o0 - 0.34, o0), 3.25);
     gear(
         lib,
         frame.at(a - 0.35, face - 0.03, 2.35),
@@ -552,7 +527,7 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
     let wall = RoomFrame::O_FAR;
     let c = frame.at(0.0, wall - 0.05, 3.85);
     let r = 1.55;
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-1.85, 1.85),
         (wall - 0.04, wall),
@@ -578,9 +553,9 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
     }
     // The pendulum's case: a plinth, posts, a back panel and a crown under the dial.
     let d = wall - 0.28;
-    lib.decor(part(frame, (-0.85, 0.85), (d, wall), (0.0, 0.35), kind::WOOD, WALNUT));
+    lib.decor(piece(frame, (-0.85, 0.85), (d, wall), (0.0, 0.35), kind::WOOD, WALNUT));
     for s in [-1.0f32, 1.0] {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (s * 0.75 - 0.09, s * 0.75 + 0.09),
             (d + 0.02, wall),
@@ -589,7 +564,7 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
             WALNUT,
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-0.66, 0.66),
         (wall - 0.03, wall),
@@ -597,7 +572,7 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
         kind::WOOD,
         DARK_WOOD,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-0.9, 0.9),
         (d - 0.02, wall),
@@ -605,7 +580,7 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
         kind::WOOD,
         WALNUT,
     ));
-    block(lib, frame, (-0.9, 0.9), (d - 0.02, wall), 2.22);
+    guard(lib, frame, (-0.9, 0.9), (d - 0.02, wall), 2.22);
     pendulum(lib, frame.at(0.0, wall - 0.15, 2.08), n, 1.42, 0.25, 0.06);
     lib.light(c + n * 1.6, 6.0, [1.0, 0.8, 0.55], 0.6, LightKind::Static);
     // Moonlit windows either side, with gears above them.
@@ -615,7 +590,7 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
         let mut glass = Inst::aabox(wc, frame.size(1.3, 3.1, 0.08), kind::GLASS, [0.32, 0.42, 0.85]);
         glass.color[3] = 1.2;
         lib.decor(glass);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (a - 0.78, a + 0.78),
             (wall - 0.14, wall),
@@ -691,7 +666,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
     let (out, across) = (frame.out(), frame.across());
     let (a0, a1, o0, o1) = (-6.6, -3.8, 16.75, 17.65);
     let top = 0.92;
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a0, a1),
         (o0, o1),
@@ -705,7 +680,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
         (a0 + 0.1, o1 - 0.1),
         (a1 - 0.1, o1 - 0.1),
     ] {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (a - 0.06, a + 0.06),
             (o - 0.06, o + 0.06),
@@ -714,7 +689,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
             DARK_WOOD,
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a0 + 0.08, a1 - 0.08),
         (o0 + 0.15, o1 - 0.15),
@@ -722,10 +697,10 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
         kind::WOOD,
         WALNUT,
     ));
-    block(lib, frame, (a0, a1), (o0, o1), top);
+    guard(lib, frame, (a0, a1), (o0, o1), top);
     let on = |a: f32, o: f32, dy: f32| frame.at(a, o, top + dy);
     // A vice at the end, tools laid along the edge.
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a1 - 0.35, a1 - 0.05),
         (o0 + 0.05, o0 + 0.3),
@@ -733,7 +708,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
         kind::METAL,
         STEEL,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a1 - 0.4, a1 - 0.31),
         (o0 + 0.1, o0 + 0.25),
@@ -762,7 +737,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
     let m = (-5.2, (o0 + o1) * 0.5);
     for (da, d_o) in [(-0.22, -0.16), (0.22, -0.16), (-0.22, 0.16), (0.22, 0.16)] {
         let (pa, po) = (m.0 + da, m.1 + d_o);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (pa - 0.015, pa + 0.015),
             (po - 0.015, po + 0.015),
@@ -771,7 +746,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
             BRASS_LIT,
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (m.0 - 0.25, m.0 + 0.25),
         (m.1 - 0.19, m.1 + 0.19),
@@ -820,7 +795,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
     lib.light(lamp + Vec3::Y * 0.4, 4.5, [1.0, 0.62, 0.3], 0.8, LightKind::Flicker);
     // A stool at the bench.
     let st = (-5.0, o0 - 0.5);
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (st.0 - 0.2, st.0 + 0.2),
         (st.1 - 0.2, st.1 + 0.2),
@@ -830,7 +805,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
     ));
     for (da, d_o) in [(-0.15, -0.15), (0.15, -0.15), (-0.15, 0.15), (0.15, 0.15)] {
         let (pa, po) = (st.0 + da, st.1 + d_o);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (pa - 0.025, pa + 0.025),
             (po - 0.025, po + 0.025),
@@ -839,11 +814,11 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
             DARK_WOOD,
         ));
     }
-    block(lib, frame, (st.0 - 0.22, st.0 + 0.22), (st.1 - 0.22, st.1 + 0.22), 0.67);
+    guard(lib, frame, (st.0 - 0.22, st.0 + 0.22), (st.1 - 0.22, st.1 + 0.22), 0.67);
     // The automaton: a brass owl on a plinth, its eyes lit.
     let (pa, po) = (5.6, 18.6);
     lib.solid(
-        part(
+        piece(
             frame,
             (pa - 0.4, pa + 0.4),
             (po - 0.4, po + 0.4),
@@ -853,7 +828,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
         ),
         Stops::ALL,
     );
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (pa - 0.46, pa + 0.46),
         (po - 0.46, po + 0.46),
@@ -928,7 +903,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
     let h = RoomFrame::HEIGHT;
     let inner = RoomFrame::A_HALF;
     for o in [16.6, 27.6, 30.6] {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (-inner, inner),
             (o - 0.13, o + 0.13),
@@ -959,7 +934,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
             let g = if k % 2 == 0 { g.old() } else { g };
             gear(lib, frame.at(a, o, y - 0.03 * (k % 2) as f32), Vec3::Y, g);
             // Its arbor, up into the ceiling.
-            lib.decor(part(
+            lib.decor(piece(
                 frame,
                 (a - 0.03, a + 0.03),
                 (o - 0.03, o + 0.03),

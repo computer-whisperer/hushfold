@@ -29,26 +29,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     telescope(lib, frame);
 }
 
-/// A box over `a` across, `o` outward and `y` up from the floor.
-fn piece(f: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) -> Inst {
-    let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, y.0, y.1);
-    Inst::minmax(lo, hi, kind, rgb)
-}
-
-/// A square rod from `p` to `q`, `w` thick.
-fn rod(lib: &mut Library, p: Vec3, q: Vec3, w: f32, kind: u32, rgba: [f32; 4]) {
-    let d = q - p;
-    let rot = Quat::from_rotation_arc(Vec3::Y, d / d.length());
-    lib.decor(Inst::new(
-        (p + q) * 0.5,
-        rot,
-        Vec3::new(w, d.length(), w),
-        kind,
-        rgba,
-        0,
-    ));
-}
-
 /// A ring of `n` rods round `c` in the plane of `u` and `v` (unit, at right angles).
 #[allow(clippy::too_many_arguments)]
 fn ring(lib: &mut Library, c: Vec3, u: Vec3, v: Vec3, r: f32, n: usize, w: f32, kind: u32, rgba: [f32; 4]) {
@@ -60,7 +40,7 @@ fn ring(lib: &mut Library, c: Vec3, u: Vec3, v: Vec3, r: f32, n: usize, w: f32, 
         // A touch long, so the rods close at the joints.
         let (p, q) = (at(k), at(k + 1));
         let m = (p - q) * 0.04;
-        rod(lib, p + m, q - m, w, kind, rgba);
+        rod(lib, p + m, q - m, w, w, kind, rgba);
     }
 }
 
@@ -248,7 +228,7 @@ fn chart(lib: &mut Library, c: Vec3, n: Vec3, seed: u32) {
         ));
     }
     for k in 0..4 {
-        rod(lib, pts[k], pts[k + 1], 0.008, kind::PLAIN, ink);
+        rod(lib, pts[k], pts[k + 1], 0.008, 0.008, kind::PLAIN, ink);
     }
     ring(
         lib,
@@ -294,7 +274,15 @@ fn sky(lib: &mut Library, frame: &RoomFrame) {
     for k in 0..12 {
         let t = k as f32 / 12.0 * TAU;
         let dir = u * t.cos() + v * t.sin();
-        rod(lib, centre + dir * 5.9, centre + dir * 6.4, 0.05, kind::METAL, gold);
+        rod(
+            lib,
+            centre + dir * 5.9,
+            centre + dir * 6.4,
+            0.05,
+            0.05,
+            kind::METAL,
+            gold,
+        );
     }
     // Constellations in the room's frame (a, o), their stars' brightness, and which
     // stars are joined.
@@ -359,7 +347,7 @@ fn sky(lib: &mut Library, frame: &RoomFrame) {
     for (stars, joins) in [PLOUGH, CASSIOPEIA, HUNTER, SWAN, SISTERS] {
         let at = |s: &(f32, f32, f32)| frame.at(s.0, s.1, y - 0.01);
         for &(i, j) in joins {
-            rod(lib, at(&stars[i]), at(&stars[j]), 0.012, kind::EMISSIVE, line);
+            rod(lib, at(&stars[i]), at(&stars[j]), 0.012, 0.012, kind::EMISSIVE, line);
         }
         for s in stars {
             star(lib, at(s), 0.03 + 0.03 * s.2, 2.5 + 4.5 * s.2);
@@ -461,7 +449,15 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
         kind::METAL,
         BRASS_BRIGHT,
     );
-    rod(lib, base + up * 0.94, base + up * 1.78, 0.07, kind::METAL, BRASS_BRIGHT);
+    rod(
+        lib,
+        base + up * 0.94,
+        base + up * 1.78,
+        0.07,
+        0.07,
+        kind::METAL,
+        BRASS_BRIGHT,
+    );
     let sun = base + up * 1.9;
     ball(lib, sun, 0.24, kind::CRYSTAL, [1.0, 0.72, 0.3, 1.0]);
     // Its light a little above it, so it lights the court rather than flooding itself.
@@ -492,14 +488,14 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
         let dir = Vec3::new(t.cos(), 0.0, t.sin());
         let hub = base + up * h;
         let tip = hub + dir * r;
-        rod(lib, hub, tip, 0.022, kind::METAL, BRASS_BRIGHT);
-        rod(lib, tip, tip + up * 0.14, 0.018, kind::METAL, BRASS_BRIGHT);
+        rod(lib, hub, tip, 0.022, 0.022, kind::METAL, BRASS_BRIGHT);
+        rod(lib, tip, tip + up * 0.14, 0.018, 0.018, kind::METAL, BRASS_BRIGHT);
         let p = tip + up * (0.14 + s * 0.5);
         ball(lib, p, s, kind::METAL, [rgb[0], rgb[1], rgb[2], 1.0]);
         if k == 2 {
             // The earth's moon on its own little arm.
             let m = p + Vec3::new(t.sin(), 0.0, -t.cos()) * 0.16;
-            rod(lib, p, m, 0.01, kind::METAL, BRASS_BRIGHT);
+            rod(lib, p, m, 0.01, 0.01, kind::METAL, BRASS_BRIGHT);
             ball(lib, m, 0.035, kind::METAL, [0.7, 0.7, 0.68, 1.0]);
         }
         if k == 5 {
@@ -540,7 +536,15 @@ fn telescope(lib: &mut Library, frame: &RoomFrame) {
         wood(lib, 0.45, o - 0.88, o - 0.85, y, y + 0.24, [0.2, 0.1, 0.045]);
     }
     let pivot = frame.at(a, o, h);
-    rod(lib, frame.at(a, o, 0.96), pivot - up * 0.25, 0.16, kind::METAL, IRON);
+    rod(
+        lib,
+        frame.at(a, o, 0.96),
+        pivot - up * 0.25,
+        0.16,
+        0.16,
+        kind::METAL,
+        IRON,
+    );
     // The tube looks at the top of the window, turned toward it.
     let d = (frame.at(-0.3, RoomFrame::O_FAR, 4.4) - pivot).normalize();
     let axle = d.cross(up).normalize();
@@ -549,7 +553,15 @@ fn telescope(lib: &mut Library, frame: &RoomFrame) {
         let c = pivot - up * 0.1 + axle * s * 0.24;
         lib.decor(Inst::new(c, turn, frame.size(0.04, 0.42, 0.2), kind::METAL, IRON, 0));
     }
-    rod(lib, pivot - axle * 0.3, pivot + axle * 0.3, 0.05, kind::METAL, IRON);
+    rod(
+        lib,
+        pivot - axle * 0.3,
+        pivot + axle * 0.3,
+        0.05,
+        0.05,
+        kind::METAL,
+        IRON,
+    );
     // Eight-sided, banded, with an eyepiece below and a finder alongside.
     let rot = Quat::from_rotation_arc(Vec3::Y, d);
     let tube = |lib: &mut Library, t: f32, len: f32, w: f32, rgba: [f32; 4]| {
@@ -564,12 +576,13 @@ fn telescope(lib: &mut Library, frame: &RoomFrame) {
     }
     tube(lib, 1.68, 0.06, 0.33, IRON);
     let low = pivot + d * -1.3;
-    rod(lib, low, low - d * 0.25, 0.09, kind::METAL, IRON);
+    rod(lib, low, low - d * 0.25, 0.09, 0.09, kind::METAL, IRON);
     let above = axle.cross(d).normalize();
     rod(
         lib,
         pivot + above * 0.24 - d * 0.2,
         pivot + above * 0.24 + d * 0.7,
+        0.06,
         0.06,
         kind::METAL,
         SCOPE_BRASS,
@@ -579,6 +592,7 @@ fn telescope(lib: &mut Library, frame: &RoomFrame) {
             lib,
             pivot + d * t + above * 0.13,
             pivot + d * t + above * 0.21,
+            0.02,
             0.02,
             kind::METAL,
             IRON,

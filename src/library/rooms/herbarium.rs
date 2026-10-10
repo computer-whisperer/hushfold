@@ -45,40 +45,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     herbs(lib, frame);
 }
 
-/// A box over `a` across, `o` outward and `y` up from the floor.
-fn piece(f: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) -> Inst {
-    let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, y.0, y.1);
-    Inst::minmax(lo, hi, kind, rgb)
-}
-
-/// A square rod from `p` to `q`, `w` thick.
-fn rod(lib: &mut Library, p: Vec3, q: Vec3, w: f32, kind: u32, rgba: [f32; 4]) {
-    let d = q - p;
-    let rot = Quat::from_rotation_arc(Vec3::Y, d / d.length());
-    lib.decor(Inst::new(
-        (p + q) * 0.5,
-        rot,
-        Vec3::new(w, d.length(), w),
-        kind,
-        rgba,
-        0,
-    ));
-}
-
-/// An eight-sided upright block centred on `c`, `w` across and `h` tall.
-fn octo(lib: &mut Library, c: Vec3, w: f32, h: f32, kind: u32, rgba: [f32; 4]) {
-    for t in [0.2f32, 0.985] {
-        lib.decor(Inst::new(
-            c,
-            Quat::from_rotation_y(t),
-            Vec3::new(w, h, w),
-            kind,
-            rgba,
-            0,
-        ));
-    }
-}
-
 /// A tuft of leaves `s` across rising from `c`, the leaves splayed by `rng`.
 fn tuft(lib: &mut Library, c: Vec3, s: f32, rgb: [f32; 3], rng: &mut StdRng) {
     for k in 0..4 {
@@ -397,7 +363,7 @@ fn tree(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, rng: &mut StdRng) 
     ));
     let foot = frame.at(a, o, 0.62);
     let crown = foot + Vec3::new(rng.gen_range(-0.15..0.15f32), 1.6, rng.gen_range(-0.15..0.15f32));
-    rod(lib, foot, crown, 0.11, kind::WOOD, [0.22, 0.14, 0.08, 1.0]);
+    rod(lib, foot, crown, 0.11, 0.11, kind::WOOD, [0.22, 0.14, 0.08, 1.0]);
     for _ in 0..3 {
         let tip = crown
             + Vec3::new(
@@ -409,6 +375,7 @@ fn tree(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, rng: &mut StdRng) 
             lib,
             crown - Vec3::Y * 0.3,
             tip,
+            0.05,
             0.05,
             kind::WOOD,
             [0.22, 0.14, 0.08, 1.0],
@@ -460,7 +427,7 @@ fn moonflowers(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng) {
         tuft(lib, p, rng.gen_range(0.35..0.6f32), GREENS[k % 3], rng);
         if k % 3 != 2 {
             let stem = p + Vec3::Y * rng.gen_range(0.45..0.8f32);
-            rod(lib, p, stem, 0.015, kind::LEAF, [0.2, 0.38, 0.15, 1.0]);
+            rod(lib, p, stem, 0.015, 0.015, kind::LEAF, [0.2, 0.38, 0.15, 1.0]);
             let rot = Quat::from_rotation_y(rng.gen_range(0.0..1.5f32)) * Quat::from_rotation_x(0.3);
             let bloom = [0.82, 0.9, 1.0, 1.6];
             lib.decor(Inst::new(
@@ -533,7 +500,15 @@ fn press_table(lib: &mut Library, frame: &RoomFrame, o: f32, rng: &mut StdRng) {
     let turn = Quat::from_rotation_y(0.1);
     for (x, z) in [(-0.17f32, -0.17f32), (0.17, -0.17), (-0.17, 0.17), (0.17, 0.17)] {
         let p = press + turn * Vec3::new(x, 0.0, z);
-        rod(lib, p, p + Vec3::Y * 0.3, 0.025, kind::METAL, [0.15, 0.14, 0.13, 1.0]);
+        rod(
+            lib,
+            p,
+            p + Vec3::Y * 0.3,
+            0.025,
+            0.025,
+            kind::METAL,
+            [0.15, 0.14, 0.13, 1.0],
+        );
         octo(lib, p + Vec3::Y * 0.3, 0.07, 0.02, kind::METAL, [0.15, 0.14, 0.13, 1.0]);
     }
     // Sheets with a pressed specimen on each.
@@ -580,12 +555,13 @@ fn press_table(lib: &mut Library, frame: &RoomFrame, o: f32, rng: &mut StdRng) {
     for k in 0..n {
         let (t0, t1) = (k as f32 / n as f32 * TAU, (k + 1) as f32 / n as f32 * TAU);
         let p = |t: f32| lens + Vec3::new(t.cos(), 0.0, t.sin()) * 0.07;
-        rod(lib, p(t0), p(t1), 0.012, kind::METAL, brass);
+        rod(lib, p(t0), p(t1), 0.012, 0.012, kind::METAL, brass);
     }
     rod(
         lib,
         lens + Vec3::new(0.07, 0.0, 0.0),
         lens + Vec3::new(0.2, 0.0, 0.05),
+        0.02,
         0.02,
         kind::WOOD,
         [0.2, 0.1, 0.05, 1.0],
@@ -603,6 +579,7 @@ fn press_table(lib: &mut Library, frame: &RoomFrame, o: f32, rng: &mut StdRng) {
         lib,
         ink + Vec3::Y * 0.06,
         ink + Vec3::new(0.06, 0.28, -0.04),
+        0.012,
         0.012,
         kind::PAPER,
         [0.0, 0.0, 0.0, 0.0],
@@ -673,6 +650,7 @@ fn potting_bench(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng) {
         can + Vec3::Y * 0.08 + frame.across() * 0.1,
         can + Vec3::Y * 0.32 + frame.across() * 0.32,
         0.03,
+        0.03,
         kind::METAL,
         tin,
     );
@@ -680,6 +658,7 @@ fn potting_bench(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng) {
         lib,
         can + Vec3::Y * 0.3 - frame.across() * 0.08,
         can + Vec3::Y * 0.3 + frame.across() * 0.04,
+        0.025,
         0.025,
         kind::METAL,
         tin,
@@ -711,6 +690,7 @@ fn herbs(lib: &mut Library, frame: &RoomFrame) {
                 lib,
                 tie,
                 frame.at(a, o, beam),
+                0.012,
                 0.012,
                 kind::PLAIN,
                 [0.55, 0.5, 0.38, 1.0],

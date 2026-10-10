@@ -34,43 +34,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     ceiling(lib, frame);
 }
 
-/// Faces of a straight run, left to right as you face them.
-fn run(mut faces: Vec<(Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
-    faces.sort_by(|p, q| {
-        let right = Vec3::Y.cross(p.1);
-        p.0.dot(right).total_cmp(&q.0.dot(right))
-    });
-    faces
-}
-
-/// A box over `a` × `o` (each low, high), `y` above the floor.
-fn part(frame: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) -> Inst {
-    let (lo, hi) = frame.boxed(a.0, a.1, o.0, o.1, y.0, y.1);
-    Inst::minmax(lo, hi, kind, rgb)
-}
-
-/// In the way of everything over `a` × `o`, from the floor to `h`.
-fn block(lib: &mut Library, frame: &RoomFrame, a: (f32, f32), o: (f32, f32), h: f32) {
-    let (lo, hi) = frame.boxed(a.0, a.1, o.0, o.1, 0.0, h);
-    lib.collide(lo, hi, Stops::ALL);
-}
-
-fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
-    [rgb[0], rgb[1], rgb[2], w]
-}
-
-/// The room's frame as a rotation: x across, y up, z toward the door.
-fn turn(frame: &RoomFrame) -> Quat {
-    Quat::from_mat3(&Mat3::from_cols(frame.across(), Vec3::Y, -frame.out()))
-}
-
-/// A slim box from `p` to `q` (world), `w` × `d` across.
-fn rod(lib: &mut Library, p: Vec3, q: Vec3, w: f32, d: f32, kind: u32, col: [f32; 4]) {
-    let v = q - p;
-    let rot = Quat::from_rotation_arc(Vec3::Y, v.normalize());
-    lib.decor(Inst::new((p + q) * 0.5, rot, Vec3::new(w, v.length(), d), kind, col, 0));
-}
-
 /// Two rows of three double-sided cases either side of the aisle, a category round
 /// each (along its far side, round its end, back along its near side, so its sign
 /// faces the door); four wall cases down each side wall, four either side of the
@@ -87,8 +50,8 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                     if f.1.dot(out) > 0.0 { far.push(f) } else { near.push(f) }
                 }
             }
-            let mut faces = run(far);
-            faces.extend(run(near));
+            let mut faces = left_to_right(far);
+            faces.extend(left_to_right(near));
             lib.add_category(rng, cats.next().unwrap(), &faces, titles);
             pew_end(lib, frame, s, o);
         }
@@ -100,7 +63,7 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                 lib.wall_bookcase(frame.at(s * RoomFrame::A_HALF, o, 0.0), -across * s)
             })
             .collect();
-        lib.add_category(rng, cats.next().unwrap(), &run(faces), titles);
+        lib.add_category(rng, cats.next().unwrap(), &left_to_right(faces), titles);
     }
     for s in [-1.0f32, 1.0] {
         let faces: Vec<_> = (0..4)
@@ -109,7 +72,7 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                 lib.wall_bookcase(frame.at(a, RoomFrame::O_FAR, 0.0), -out)
             })
             .collect();
-        lib.add_category(rng, cats.next().unwrap(), &run(faces), titles);
+        lib.add_category(rng, cats.next().unwrap(), &left_to_right(faces), titles);
     }
 }
 
@@ -117,7 +80,7 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
 fn pew_end(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) {
     // The case's side faces the aisle AISLE + 0.05 from the middle.
     let (a0, a1) = (s * (AISLE + 0.02), s * (AISLE + 0.045));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a0.min(a1), a0.max(a1)),
         (o - 0.33, o + 0.33),
@@ -172,7 +135,7 @@ fn walls(lib: &mut Library, frame: &RoomFrame) {
         glass.color[3] = 1.2;
         lib.decor(glass);
         let (s0, s1) = (wall - s * 0.14, wall);
-        let sill = part(
+        let sill = piece(
             frame,
             (s0.min(s1), s0.max(s1)),
             (o - 0.78, o + 0.78),
@@ -197,7 +160,7 @@ fn walls(lib: &mut Library, frame: &RoomFrame) {
         horn(lib, &Hung::new(frame.at(wall - s * 0.06, 27.3, 3.55), n, 0.3, 1.5));
     }
     // A carpet down the aisle from the door to the organ.
-    let mut rug = part(
+    let mut rug = piece(
         frame,
         (-1.3, 1.3),
         (near + 0.4, 30.3),
@@ -319,10 +282,10 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
     let w = ORGAN - 0.1;
     // The base, shallow enough to stand behind (where the far views are taken from).
     lib.solid(
-        part(frame, (-w, w), (wall - 0.28, wall), (0.0, 1.05), kind::WOOD, WALNUT),
+        piece(frame, (-w, w), (wall - 0.28, wall), (0.0, 1.05), kind::WOOD, WALNUT),
         Stops::ALL,
     );
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-w - 0.03, w + 0.03),
         (wall - 0.31, wall),
@@ -330,7 +293,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
         kind::WOOD,
         [0.12, 0.06, 0.028],
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-w + 0.15, w - 0.15),
         (wall - 0.03, wall),
@@ -340,7 +303,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
     ));
     for s in [-1.0f32, 1.0] {
         let x = s * (w - 0.1);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.12, x + 0.12),
             (wall - 0.3, wall),
@@ -349,7 +312,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
             WALNUT,
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-w - 0.05, w + 0.05),
         (wall - 0.36, wall),
@@ -360,7 +323,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
     // Pipes in three flats: a middle one falling away from its tallest, and towers
     // either side rising outward.
     let mut pipe = |a: f32, top: f32, wide: f32| {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (a - wide, a + wide),
             (wall - 0.22, wall - 0.22 + 2.0 * wide),
@@ -368,7 +331,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
             kind::METAL,
             PIPE_TIN,
         ));
-        let mouth = part(
+        let mouth = piece(
             frame,
             (a - wide * 0.6, a + wide * 0.6),
             (wall - 0.225, wall - 0.215),
@@ -392,7 +355,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
     // and behind it; stops either side; the music desk.
     for (k, (o0, y)) in [(wall - 0.62, 0.78), (wall - 0.46, 0.92)].into_iter().enumerate() {
         let (o1, kw) = (o0 + 0.24, 0.85 - k as f32 * 0.05);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (-kw - 0.08, kw + 0.08),
             (o0, wall - 0.28),
@@ -400,7 +363,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
             kind::WOOD,
             [0.12, 0.06, 0.028],
         ));
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (-kw, kw),
             (o0 + 0.01, o1 - 0.06),
@@ -408,7 +371,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
             kind::PAPER,
             [0.0; 3],
         ));
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (-kw, kw),
             (o0 + 0.1, o1 - 0.06),
@@ -421,7 +384,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
         for (k, y) in [1.0f32, 1.12, 1.24].into_iter().enumerate() {
             let a = s * (1.05 + 0.04 * k as f32);
             let col = if k == 1 { [0.6, 0.1, 0.08] } else { [0.85, 0.82, 0.72] };
-            lib.decor(part(
+            lib.decor(piece(
                 frame,
                 (a - 0.035, a + 0.035),
                 (wall - 0.36, wall - 0.28),
@@ -432,7 +395,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
         }
     }
     let desk = Quat::from_rotation_x(-0.25);
-    let q = turn(frame) * desk;
+    let q = frame.turn() * desk;
     lib.decor(Inst::new(
         frame.at(0.0, wall - 0.36, 1.32),
         q,
@@ -484,9 +447,9 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
     );
     // The bench.
     let (o0, o1) = (wall - 1.25, wall - 0.92);
-    lib.decor(part(frame, (-0.8, 0.8), (o0, o1), (0.46, 0.52), kind::WOOD, WALNUT));
+    lib.decor(piece(frame, (-0.8, 0.8), (o0, o1), (0.46, 0.52), kind::WOOD, WALNUT));
     for s in [-1.0f32, 1.0] {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (s * 0.72 - 0.04, s * 0.72 + 0.04),
             (o0 + 0.02, o1 - 0.02),
@@ -495,7 +458,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
             DARK_WOOD,
         ));
     }
-    block(lib, frame, (-0.8, 0.8), (o0, o1), 0.52);
+    guard(lib, frame, (-0.8, 0.8), (o0, o1), 0.52);
 }
 
 /// A harp standing at `a`, `o` (its foot's front), its strings facing across the
@@ -506,7 +469,7 @@ fn harp(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let p = |u: f32, v: f32| frame.at(a, o + u, v);
     let gilt = rgba(GILT, 1.0);
     let wood = rgba([0.3, 0.14, 0.05], 1.0);
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.2, a + 0.2),
         (o - 0.05, o + 0.75),
@@ -541,7 +504,7 @@ fn harp(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             );
         }
     }
-    block(lib, frame, (a - 0.22, a + 0.22), (o - 0.1, o + 0.8), 1.9);
+    guard(lib, frame, (a - 0.22, a + 0.22), (o - 0.1, o + 0.8), 1.9);
     // Notes hanging in the air over it, as if the strings had just been played.
     let n = frame.across() * if a < 0.0 { 1.0 } else { -1.0 };
     for (k, (du, v)) in [(-0.3, 2.2), (0.15, 2.45), (0.55, 2.3), (0.95, 2.6)]
@@ -589,7 +552,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let (len, wide, tail) = (2.2, 0.48, 0.22);
     let (y0, y1) = (0.72, 0.98);
     // The body: wide by the keyboard, narrowing along the bentside toward the aisle.
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - wide, a + wide),
         (o, o + 1.2),
@@ -597,7 +560,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::WOOD,
         LACQUER,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - wide + 0.25, a + wide),
         (o + 1.2, o + 1.75),
@@ -605,7 +568,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::WOOD,
         LACQUER,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a + wide - 2.0 * tail, a + wide),
         (o + 1.75, o + len),
@@ -613,7 +576,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::WOOD,
         LACQUER,
     ));
-    let board = part(
+    let board = piece(
         frame,
         (a - wide + 0.03, a + wide - 0.03),
         (o + 0.25, o + 1.18),
@@ -623,7 +586,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     );
     lib.decor(board);
     // A gilt band along its front.
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - wide - 0.01, a + wide + 0.01),
         (o - 0.01, o + 0.03),
@@ -633,7 +596,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     ));
     // The keyboard, standing out from the front between cheeks.
     let (k0, k1) = (o - 0.24, o - 0.01);
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.42, a + 0.42),
         (k0, k1),
@@ -641,7 +604,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::PAPER,
         [0.0; 3],
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.42, a + 0.42),
         (k0 + 0.1, k1),
@@ -649,7 +612,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::PLAIN,
         [0.03, 0.03, 0.03],
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.42, a + 0.42),
         (k0, k1),
@@ -658,7 +621,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         LACQUER,
     ));
     for x in [a - 0.46, a + 0.46] {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.04, x + 0.04),
             (k0 - 0.01, k1),
@@ -669,7 +632,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     }
     // The lid, hinged along the straight side and propped open toward the aisle, its
     // painted inside to the room.
-    let q = turn(frame) * Quat::from_rotation_z(-0.75);
+    let q = frame.turn() * Quat::from_rotation_z(-0.75);
     let hinge = frame.at(a + wide, o + len * 0.48, y1);
     let (dir, up) = (-(q * Vec3::X), q * Vec3::Y);
     let lid = hinge + dir * 0.5;
@@ -700,7 +663,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         (-wide + 0.3, 1.6),
     ] {
         let (la, lo) = (a + da, o + d_o);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (la - 0.04, la + 0.04),
             (lo - 0.04, lo + 0.04),
@@ -709,7 +672,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             [0.05, 0.08, 0.06],
         ));
     }
-    let desk = turn(frame) * Quat::from_rotation_x(-0.3);
+    let desk = frame.turn() * Quat::from_rotation_x(-0.3);
     lib.decor(Inst::new(
         frame.at(a, o + 0.3, y1 + 0.17),
         desk,
@@ -718,9 +681,9 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         [0.85, 0.78, 0.6, 1.0],
         0,
     ));
-    block(lib, frame, (a - wide, a + wide), (o - 0.25, o + len), y1);
+    guard(lib, frame, (a - wide, a + wide), (o - 0.25, o + len), y1);
     let (b0, b1) = (o - 0.72, o - 0.4);
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.45, a + 0.45),
         (b0, b1),
@@ -730,7 +693,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     ));
     for s in [-1.0f32, 1.0] {
         let x = a + s * 0.38;
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.04, x + 0.04),
             (b0 + 0.02, b1 - 0.02),
@@ -739,16 +702,16 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             DARK_WOOD,
         ));
     }
-    block(lib, frame, (a - 0.45, a + 0.45), (b0, b1), 0.5);
+    guard(lib, frame, (a - 0.45, a + 0.45), (b0, b1), 0.5);
 }
 
 /// A music stand at `a`, `o` (on the floor), its desk turned `turn_by` from facing
 /// the door, a sheet of music on it.
 fn music_stand(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, turn_by: f32) {
     let base = frame.at(a, o, 0.0);
-    let q = turn(frame) * Quat::from_rotation_y(turn_by);
+    let q = frame.turn() * Quat::from_rotation_y(turn_by);
     for k in 0..3 {
-        let leg = turn(frame) * Quat::from_rotation_y(k as f32 * TAU / 3.0 + turn_by);
+        let leg = frame.turn() * Quat::from_rotation_y(k as f32 * TAU / 3.0 + turn_by);
         let tip = base + leg * Vec3::new(0.0, 0.0, 0.22);
         rod(
             lib,
@@ -785,7 +748,7 @@ fn music_stand(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, turn_by: f3
         [0.88, 0.82, 0.66, 1.0],
         0,
     ));
-    block(lib, frame, (a - 0.24, a + 0.24), (o - 0.24, o + 0.24), 1.35);
+    guard(lib, frame, (a - 0.24, a + 0.24), (o - 0.24, o + 0.24), 1.35);
 }
 
 /// Tubular chimes hung in a frame at `a`, `o`, longest to shortest.
@@ -793,7 +756,7 @@ fn chimes(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let (w, top) = (1.0, 2.05);
     for s in [-1.0f32, 1.0] {
         let x = a + s * w;
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.05, x + 0.05),
             (o - 0.05, o + 0.05),
@@ -801,7 +764,7 @@ fn chimes(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             kind::WOOD,
             WALNUT,
         ));
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.08, x + 0.08),
             (o - 0.25, o + 0.25),
@@ -810,7 +773,7 @@ fn chimes(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             WALNUT,
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - w - 0.08, a + w + 0.08),
         (o - 0.06, o + 0.06),
@@ -821,7 +784,7 @@ fn chimes(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     for k in 0..8 {
         let x = a - w + 0.2 + k as f32 * 0.228;
         let len = 1.45 - k as f32 * 0.1;
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.032, x + 0.032),
             (o - 0.032, o + 0.032),
@@ -830,12 +793,12 @@ fn chimes(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             GILT,
         ));
     }
-    block(lib, frame, (a - w - 0.1, a + w + 0.1), (o - 0.26, o + 0.26), top + 0.1);
+    guard(lib, frame, (a - w - 0.1, a + w + 0.1), (o - 0.26, o + 0.26), top + 0.1);
 }
 
 /// A double bass leaning in its stand at `a`, `o`.
 fn double_bass(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
-    let q = turn(frame) * Quat::from_rotation_x(0.12);
+    let q = frame.turn() * Quat::from_rotation_x(0.12);
     let base = frame.at(a, o, 0.0);
     let at = |x: f32, y: f32, z: f32| base + q * Vec3::new(x, y, z);
     let body = rgba([0.4, 0.15, 0.05], 1.0);
@@ -881,7 +844,7 @@ fn double_bass(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         [0.1, 0.1, 0.1, 1.0],
         0,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.35, a + 0.35),
         (o - 0.3, o + 0.3),
@@ -889,7 +852,7 @@ fn double_bass(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::WOOD,
         WALNUT,
     ));
-    block(lib, frame, (a - 0.36, a + 0.36), (o - 0.32, o + 0.36), 2.0);
+    guard(lib, frame, (a - 0.36, a + 0.36), (o - 0.32, o + 0.36), 2.0);
 }
 
 /// Beams across the ceiling and a chandelier over the aisle.
@@ -897,7 +860,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
     let h = RoomFrame::HEIGHT;
     let inner = RoomFrame::A_HALF;
     for o in [16.6, 21.35, 26.3, 30.9] {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (-inner, inner),
             (o - 0.13, o + 0.13),

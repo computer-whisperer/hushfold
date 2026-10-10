@@ -52,43 +52,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     ceiling(lib, frame);
 }
 
-/// Faces of a straight run, left to right as you face them.
-fn run(mut faces: Vec<(Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
-    faces.sort_by(|p, q| {
-        let right = Vec3::Y.cross(p.1);
-        p.0.dot(right).total_cmp(&q.0.dot(right))
-    });
-    faces
-}
-
-/// A box over `a` × `o` (each low, high), `y` above the floor.
-fn part(frame: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) -> Inst {
-    let (lo, hi) = frame.boxed(a.0, a.1, o.0, o.1, y.0, y.1);
-    Inst::minmax(lo, hi, kind, rgb)
-}
-
-/// In the way of everything over `a` × `o`, from the floor to `h`.
-fn block(lib: &mut Library, frame: &RoomFrame, a: (f32, f32), o: (f32, f32), h: f32) {
-    let (lo, hi) = frame.boxed(a.0, a.1, o.0, o.1, 0.0, h);
-    lib.collide(lo, hi, Stops::ALL);
-}
-
-fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
-    [rgb[0], rgb[1], rgb[2], w]
-}
-
-/// The room's frame as a rotation: x across, y up, z toward the door.
-fn turn(frame: &RoomFrame) -> Quat {
-    Quat::from_mat3(&Mat3::from_cols(frame.across(), Vec3::Y, -frame.out()))
-}
-
-/// A slim box from `p` to `q` (world), `w` × `d` across.
-fn rod(lib: &mut Library, p: Vec3, q: Vec3, w: f32, d: f32, kind: u32, col: [f32; 4]) {
-    let v = q - p;
-    let rot = Quat::from_rotation_arc(Vec3::Y, v.normalize());
-    lib.decor(Inst::new((p + q) * 0.5, rot, Vec3::new(w, v.length(), d), kind, col, 0));
-}
-
 /// A candle standing at `p`, `h` tall, its flame lit.
 fn candle(lib: &mut Library, p: Vec3, h: f32) {
     lib.decor(Inst::aabox(
@@ -136,13 +99,13 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
         .into_iter()
         .map(|a| lib.wall_bookcase(frame.at(a, near, 0.0), out))
         .collect();
-    lib.add_category(rng, feast_days, &run(door), titles);
+    lib.add_category(rng, feast_days, &left_to_right(door), titles);
     // The side walls.
     for (s, cat) in [(-1.0f32, cookery), (1.0, remedies)] {
         let wall: Vec<_> = (0..6)
             .map(|k| lib.wall_bookcase(frame.at(s * ah, near + UNIT_PITCH * (k as f32 + 0.5), 0.0), -across * s))
             .collect();
-        lib.add_category(rng, cat, &run(wall), titles);
+        lib.add_category(rng, cat, &left_to_right(wall), titles);
     }
     // The inglenook's runs: each case's face toward the fire, and away from it.
     let mut inner = Vec::new();
@@ -158,16 +121,16 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                 }
             }
         }
-        inner.push(run(toward));
+        inner.push(left_to_right(toward));
         // The far corner's two wall cases and the run's outer face, round the inside
         // corner between them.
         let corner: Vec<_> = (0..2)
             .map(|k| lib.wall_bookcase(frame.at(s * (ah - UNIT_PITCH * (k as f32 + 0.5)), far, 0.0), -out))
             .collect();
         let faces: Vec<_> = if s < 0.0 {
-            run(corner).into_iter().chain(run(away)).collect()
+            left_to_right(corner).into_iter().chain(left_to_right(away)).collect()
         } else {
-            run(away).into_iter().chain(run(corner)).collect()
+            left_to_right(away).into_iter().chain(left_to_right(corner)).collect()
         };
         lib.add_category(rng, cat, &faces, titles);
     }
@@ -186,7 +149,7 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                 }
             }
         }
-        let faces: Vec<_> = run(back).into_iter().chain(run(front)).collect();
+        let faces: Vec<_> = left_to_right(back).into_iter().chain(left_to_right(front)).collect();
         lib.add_category(rng, cat, &faces, titles);
     }
 }
@@ -225,7 +188,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
     // The breast: jambs either side of the opening, a lintel, the stack above.
     for s in [-1.0f32, 1.0] {
         let (a0, a1) = (s * open, s * BREAST);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (a0.min(a1), a0.max(a1)),
             (face, far),
@@ -234,7 +197,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
             STONE_WARM,
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-BREAST, BREAST),
         (face, far),
@@ -242,7 +205,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::STONE,
         [0.5, 0.44, 0.37],
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-BREAST + 0.1, BREAST - 0.1),
         (face + 0.12, far),
@@ -250,7 +213,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::STONE,
         STONE_WARM,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-open, open),
         (far - 0.06, far),
@@ -258,7 +221,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::STONE,
         SOOT,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-open, open),
         (face + 0.02, far - 0.06),
@@ -266,9 +229,9 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::STONE,
         SOOT,
     ));
-    block(lib, frame, (-BREAST, BREAST), (face, far), top + 0.35);
+    guard(lib, frame, (-BREAST, BREAST), (face, far), top + 0.35);
     // The hearthstone, flush enough to walk on.
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-1.6, 1.6),
         (face - 0.55, face),
@@ -276,7 +239,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::STONE,
         [0.38, 0.33, 0.28],
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-open + 0.02, open - 0.02),
         (face, far - 0.06),
@@ -288,7 +251,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
     let fire_o = far - 0.27;
     for s in [-1.0f32, 1.0] {
         let x = s * 0.5;
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.03, x + 0.03),
             (fire_o - 0.2, fire_o + 0.15),
@@ -296,7 +259,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
             kind::METAL,
             IRON,
         ));
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.035, x + 0.035),
             (fire_o - 0.24, fire_o - 0.17),
@@ -304,7 +267,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
             kind::METAL,
             IRON,
         ));
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.045, x + 0.045),
             (fire_o - 0.25, fire_o - 0.16),
@@ -313,7 +276,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
             BRASS,
         ));
     }
-    let q = turn(frame);
+    let q = frame.turn();
     for (k, (da, dy, yaw)) in [(0.0f32, 0.17f32, 0.08f32), (-0.12, 0.27, -0.25), (0.15, 0.26, 0.3)]
         .into_iter()
         .enumerate()
@@ -328,7 +291,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         );
         lib.decor(log);
     }
-    let mut embers = part(
+    let mut embers = piece(
         frame,
         (-0.55, 0.55),
         (fire_o - 0.2, fire_o + 0.2),
@@ -429,7 +392,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
     );
     // The mantel: a shelf on corbels, candles, a clock, jars of remedies.
     let my = top + 0.45;
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-BREAST - 0.2, BREAST + 0.2),
         (face - 0.28, face + 0.12),
@@ -439,7 +402,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
     ));
     for s in [-1.0f32, 1.0] {
         let x = s * (BREAST - 0.15);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.07, x + 0.07),
             (face - 0.2, face),
@@ -450,7 +413,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         candle(lib, frame.at(s * 1.75, face - 0.12, my), 0.24);
         candle(lib, frame.at(s * 1.55, face - 0.12, my), 0.17);
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-0.2, 0.2),
         (face - 0.18, face - 0.02),
@@ -458,7 +421,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::WOOD,
         [0.22, 0.1, 0.04],
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-0.13, 0.13),
         (face - 0.185, face - 0.17),
@@ -468,7 +431,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
     ));
     for (k, a) in [-1.1f32, -0.9, 0.85, 1.05].into_iter().enumerate() {
         let col = [[0.3, 0.45, 0.25], [0.5, 0.3, 0.15], [0.35, 0.3, 0.5], [0.55, 0.45, 0.2]][k];
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (a - 0.06, a + 0.06),
             (face - 0.16, face - 0.04),
@@ -480,7 +443,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
     }
     // A painting over it: hills under a moon.
     let (py, ph, pw) = (3.6, 1.3, 2.0);
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-pw * 0.5 - 0.1, pw * 0.5 + 0.1),
         (face + 0.07, face + 0.12),
@@ -488,7 +451,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::WOOD,
         [0.3, 0.2, 0.06],
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-pw * 0.5, pw * 0.5),
         (face + 0.06, face + 0.07),
@@ -496,7 +459,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::PARCHMENT,
         [0.2, 0.25, 0.4],
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-pw * 0.5, pw * 0.5),
         (face + 0.055, face + 0.06),
@@ -519,7 +482,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
 /// a high back, arms and short legs, upholstered in `rgb`.
 fn armchair(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, facing: f32, rgb: [f32; 3]) {
     // Laid out with the chair facing +x (across), then turned.
-    let q = turn(frame)
+    let q = frame.turn()
         * if facing > 0.0 {
             Quat::IDENTITY
         } else {
@@ -582,13 +545,13 @@ fn armchair(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, facing: f32, r
             );
         }
     }
-    block(lib, frame, (a - 0.45, a + 0.45), (o - 0.47, o + 0.47), 1.35);
+    guard(lib, frame, (a - 0.45, a + 0.45), (o - 0.47, o + 0.47), 1.35);
 }
 
 /// A sofa across the inglenook's mouth at `a`, `o`, facing the fire, cushions on it.
 fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let (hw, hd) = (1.5, 0.45);
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - hw, a + hw),
         (o - hd, o + hd),
@@ -599,7 +562,7 @@ fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     for k in 0..3 {
         let x = a - hw + 0.18 + k as f32 * (2.0 * hw - 0.36) / 3.0;
         let cushion = (x + 0.01, x + (2.0 * hw - 0.36) / 3.0 - 0.01);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             cushion,
             (o - hd + 0.24, o + hd - 0.02),
@@ -608,7 +571,7 @@ fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             [0.5, 0.13, 0.09],
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - hw, a + hw),
         (o - hd - 0.02, o - hd + 0.22),
@@ -618,7 +581,7 @@ fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     ));
     for s in [-1.0f32, 1.0] {
         let x = a + s * (hw - 0.09);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.1, x + 0.1),
             (o - hd, o + hd),
@@ -627,7 +590,7 @@ fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             UPHOLSTERY,
         ));
         for y in [o - hd + 0.06, o + hd - 0.06] {
-            lib.decor(part(
+            lib.decor(piece(
                 frame,
                 (x - 0.035, x + 0.035),
                 (y - 0.035, y + 0.035),
@@ -640,7 +603,7 @@ fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     // Cushions leaning in its corners, a throw over its back.
     for (s, col) in [(-1.0f32, [0.75, 0.6, 0.25]), (1.0, [0.2, 0.32, 0.22])] {
         let p = frame.at(a + s * (hw - 0.4), o - hd + 0.32, 0.72);
-        let q = turn(frame) * Quat::from_rotation_x(-0.3) * Quat::from_rotation_z(s * 0.2);
+        let q = frame.turn() * Quat::from_rotation_x(-0.3) * Quat::from_rotation_z(s * 0.2);
         lib.decor(Inst::new(
             p,
             q,
@@ -650,7 +613,7 @@ fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             0,
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.9, a - 0.1),
         (o - hd - 0.03, o - hd + 0.25),
@@ -658,7 +621,7 @@ fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::CLOTH,
         [0.55, 0.45, 0.3],
     ));
-    block(lib, frame, (a - hw, a + hw), (o - hd - 0.03, o + hd), 1.0);
+    guard(lib, frame, (a - hw, a + hw), (o - hd - 0.03, o + hd), 1.0);
 }
 
 /// A low round tea table at `a`, `o`: a teapot and cups, a candle.
@@ -675,7 +638,7 @@ fn tea_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             0,
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.05, a + 0.05),
         (o - 0.05, o + 0.05),
@@ -691,7 +654,7 @@ fn tea_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         rgba(DARK_WOOD, 1.0),
         0,
     ));
-    block(lib, frame, (a - 0.36, a + 0.36), (o - 0.36, o + 0.36), top);
+    guard(lib, frame, (a - 0.36, a + 0.36), (o - 0.36, o + 0.36), top);
     let china = [0.85, 0.85, 0.8];
     let pot = frame.at(a - 0.08, o - 0.05, top + 0.09);
     lib.decor(Inst::new(
@@ -712,15 +675,15 @@ fn tea_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     ));
     rod(
         lib,
-        pot + turn(frame) * Vec3::new(0.07, -0.02, 0.0),
-        pot + turn(frame) * Vec3::new(0.15, 0.05, 0.0),
+        pot + frame.turn() * Vec3::new(0.07, -0.02, 0.0),
+        pot + frame.turn() * Vec3::new(0.15, 0.05, 0.0),
         0.025,
         0.025,
         kind::PLAIN,
         rgba(china, 1.0),
     );
     for (da, d_o) in [(0.17f32, 0.12f32), (0.1, -0.2)] {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (a + da - 0.04, a + da + 0.04),
             (o + d_o - 0.04, o + d_o + 0.04),
@@ -735,7 +698,7 @@ fn tea_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 /// A small side table at `a`, `o` with a candle lamp on it.
 fn lamp_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let top = 0.66;
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.25, a + 0.25),
         (o - 0.25, o + 0.25),
@@ -745,7 +708,7 @@ fn lamp_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     ));
     for (da, d_o) in [(-0.2, -0.2), (0.2, -0.2), (-0.2, 0.2), (0.2, 0.2)] {
         let (x, y) = (a + da, o + d_o);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.025, x + 0.025),
             (y - 0.025, y + 0.025),
@@ -754,7 +717,7 @@ fn lamp_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             DARK_WOOD,
         ));
     }
-    block(lib, frame, (a - 0.26, a + 0.26), (o - 0.26, o + 0.26), top);
+    guard(lib, frame, (a - 0.26, a + 0.26), (o - 0.26, o + 0.26), top);
     let base = frame.at(a, o, top);
     lib.decor(Inst::aabox(
         base + Vec3::Y * 0.02,
@@ -783,7 +746,7 @@ fn lamp_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 /// A basket of wool by a chair at `a`, `o`, and over it a pair of needles knitting
 /// a scarf by themselves: one of the room's two bits of magic.
 fn knitting(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.2, a + 0.2),
         (o - 0.2, o + 0.2),
@@ -791,7 +754,7 @@ fn knitting(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::WOOD,
         [0.45, 0.32, 0.15],
     ));
-    block(lib, frame, (a - 0.21, a + 0.21), (o - 0.21, o + 0.21), 0.3);
+    guard(lib, frame, (a - 0.21, a + 0.21), (o - 0.21, o + 0.21), 0.3);
     for (k, col) in [[0.55, 0.15, 0.12], [0.2, 0.3, 0.5], [0.75, 0.65, 0.3]]
         .into_iter()
         .enumerate()
@@ -806,7 +769,7 @@ fn knitting(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             0,
         ));
     }
-    let q = turn(frame);
+    let q = frame.turn();
     let hold = frame.at(a, o, 1.25);
     for s in [-1.0f32, 1.0] {
         let tip = hold + q * Vec3::new(s * 0.1, 0.1, 0.0);
@@ -837,7 +800,7 @@ fn knitting(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 /// A spinning wheel at `a`, `o`, its wheel turning across the room.
 fn spinning_wheel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let wood = rgba([0.35, 0.2, 0.08], 1.0);
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.15, a + 0.15),
         (o - 0.5, o + 0.5),
@@ -856,7 +819,7 @@ fn spinning_wheel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             wood,
         );
     }
-    block(lib, frame, (a - 0.2, a + 0.2), (o - 0.55, o + 0.55), 1.2);
+    guard(lib, frame, (a - 0.2, a + 0.2), (o - 0.55, o + 0.55), 1.2);
     // The wheel turns about the across axis, upright along the room.
     let hub = frame.at(a, o - 0.15, 0.78);
     let axis = frame.across();
@@ -949,7 +912,7 @@ fn barrel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::METAL,
         rgba(BRASS, 1.0),
     );
-    block(
+    guard(
         lib,
         frame,
         (a - r - 0.03, a + r + 0.03),
@@ -962,7 +925,7 @@ fn barrel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 fn rugs(lib: &mut Library, frame: &RoomFrame) {
     let far = RoomFrame::O_FAR;
     let rug = |a: (f32, f32), o: (f32, f32), base: [f32; 3], second: u32, y: f32| {
-        let mut r = part(frame, a, o, (0.0, y), kind::RUG, base);
+        let mut r = piece(frame, a, o, (0.0, y), kind::RUG, base);
         r.param = second;
         r
     };
@@ -995,7 +958,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
     let inner = RoomFrame::A_HALF;
     let beams = [16.0, 18.9, 21.8, 24.7, 27.6, 30.5];
     for o in beams {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (-inner, inner),
             (o - 0.16, o + 0.16),

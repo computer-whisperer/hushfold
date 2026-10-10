@@ -456,13 +456,12 @@ impl Library {
         self.wall(l, side.rect(-ROOM_HALF, ROOM_HALF, OUTER - h, OUTER + h), ROOM_H);
         let dept = r;
         let (mn, mx) = side.rect(-ROOM_HALF, ROOM_HALF, ATRIUM, OUTER);
-        let drop = side.at3(d + 2.6, ATRIUM + 1.5, y);
         self.rooms.push(Room {
             level: l,
             min: mn,
             max: mx,
             door: side.at3(d, ATRIUM + 0.5, y),
-            drop,
+            drop: side.at3(d + 2.6, ATRIUM + 1.5, y),
         });
         if dept > 0 {
             let (a, b) = side.rect(d - DOOR_HALF, d + DOOR_HALF, ATRIUM - 0.05, ATRIUM + 0.05);
@@ -478,11 +477,9 @@ impl Library {
         }
         let frame = rooms::RoomFrame {
             dept,
-            level: l,
             y,
             side,
             door: d,
-            drop,
             categories: self.catalog.departments[dept].categories.clone(),
         };
         rooms::furnish(self, &frame, rng, titles);

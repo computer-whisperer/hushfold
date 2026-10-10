@@ -37,56 +37,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     ship(lib, frame);
 }
 
-/// The room's frame as a rotation: local x along `a`, y up, z along -`o` (toward the
-/// door's wall).
-fn turn(f: &RoomFrame) -> Quat {
-    Quat::from_mat3(&Mat3::from_cols(f.across(), Vec3::Y, -f.out()))
-}
-
-/// Drawn only: the box over `a`, `o`, and heights `y` above the floor.
-fn slab(lib: &mut Library, f: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) {
-    let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, y.0, y.1);
-    lib.decor(Inst::minmax(lo, hi, kind, rgb));
-}
-
-/// In the way of everything: the floor box over `a`, `o`, `h` high.
-fn guard(lib: &mut Library, f: &RoomFrame, a: (f32, f32), o: (f32, f32), h: f32) {
-    let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, 0.0, h);
-    lib.collide(lo, hi, Stops::ALL);
-}
-
-/// A piece of furniture's place: its origin on the floor and its turn. Its parts are
-/// given in its own frame (x across the room, y up, z toward the door's wall, unless
-/// it is turned).
-struct Spot {
-    at: Vec3,
-    q: Quat,
-}
-
-impl Spot {
-    fn new(f: &RoomFrame, a: f32, o: f32, yaw: f32) -> Spot {
-        Spot {
-            at: f.at(a, o, 0.0),
-            q: turn(f) * Quat::from_rotation_y(yaw),
-        }
-    }
-
-    fn part(&self, lib: &mut Library, p: Vec3, size: Vec3, q: Quat, kind: u32, color: [f32; 4]) {
-        lib.decor(Inst::new(self.at + self.q * p, self.q * q, size, kind, color, 0));
-    }
-}
-
-fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
-    [rgb[0], rgb[1], rgb[2], w]
-}
-
-/// Faces left to right as you face them (all facing the same way).
-fn lr(mut faces: Vec<(Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
-    let right = Vec3::Y.cross(faces[0].1);
-    faces.sort_by(|p, q| p.0.dot(right).total_cmp(&q.0.dot(right)));
-    faces
-}
-
 /// A double case's two faces as (the one facing `dir`, the other).
 fn facing(faces: [(Vec3, Vec3); 2], dir: Vec3) -> ((Vec3, Vec3), (Vec3, Vec3)) {
     if faces[0].1.dot(dir) > 0.0 {
@@ -143,7 +93,7 @@ fn shelves(lib: &mut Library, f: &RoomFrame, rng: &mut StdRng, titles: &mut Hash
                 } else {
                     (down[i].clone(), up[i].clone())
                 };
-                [lr(first), vec![back], lr(last)].concat()
+                [left_to_right(first), vec![back], left_to_right(last)].concat()
             })
             .collect();
         alcoves.push(side);
@@ -154,11 +104,11 @@ fn shelves(lib: &mut Library, f: &RoomFrame, rng: &mut StdRng, titles: &mut Hash
         left[0].clone(),
         left[1].clone(),
         left[2].clone(),
-        lr(far[2..7].to_vec()),
+        left_to_right(far[2..7].to_vec()),
         right[2].clone(),
         right[1].clone(),
         right[0].clone(),
-        lr(near),
+        left_to_right(near),
     ];
     for (cat, faces) in cats.into_iter().zip(order) {
         lib.add_category(rng, cat, &faces, titles);
@@ -456,7 +406,7 @@ fn rack(lib: &mut Library, f: &RoomFrame) {
                     let c = f.at(s * x, o1 - 0.02 - len * 0.5, y + d * 0.5);
                     lib.decor(Inst::new(
                         c,
-                        turn(f) * Quat::from_rotation_z(FRAC_PI_4 + r.gen_range(-0.2..0.2)),
+                        f.turn() * Quat::from_rotation_z(FRAC_PI_4 + r.gen_range(-0.2..0.2)),
                         Vec3::new(d * 0.72, d * 0.72, len),
                         kind::PARCHMENT,
                         rgba(tints[r.gen_range(0..tints.len())], 1.0),
@@ -527,7 +477,7 @@ fn press(lib: &mut Library, f: &RoomFrame) {
     // Charts left out on top: a loose sheet or two and a few rolls.
     let lay = Spot {
         at: f.at(s * 9.6, (o0 + o1) * 0.5, top),
-        q: turn(f) * Quat::from_rotation_y(0.06),
+        q: f.turn() * Quat::from_rotation_y(0.06),
     };
     lay.part(
         lib,
@@ -553,7 +503,7 @@ fn press(lib: &mut Library, f: &RoomFrame) {
         );
         lib.decor(Inst::new(
             c,
-            turn(f) * Quat::from_rotation_y(FRAC_PI_2) * Quat::from_rotation_z(FRAC_PI_4),
+            f.turn() * Quat::from_rotation_y(FRAC_PI_2) * Quat::from_rotation_z(FRAC_PI_4),
             Vec3::new(0.075, 0.075, 0.95 - i as f32 * 0.1),
             kind::PARCHMENT,
             [0.66, 0.56, 0.4, 1.0],
@@ -794,7 +744,7 @@ fn table(lib: &mut Library, f: &RoomFrame) {
     // The chart, a little askew, with its coasts and a route.
     let chart = Spot {
         at: f.at(ta + 0.1, to, h),
-        q: turn(f) * Quat::from_rotation_y(0.035),
+        q: f.turn() * Quat::from_rotation_y(0.035),
     };
     chart.part(
         lib,
@@ -855,7 +805,7 @@ fn table(lib: &mut Library, f: &RoomFrame) {
         let c = f.at(ta - hw + 0.45 + i as f32 * 0.11, to, h + 0.04);
         lib.decor(Inst::new(
             c,
-            turn(f) * Quat::from_rotation_z(FRAC_PI_4 + i as f32 * 0.3),
+            f.turn() * Quat::from_rotation_z(FRAC_PI_4 + i as f32 * 0.3),
             Vec3::new(0.075, 0.075, 0.9),
             kind::PARCHMENT,
             [0.74, 0.62, 0.42, 1.0],
@@ -925,7 +875,7 @@ fn flat_stroke(lib: &mut Library, chart: &Spot, p: Vec2, q: Vec2, y: f32, ink: [
 fn ship(lib: &mut Library, f: &RoomFrame) {
     let s = Spot {
         at: f.at(TABLE.0 + 0.7, TABLE.1 - 0.1, 2.55),
-        q: turn(f) * Quat::from_rotation_y(0.5) * Quat::from_rotation_x(0.1),
+        q: f.turn() * Quat::from_rotation_y(0.5) * Quat::from_rotation_x(0.1),
     };
     let hull = rgba([0.22, 0.11, 0.05], 1.0);
     let sail = [0.88, 0.84, 0.74, 1.0];

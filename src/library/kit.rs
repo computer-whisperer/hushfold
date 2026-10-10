@@ -319,7 +319,6 @@ impl Library {
     /// A single-sided bookcase with its back on a wall: `at` is the middle of its back
     /// at floor level, `normal` (along x or z) the way it faces. Returns its face, as
     /// `bookcase` does.
-    #[allow(dead_code)] // TEMP(visual pass): until a department stands one on a wall.
     pub(super) fn wall_bookcase(&mut self, at: Vec3, normal: Vec3) -> (Vec3, Vec3) {
         // Laid out across (x), up (y) and out from the wall (z), then turned to face
         // `normal`.

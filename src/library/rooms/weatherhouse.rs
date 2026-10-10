@@ -35,43 +35,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     ceiling(lib, frame);
 }
 
-/// Faces of a straight run, left to right as you face them.
-fn run(mut faces: Vec<(Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
-    faces.sort_by(|p, q| {
-        let right = Vec3::Y.cross(p.1);
-        p.0.dot(right).total_cmp(&q.0.dot(right))
-    });
-    faces
-}
-
-/// A box over `a` × `o` (each low, high), `y` above the floor.
-fn part(frame: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) -> Inst {
-    let (lo, hi) = frame.boxed(a.0, a.1, o.0, o.1, y.0, y.1);
-    Inst::minmax(lo, hi, kind, rgb)
-}
-
-/// In the way of everything over `a` × `o`, from the floor to `h`.
-fn block(lib: &mut Library, frame: &RoomFrame, a: (f32, f32), o: (f32, f32), h: f32) {
-    let (lo, hi) = frame.boxed(a.0, a.1, o.0, o.1, 0.0, h);
-    lib.collide(lo, hi, Stops::ALL);
-}
-
-fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
-    [rgb[0], rgb[1], rgb[2], w]
-}
-
-/// The room's frame as a rotation: x across, y up, z toward the door.
-fn turn(frame: &RoomFrame) -> Quat {
-    Quat::from_mat3(&Mat3::from_cols(frame.across(), Vec3::Y, -frame.out()))
-}
-
-/// A slim box from `p` to `q` (world), `w` × `d` across.
-fn rod(lib: &mut Library, p: Vec3, q: Vec3, w: f32, d: f32, kind: u32, col: [f32; 4]) {
-    let v = q - p;
-    let rot = Quat::from_rotation_arc(Vec3::Y, v.normalize());
-    lib.decor(Inst::new((p + q) * 0.5, rot, Vec3::new(w, v.length(), d), kind, col, 0));
-}
-
 /// Six wall cases down each side wall, a row of five double-sided cases in front of
 /// each (a category on either side of it), and four wall cases either side of the
 /// window.
@@ -85,7 +48,7 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                 lib.wall_bookcase(frame.at(s * RoomFrame::A_HALF, o, 0.0), -across * s)
             })
             .collect();
-        lib.add_category(rng, cats.next().unwrap(), &run(wall), titles);
+        lib.add_category(rng, cats.next().unwrap(), &left_to_right(wall), titles);
         let (mut outer, mut inner) = (Vec::new(), Vec::new());
         for k in 0..5 {
             let c = frame.at(s * ROW_A, ROW_O + k as f32 * UNIT_PITCH, 0.0);
@@ -97,8 +60,8 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                 }
             }
         }
-        lib.add_category(rng, cats.next().unwrap(), &run(outer), titles);
-        lib.add_category(rng, cats.next().unwrap(), &run(inner), titles);
+        lib.add_category(rng, cats.next().unwrap(), &left_to_right(outer), titles);
+        lib.add_category(rng, cats.next().unwrap(), &left_to_right(inner), titles);
     }
     for s in [-1.0f32, 1.0] {
         let far: Vec<_> = (0..4)
@@ -107,7 +70,7 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                 lib.wall_bookcase(frame.at(a, RoomFrame::O_FAR, 0.0), -out)
             })
             .collect();
-        lib.add_category(rng, cats.next().unwrap(), &run(far), titles);
+        lib.add_category(rng, cats.next().unwrap(), &left_to_right(far), titles);
     }
 }
 
@@ -125,7 +88,7 @@ fn great_window(lib: &mut Library, frame: &RoomFrame) {
     // The surround: jambs, a head and a sill deep enough to sit on.
     for s in [-1.0f32, 1.0] {
         let x = s * (WINDOW + 0.1);
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.1, x + 0.1),
             (wall - 0.2, wall),
@@ -134,7 +97,7 @@ fn great_window(lib: &mut Library, frame: &RoomFrame) {
             PALE_STONE,
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-WINDOW - 0.25, WINDOW + 0.25),
         (wall - 0.24, wall),
@@ -143,7 +106,7 @@ fn great_window(lib: &mut Library, frame: &RoomFrame) {
         PALE_STONE,
     ));
     lib.solid(
-        part(
+        piece(
             frame,
             (-WINDOW, WINDOW),
             (wall - 0.45, wall),
@@ -153,7 +116,7 @@ fn great_window(lib: &mut Library, frame: &RoomFrame) {
         ),
         Stops::ALL,
     );
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-WINDOW - 0.05, WINDOW + 0.05),
         (wall - 0.5, wall),
@@ -169,7 +132,7 @@ fn great_window(lib: &mut Library, frame: &RoomFrame) {
             rng.gen_range(y_lo..y1 - 0.1),
         )
     };
-    let turn = turn(frame);
+    let turn = frame.turn();
     for k in 0..34 {
         let (a, y) = face(&mut rng, y0 + 0.3);
         let len = rng.gen_range(0.12..0.55);
@@ -228,7 +191,7 @@ fn near_wall(lib: &mut Library, frame: &RoomFrame) {
     // The map: a sheet of isobars in a frame.
     let (mc, mw, mh) = (d - 7.3, 3.4, 2.1);
     let my = 2.55;
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (mc - mw * 0.5 - 0.08, mc + mw * 0.5 + 0.08),
         (near, near + 0.05),
@@ -236,7 +199,7 @@ fn near_wall(lib: &mut Library, frame: &RoomFrame) {
         kind::WOOD,
         WALNUT,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (mc - mw * 0.5, mc + mw * 0.5),
         (near + 0.05, near + 0.06),
@@ -489,7 +452,7 @@ fn wind_rose(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 /// room's bit of magic, glowing softly, a flicker of lightning in its belly.
 fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let ped = 1.05;
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.36, a + 0.36),
         (o - 0.36, o + 0.36),
@@ -497,7 +460,7 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::STONE,
         PALE_STONE,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.24, a + 0.24),
         (o - 0.24, o + 0.24),
@@ -505,7 +468,7 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::STONE,
         [0.42, 0.39, 0.35],
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.33, a + 0.33),
         (o - 0.33, o + 0.33),
@@ -513,7 +476,7 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::STONE,
         PALE_STONE,
     ));
-    block(lib, frame, (a - 0.36, a + 0.36), (o - 0.36, o + 0.36), ped);
+    guard(lib, frame, (a - 0.36, a + 0.36), (o - 0.36, o + 0.36), ped);
     let base = frame.at(a, o, ped);
     // A brass foot and lid; the glass between them is drawn see-through, as faint
     // panes with bright edges, an octagon round.
@@ -606,7 +569,7 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 fn weathervane(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let iron = rgba([0.12, 0.12, 0.13], 1.0);
     let gilt = rgba(BRASS, 1.0);
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.32, a + 0.32),
         (o - 0.32, o + 0.32),
@@ -614,7 +577,7 @@ fn weathervane(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::STONE,
         PALE_STONE,
     ));
-    block(lib, frame, (a - 0.32, a + 0.32), (o - 0.32, o + 0.32), 0.3);
+    guard(lib, frame, (a - 0.32, a + 0.32), (o - 0.32, o + 0.32), 0.3);
     let top = 2.5;
     rod(
         lib,
@@ -692,7 +655,7 @@ fn weathervane(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 /// melt.
 fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let (hw, hl, top) = (0.5, 1.2, TABLE_H);
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - hw, a + hw),
         (o - hl, o + hl),
@@ -702,7 +665,7 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     ));
     for (da, d_o) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
         let (x, y) = (a + da * (hw - 0.07), o + d_o * (hl - 0.07));
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (x - 0.045, x + 0.045),
             (y - 0.045, y + 0.045),
@@ -711,7 +674,7 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             DARK_WOOD,
         ));
     }
-    block(lib, frame, (a - hw, a + hw), (o - hl, o + hl), top);
+    guard(lib, frame, (a - hw, a + hw), (o - hl, o + hl), top);
     let on = |da: f32, d_o: f32, dy: f32| frame.at(a + da, o + d_o, top + dy);
     let gilt = rgba(BRASS, 1.0);
     // The anemometer: four cups on arms over a stem.
@@ -839,7 +802,7 @@ fn wind_chime(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 
 /// A brass umbrella stand by the door, two umbrellas furled in it.
 fn umbrella_stand(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.17, a + 0.17),
         (o - 0.17, o + 0.17),
@@ -847,7 +810,7 @@ fn umbrella_stand(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::METAL,
         BRASS,
     ));
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (a - 0.14, a + 0.14),
         (o - 0.14, o + 0.14),
@@ -855,7 +818,7 @@ fn umbrella_stand(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::PLAIN,
         [0.03, 0.03, 0.03],
     ));
-    block(lib, frame, (a - 0.17, a + 0.17), (o - 0.17, o + 0.17), 0.62);
+    guard(lib, frame, (a - 0.17, a + 0.17), (o - 0.17, o + 0.17), 0.62);
     for (k, (da, lean, col)) in [(-0.06, -0.12, [0.1, 0.12, 0.3]), (0.07, 0.1, [0.35, 0.08, 0.08])]
         .into_iter()
         .enumerate()
@@ -882,7 +845,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
     let (s0, s1) = (19.0, 27.0);
     let sw = 2.2;
     // Laid flat with its own x and y along the ceiling, so its leading is a grid.
-    let flat = turn(frame) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    let flat = frame.turn() * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let mid = frame.at(0.0, (s0 + s1) * 0.5, h - 0.02);
     let glass = Inst::new(
         mid,
@@ -895,7 +858,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
     lib.decor(glass);
     let dark = [0.11, 0.055, 0.025];
     for o in [16.6, s0 - 0.13, s1 + 0.13, 30.6] {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (-inner, inner),
             (o - 0.13, o + 0.13),
@@ -905,7 +868,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
         ));
     }
     for a in [-sw - 0.12, sw + 0.12] {
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (a - 0.12, a + 0.12),
             (s0, s1),
@@ -917,7 +880,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
     // Glazing bars over the glass.
     for k in 1..4 {
         let o = s0 + k as f32 * (s1 - s0) / 4.0;
-        lib.decor(part(
+        lib.decor(piece(
             frame,
             (-sw, sw),
             (o - 0.04, o + 0.04),
@@ -926,7 +889,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
             dark,
         ));
     }
-    lib.decor(part(
+    lib.decor(piece(
         frame,
         (-0.04, 0.04),
         (s0, s1),

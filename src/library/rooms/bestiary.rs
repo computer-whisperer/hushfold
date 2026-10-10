@@ -28,47 +28,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     egg(lib, frame);
 }
 
-/// A box over `a` across, `o` outward and `y` up from the floor.
-fn piece(f: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) -> Inst {
-    let (lo, hi) = f.boxed(a.0.min(a.1), a.0.max(a.1), o.0, o.1, y.0, y.1);
-    Inst::minmax(lo, hi, kind, rgb)
-}
-
-/// A square rod from `p` to `q`, `w` thick.
-fn rod(lib: &mut Library, p: Vec3, q: Vec3, w: f32, kind: u32, rgba: [f32; 4]) {
-    let d = q - p;
-    let rot = Quat::from_rotation_arc(Vec3::Y, d / d.length());
-    lib.decor(Inst::new(
-        (p + q) * 0.5,
-        rot,
-        Vec3::new(w, d.length(), w),
-        kind,
-        rgba,
-        0,
-    ));
-}
-
-/// An eight-sided upright block centred on `c`, `w` across and `h` tall.
-fn octo(lib: &mut Library, c: Vec3, w: f32, h: f32, kind: u32, rgba: [f32; 4]) {
-    for t in [0.2f32, 0.985] {
-        lib.decor(Inst::new(
-            c,
-            Quat::from_rotation_y(t),
-            Vec3::new(w, h, w),
-            kind,
-            rgba,
-            0,
-        ));
-    }
-}
-
-/// `faces` (all facing one way) left to right as you face them.
-fn in_order(mut faces: Vec<(Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
-    let right = Vec3::Y.cross(faces[0].1);
-    faces.sort_by(|p, q| p.0.dot(right).total_cmp(&q.0.dot(right)));
-    faces
-}
-
 /// Four cages of five, two either side of the hall (read from the mouth on the left,
 /// round the back and out), and the walls' cases: five on each.
 fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
@@ -78,7 +37,7 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
     let run = |first: f32| (0..5).map(move |k| first + UNIT_PITCH * (k as f32 + 0.5));
     let (inner, near, far) = (RoomFrame::A_HALF, RoomFrame::O_NEAR, RoomFrame::O_FAR);
     let left: Vec<_> = run(17.0).map(|o| wall(lib, -inner, o, across)).collect();
-    lib.add_category(rng, cat, &in_order(left), titles);
+    lib.add_category(rng, cat, &left_to_right(left), titles);
     cat += 1;
     for s in [-1.0f32, 1.0] {
         let order: &[f32] = if s < 0.0 { &CAGES_O } else { &[CAGES_O[1], CAGES_O[0]] };
@@ -89,14 +48,14 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
         }
         if s < 0.0 {
             let far_faces: Vec<_> = run(-6.75).map(|a| wall(lib, a, far, -out)).collect();
-            lib.add_category(rng, cat, &in_order(far_faces), titles);
+            lib.add_category(rng, cat, &left_to_right(far_faces), titles);
             cat += 1;
         }
     }
     let right: Vec<_> = run(16.75).map(|o| wall(lib, inner, o, -across)).collect();
-    lib.add_category(rng, cat, &in_order(right), titles);
+    lib.add_category(rng, cat, &left_to_right(right), titles);
     let near_faces: Vec<_> = run(-4.9).map(|a| wall(lib, a, near, out)).collect();
-    lib.add_category(rng, cat + 1, &in_order(near_faces), titles);
+    lib.add_category(rng, cat + 1, &left_to_right(near_faces), titles);
 }
 
 /// A cage on side `s` of the hall about `o`, open to the hall: two single-sided cases
@@ -151,10 +110,10 @@ fn cage(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) -> Vec<(Vec3, Vec3
     let edge = side_back + 0.03;
     for e in [-1.0f32, 1.0] {
         let p = frame.at(s * (MOUTH - 0.05), o + e * edge, 0.0);
-        rod(lib, p, p + Vec3::Y * 3.4, 0.09, kind::METAL, IRON);
+        rod(lib, p, p + Vec3::Y * 3.4, 0.09, 0.09, kind::METAL, IRON);
     }
     let lintel = |e: f32| frame.at(s * (MOUTH - 0.05), o + e * edge, 3.32);
-    rod(lib, lintel(-1.0), lintel(1.0), 0.07, kind::METAL, IRON);
+    rod(lib, lintel(-1.0), lintel(1.0), 0.07, 0.07, kind::METAL, IRON);
     // The roof: ribs arched across, and bars along.
     let arch = |x: f32, t: f32| frame.at(s * x, o - edge * t.cos(), top + 0.02 + 1.0 * t.sin());
     let steps = 6;
@@ -162,7 +121,7 @@ fn cage(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) -> Vec<(Vec3, Vec3
         let x = MOUTH + 0.1 + k as f32 * (back + 0.02 - MOUTH - 0.1) / 4.0;
         for j in 0..steps {
             let (t0, t1) = (j as f32 / steps as f32 * PI, (j + 1) as f32 / steps as f32 * PI);
-            rod(lib, arch(x, t0), arch(x, t1), 0.035, kind::METAL, IRON);
+            rod(lib, arch(x, t0), arch(x, t1), 0.035, 0.035, kind::METAL, IRON);
         }
     }
     for t in [PI * 0.25, PI * 0.5, PI * 0.75] {
@@ -170,6 +129,7 @@ fn cage(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) -> Vec<(Vec3, Vec3
             lib,
             arch(MOUTH + 0.05, t),
             arch(back + 0.05, t),
+            0.03,
             0.03,
             kind::METAL,
             IRON,
@@ -180,11 +140,11 @@ fn cage(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) -> Vec<(Vec3, Vec3
         let g = |x: f32, y: f32| frame.at(s * x, o + e * (side_back + 0.09), y);
         let (x0, x1) = (MOUTH + 0.02, MOUTH + 1.35);
         for y in [0.15f32, 2.45] {
-            rod(lib, g(x0, y), g(x1, y), 0.05, kind::METAL, IRON);
+            rod(lib, g(x0, y), g(x1, y), 0.05, 0.05, kind::METAL, IRON);
         }
         for k in 0..6 {
             let x = x0 + k as f32 * (x1 - x0) / 5.0;
-            rod(lib, g(x, 0.1), g(x, 2.55), 0.03, kind::METAL, IRON);
+            rod(lib, g(x, 0.1), g(x, 2.55), 0.03, 0.03, kind::METAL, IRON);
         }
     }
     // Bars round the outside, past the gates: down both sides and across the back.
@@ -193,6 +153,7 @@ fn cage(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) -> Vec<(Vec3, Vec3
             lib,
             p + Vec3::Y * 0.05,
             p + Vec3::Y * (top + 0.02),
+            0.03,
             0.03,
             kind::METAL,
             IRON,
@@ -212,6 +173,7 @@ fn cage(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) -> Vec<(Vec3, Vec3
                 frame.at(s * x0, o + e * outside, y),
                 frame.at(s * x1, o + e * outside, y),
                 0.04,
+                0.04,
                 kind::METAL,
                 IRON,
             );
@@ -228,6 +190,7 @@ fn cage(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) -> Vec<(Vec3, Vec3
             frame.at(s * x1, o - outside, y),
             frame.at(s * x1, o + outside, y),
             0.04,
+            0.04,
             kind::METAL,
             IRON,
         );
@@ -235,9 +198,9 @@ fn cage(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) -> Vec<(Vec3, Vec3
     // A sconce on the near post, lighting the hall.
     lib.sconce(frame.at(s * (MOUTH - 0.2), o - edge, 2.6), -frame.across() * s);
     let (first, last) = if s < 0.0 { (near, far) } else { (far, near) };
-    let mut faces = in_order(first);
+    let mut faces = left_to_right(first);
     faces.push(end);
-    faces.extend(in_order(last));
+    faces.extend(left_to_right(last));
     faces
 }
 
@@ -375,14 +338,14 @@ fn antlers(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32, k: usize) {
         let p2 = p1 + side * 0.2 * spread + up * 0.35 - n * 0.02;
         let p3 = p2 - side * 0.05 + up * 0.3;
         for (a, b) in [(base, p1), (p1, p2), (p2, p3)] {
-            rod(lib, a, b, 0.045, kind::PLAIN, BONE);
+            rod(lib, a, b, 0.045, 0.045, kind::PLAIN, BONE);
         }
         for (from, dir) in [
             (p1, up * 0.25 - side * 0.08),
             (p2, up * 0.22 + side * 0.1),
             (p2, up * 0.15 - side * 0.12 + n * 0.08),
         ] {
-            rod(lib, from, from + dir, 0.03, kind::PLAIN, BONE);
+            rod(lib, from, from + dir, 0.03, 0.03, kind::PLAIN, BONE);
         }
     }
 }
@@ -456,7 +419,7 @@ fn skeleton(lib: &mut Library, frame: &RoomFrame) {
         lib.decor(Inst::new(p, turn, Vec3::splat(size), kind::PLAIN, BONE, 0));
         // Spines along the back, over the body.
         if (0.15..0.6).contains(&t) && k % 2 == 0 {
-            rod(lib, p, p + up * 0.28 + v * 0.06, 0.035, kind::PLAIN, BONE);
+            rod(lib, p, p + up * 0.28 + v * 0.06, 0.035, 0.035, kind::PLAIN, BONE);
         }
     }
     // Ribs, curving down and in, longest mid-chest.
@@ -471,7 +434,7 @@ fn skeleton(lib: &mut Library, frame: &RoomFrame) {
         for e in [-1.0f32, 1.0] {
             let at = |(x, y): (f32, f32)| p + u * (e * x * wide) - up * (y * deep);
             for w in curve.windows(2) {
-                rod(lib, at(w[0]), at(w[1]), 0.04, kind::PLAIN, BONE);
+                rod(lib, at(w[0]), at(w[1]), 0.04, 0.04, kind::PLAIN, BONE);
             }
         }
     }
@@ -508,11 +471,12 @@ fn skeleton(lib: &mut Library, frame: &RoomFrame) {
     for e in [-1.0f32, 1.0] {
         let root = head + up * 0.12 + u * (e * 0.14) - fwd * 0.12;
         let mid = root + up * 0.3 - fwd * 0.35 + u * (e * 0.12);
-        rod(lib, root, mid, 0.07, kind::PLAIN, BONE);
+        rod(lib, root, mid, 0.07, 0.07, kind::PLAIN, BONE);
         rod(
             lib,
             mid,
             mid + up * 0.08 - fwd * 0.35 + u * (e * 0.05),
+            0.045,
             0.045,
             kind::PLAIN,
             BONE,
@@ -529,7 +493,15 @@ fn skeleton(lib: &mut Library, frame: &RoomFrame) {
         // Teeth along the snout.
         for j in 0..3 {
             let tooth = snout + fwd * (0.1 + j as f32 * 0.12) + u * (e * 0.1) - up * 0.11;
-            rod(lib, tooth, tooth - up * 0.08 - fwd * 0.02, 0.025, kind::PLAIN, BONE);
+            rod(
+                lib,
+                tooth,
+                tooth - up * 0.08 - fwd * 0.02,
+                0.025,
+                0.025,
+                kind::PLAIN,
+                BONE,
+            );
         }
     }
     // Legs, dangling.
@@ -543,13 +515,14 @@ fn skeleton(lib: &mut Library, frame: &RoomFrame) {
             let ankle = knee + side * 0.05 - up * 0.55 - lean * 1.2;
             let toe = ankle - up * 0.12 + fwd * 0.15;
             for (a, b) in [(hip, knee), (knee, ankle), (ankle, toe)] {
-                rod(lib, a, b, 0.06, kind::PLAIN, BONE);
+                rod(lib, a, b, 0.06, 0.06, kind::PLAIN, BONE);
             }
             for c in [-1.0f32, 0.0, 1.0] {
                 rod(
                     lib,
                     toe,
                     toe + fwd * 0.16 + side * (c * 0.07) - up * 0.05,
+                    0.025,
                     0.025,
                     kind::PLAIN,
                     BONE,
@@ -564,13 +537,14 @@ fn skeleton(lib: &mut Library, frame: &RoomFrame) {
         let elbow = shoulder + side * 1.3 + up * 0.45 + v * 0.3;
         let wrist = elbow + side * 1.2 - up * 0.1 + v * 0.55;
         for (a, b) in [(shoulder, elbow), (elbow, wrist)] {
-            rod(lib, a, b, 0.07, kind::PLAIN, BONE);
+            rod(lib, a, b, 0.07, 0.07, kind::PLAIN, BONE);
         }
         for (reach, back, drop) in [(1.1f32, 0.3f32, 0.2f32), (0.7, 1.2, 0.35), (0.2, 1.9, 0.45)] {
             rod(
                 lib,
                 wrist,
                 wrist + side * reach + v * back - up * drop,
+                0.04,
                 0.04,
                 kind::PLAIN,
                 BONE,
@@ -581,7 +555,7 @@ fn skeleton(lib: &mut Library, frame: &RoomFrame) {
     for t in [0.12f32, 0.42, 0.75] {
         let p = point(t);
         let top = Vec3::new(p.x, frame.y + RoomFrame::HEIGHT - 0.3, p.z);
-        rod(lib, p + up * 0.1, top, 0.03, kind::METAL, IRON);
+        rod(lib, p + up * 0.1, top, 0.03, 0.03, kind::METAL, IRON);
     }
 }
 
@@ -616,7 +590,7 @@ fn egg(lib: &mut Library, frame: &RoomFrame) {
         let r = rng.gen_range(0.25..0.36f32);
         let p = c + Vec3::new(t.cos(), 0.0, t.sin()) * r + Vec3::Y * rng.gen_range(0.02..0.1f32);
         let d = Vec3::new(-t.sin(), rng.gen_range(-0.2..0.2f32), t.cos()) * 0.22;
-        rod(lib, p - d, p + d, 0.025, kind::WOOD, [0.3, 0.22, 0.12, 1.0]);
+        rod(lib, p - d, p + d, 0.025, 0.025, kind::WOOD, [0.3, 0.22, 0.12, 1.0]);
     }
     let shell = [0.08, 0.26, 0.18, 0.35];
     for (y, w) in [

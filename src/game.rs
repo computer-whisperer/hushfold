@@ -510,7 +510,7 @@ const SAVE_VERSION: u32 = 2;
 fn generation(layout: Layout) -> u32 {
     match layout {
         Layout::Hall => 0,
-        Layout::Great => 1,
+        Layout::Great => 2,
     }
 }
 

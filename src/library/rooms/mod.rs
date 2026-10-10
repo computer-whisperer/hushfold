@@ -1,7 +1,7 @@
 //! What stands inside each Great Library department's room: its bookcases, laid out
 //! as suits the department, and its furnishings. The building around it (the walls,
 //! the doorway with its sign and gate) is great.rs's. Each department has a file of
-//! its own; `classic` is the room as it first was, for any to start from.
+//! its own; the helpers they share are here.
 
 use super::great::{ATRIUM, DOOR_HALF, OUTER, ROOM_H, ROOM_HALF, Side, WALL_T, box3};
 use super::*;
@@ -21,18 +21,13 @@ mod weatherhouse;
 
 /// A department's room, in its own frame: `a` runs across the room (along the wall
 /// with the door), `o` outward from the atrium's centre, heights from its floor.
-// TEMP(visual pass): `level` and `drop` are for the departments' own layouts.
-#[allow(dead_code)]
 pub(super) struct RoomFrame {
     pub dept: usize,
-    pub level: usize,
     /// The floor's height.
     pub y: f32,
     pub side: Side,
     /// Where along the near wall the doorway's middle is.
     pub door: f32,
-    /// Where couriers set books down, just inside the door.
-    pub drop: Vec3,
     /// The department's categories (8).
     pub categories: std::ops::Range<usize>,
 }
@@ -77,6 +72,11 @@ impl RoomFrame {
         self.side.along_x()
     }
 
+    /// The room's frame as a rotation: x across, y up, z toward the door's wall.
+    pub fn turn(&self) -> Quat {
+        Quat::from_mat3(&Mat3::from_cols(self.across(), Vec3::Y, -self.out()))
+    }
+
     /// A world size for a box `sa` across, `sy` high and `so` outward.
     pub fn size(&self, sa: f32, sy: f32, so: f32) -> Vec3 {
         if self.out_along_x() {
@@ -102,92 +102,93 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
         9 => music_room::furnish,
         10 => weatherhouse::furnish,
         11 => hearth_library::furnish,
-        _ => classic,
+        d => unreachable!("no room for department {d}"),
     };
     f(lib, frame, rng, titles);
 }
 
-/// The room as it first was: `classic_walls` and `classic_rows`.
-pub(super) fn classic(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
-    classic_walls(lib, frame);
-    classic_rows(lib, frame, rng, titles);
+/// `rgb` with an alpha (or a glow) of `w`.
+pub(super) fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
+    [rgb[0], rgb[1], rgb[2], w]
 }
 
-/// Three tall moonlit windows in the far wall, sconces down the sides, panelling
-/// round the walls and beams across the ceiling.
-pub(super) fn classic_walls(lib: &mut Library, frame: &RoomFrame) {
-    let (out, across) = (frame.out(), frame.across());
-    for a in [-7.0f32, 0.0, 7.0] {
-        let c = frame.at(a, RoomFrame::O_FAR - 0.02, 3.0);
-        lib.decor(Inst::aabox(
+/// A box over `a` across, `o` outward and `y` up from the floor.
+pub(super) fn piece(f: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) -> Inst {
+    let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, y.0, y.1);
+    Inst::minmax(lo, hi, kind, rgb)
+}
+
+/// Drawn only: the box over `a`, `o`, and heights `y` above the floor.
+pub(super) fn slab(
+    lib: &mut Library,
+    f: &RoomFrame,
+    a: (f32, f32),
+    o: (f32, f32),
+    y: (f32, f32),
+    kind: u32,
+    rgb: [f32; 3],
+) {
+    lib.decor(piece(f, a, o, y, kind, rgb));
+}
+
+/// In the way of everything: the floor box over `a`, `o`, `h` high.
+pub(super) fn guard(lib: &mut Library, f: &RoomFrame, a: (f32, f32), o: (f32, f32), h: f32) {
+    let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, 0.0, h);
+    lib.collide(lo, hi, Stops::ALL);
+}
+
+/// A slim box from `p` to `q` (world), `w` × `d` across.
+pub(super) fn rod(lib: &mut Library, p: Vec3, q: Vec3, w: f32, d: f32, kind: u32, col: [f32; 4]) {
+    let v = q - p;
+    let rot = Quat::from_rotation_arc(Vec3::Y, v.normalize());
+    lib.decor(Inst::new((p + q) * 0.5, rot, Vec3::new(w, v.length(), d), kind, col, 0));
+}
+
+/// An eight-sided upright block centred on `c`, `w` across and `h` tall: two boxes,
+/// one turned an eighth of a turn.
+pub(super) fn octo(lib: &mut Library, c: Vec3, w: f32, h: f32, kind: u32, rgba: [f32; 4]) {
+    for t in [0.2f32, 0.985] {
+        lib.decor(Inst::new(
             c,
-            frame.size(1.6, 3.4, 0.08),
-            kind::GLASS,
-            [0.32, 0.42, 0.85],
-        ));
-        lib.static_insts.last_mut().unwrap().color[3] = 1.2;
-        lib.light(c - out * 1.5, 8.0, [0.45, 0.55, 1.0], 0.8, LightKind::Static);
-        let beam = (-out * 1.0 - Vec3::Y * 0.6).normalize();
-        let len = 7.0;
-        lib.static_trans.push(Inst::new(
-            c + beam * len * 0.5,
-            Quat::from_rotation_arc(Vec3::Y, beam),
-            Vec3::new(1.4, len, 2.6),
-            kind::SHAFT,
-            [0.35, 0.45, 0.9, 0.04],
+            Quat::from_rotation_y(t),
+            Vec3::new(w, h, w),
+            kind,
+            rgba,
             0,
         ));
     }
-    for o in [19.5, 27.0] {
-        for sa in [-1.0f32, 1.0] {
-            let p = frame.at(sa * (RoomFrame::A_HALF - 0.15), o, 2.6);
-            lib.sconce(p, -across * sa);
-        }
-    }
-    let inner = RoomFrame::A_HALF;
-    let (near, far) = (RoomFrame::O_NEAR, RoomFrame::O_FAR);
-    let t = 0.07;
-    let side = frame.side;
-    lib.wainscot(frame.y, frame.rect(-inner, -inner + t, near, far - t), side.across);
-    lib.wainscot(frame.y, frame.rect(inner - t, inner, near, far - t), -side.across);
-    lib.wainscot(frame.y, frame.rect(-inner, inner, far - t, far), -side.out);
-    let d = frame.door;
-    for (a0, a1) in [
-        (-inner + t, d - RoomFrame::DOOR_HALF - 0.3),
-        (d + RoomFrame::DOOR_HALF + 0.3, inner - t),
-    ] {
-        lib.wainscot(frame.y, frame.rect(a0, a1, near, near + t), side.out);
-    }
-    for k in 0..6 {
-        let o = near + 1.6 + k as f32 * 3.0;
-        let (lo, hi) = frame.boxed(
-            -inner,
-            inner,
-            o - 0.13,
-            o + 0.13,
-            RoomFrame::HEIGHT - 0.3,
-            RoomFrame::HEIGHT,
-        );
-        lib.decor(Inst::minmax(lo, hi, kind::WOOD, [0.11, 0.055, 0.025]));
-    }
 }
 
-/// Four rows of five double-sided cases running outward; each side of a row is a
-/// category.
-pub(super) fn classic_rows(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
-    let case_o = |k: usize| RoomFrame::O_NEAR + 2.5 + UNIT_W * 0.5 + k as f32 * UNIT_PITCH;
-    let mut cat = frame.categories.start;
-    for ra in [-9.0f32, -3.0, 3.0, 9.0] {
-        let cases: Vec<[(Vec3, Vec3); 2]> = (0..5)
-            .map(|k| lib.bookcase(frame.at(ra, case_o(k), 0.0), frame.out_along_x()))
-            .collect();
-        // Each side of the row, its faces left to right as you face them.
-        for s in 0..2 {
-            let mut faces: Vec<(Vec3, Vec3)> = cases.iter().map(|c| c[s]).collect();
-            let right = Vec3::Y.cross(faces[0].1);
-            faces.sort_by(|a, b| a.0.dot(right).total_cmp(&b.0.dot(right)));
-            lib.add_category(rng, cat, &faces, titles);
-            cat += 1;
+/// `faces` (all facing one way) left to right as you face them, as `add_category`
+/// takes them.
+pub(super) fn left_to_right(mut faces: Vec<(Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
+    let right = Vec3::Y.cross(faces[0].1);
+    faces.sort_by(|p, q| p.0.dot(right).total_cmp(&q.0.dot(right)));
+    faces
+}
+
+/// A piece of furniture's place: its origin on the floor and its turn. Its parts are
+/// given in its own frame (x across the room, y up, z toward the door's wall, unless
+/// it is turned).
+pub(super) struct Spot {
+    pub at: Vec3,
+    pub q: Quat,
+}
+
+impl Spot {
+    pub fn new(f: &RoomFrame, a: f32, o: f32, yaw: f32) -> Spot {
+        Spot {
+            at: f.at(a, o, 0.0),
+            q: f.turn() * Quat::from_rotation_y(yaw),
         }
+    }
+
+    pub fn part(&self, lib: &mut Library, p: Vec3, size: Vec3, q: Quat, kind: u32, color: [f32; 4]) {
+        lib.decor(Inst::new(self.at + self.q * p, self.q * q, size, kind, color, 0));
+    }
+
+    /// An unturned part.
+    pub fn block(&self, lib: &mut Library, p: Vec3, size: Vec3, kind: u32, color: [f32; 4]) {
+        self.part(lib, p, size, Quat::IDENTITY, kind, color);
     }
 }

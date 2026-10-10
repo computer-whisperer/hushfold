@@ -286,9 +286,6 @@ impl Library {
         });
     }
 
-    /// A category's shelves: `cases` (front-plane centre at floor level, in reading
-    /// order) facing along `normal`; generates its series, lays them out, and hangs
-    /// its sign and lantern over the middle case.
     /// Shelve category `cat` across `faces` (front plane centre at floor level,
     /// outward normal; see `bookcase`), in reading order, and hang its sign and
     /// lantern over the middle one.

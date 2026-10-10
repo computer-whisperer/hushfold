@@ -25,61 +25,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     cranes(lib, frame);
 }
 
-/// The room's frame as a rotation: local x along `a`, y up, z along -`o` (toward the
-/// door's wall).
-fn turn(f: &RoomFrame) -> Quat {
-    Quat::from_mat3(&Mat3::from_cols(f.across(), Vec3::Y, -f.out()))
-}
-
-/// Drawn only: the box over `a`, `o`, and heights `y` above the floor.
-fn slab(lib: &mut Library, f: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), kind: u32, rgb: [f32; 3]) {
-    let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, y.0, y.1);
-    lib.decor(Inst::minmax(lo, hi, kind, rgb));
-}
-
-/// In the way of everything: the floor box over `a`, `o`, `h` high.
-fn guard(lib: &mut Library, f: &RoomFrame, a: (f32, f32), o: (f32, f32), h: f32) {
-    let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, 0.0, h);
-    lib.collide(lo, hi, Stops::ALL);
-}
-
-/// A piece of furniture's place: its origin on the floor and its turn. Its parts are
-/// given in its own frame (x across the room, y up, z toward the door's wall, unless
-/// it is turned).
-struct Spot {
-    at: Vec3,
-    q: Quat,
-}
-
-impl Spot {
-    fn new(f: &RoomFrame, a: f32, o: f32, yaw: f32) -> Spot {
-        Spot {
-            at: f.at(a, o, 0.0),
-            q: turn(f) * Quat::from_rotation_y(yaw),
-        }
-    }
-
-    fn part(&self, lib: &mut Library, p: Vec3, size: Vec3, q: Quat, kind: u32, color: [f32; 4]) {
-        lib.decor(Inst::new(self.at + self.q * p, self.q * q, size, kind, color, 0));
-    }
-
-    /// An unturned part.
-    fn block(&self, lib: &mut Library, p: Vec3, size: Vec3, kind: u32, color: [f32; 4]) {
-        self.part(lib, p, size, Quat::IDENTITY, kind, color);
-    }
-}
-
-fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
-    [rgb[0], rgb[1], rgb[2], w]
-}
-
-/// Faces left to right as you face them (all facing the same way).
-fn lr(mut faces: Vec<(Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
-    let right = Vec3::Y.cross(faces[0].1);
-    faces.sort_by(|p, q| p.0.dot(right).total_cmp(&q.0.dot(right)));
-    faces
-}
-
 /// The alcoves along the far wall. Each between two spurs is a category of five, read
 /// round from the mouth: the left spur's side, the back case, the right spur's side.
 /// The corner ones have the side wall's three cases for a back and a side. Then the
@@ -115,12 +60,19 @@ fn alcoves(lib: &mut Library, f: &RoomFrame, rng: &mut StdRng, titles: &mut Hash
         .collect();
     let mut groups: Vec<Vec<(Vec3, Vec3)>> = Vec::new();
     // Facing the far wall, an alcove's left is toward -a.
-    groups.push([lr(left_wall), lr(sides[0][0].clone())].concat());
+    groups.push([left_to_right(left_wall), left_to_right(sides[0][0].clone())].concat());
     for i in 0..5 {
-        groups.push([lr(sides[i][1].clone()), vec![backs[i]], lr(sides[i + 1][0].clone())].concat());
+        groups.push(
+            [
+                left_to_right(sides[i][1].clone()),
+                vec![backs[i]],
+                left_to_right(sides[i + 1][0].clone()),
+            ]
+            .concat(),
+        );
     }
-    groups.push([lr(sides[5][1].clone()), lr(right_wall)].concat());
-    groups.push(lr(near));
+    groups.push([left_to_right(sides[5][1].clone()), left_to_right(right_wall)].concat());
+    groups.push(left_to_right(near));
     for (cat, faces) in f.categories.clone().zip(groups) {
         lib.add_category(rng, cat, &faces, titles);
     }
@@ -689,7 +641,7 @@ fn cranes(lib: &mut Library, f: &RoomFrame) {
     for (a, o, y, yaw) in spots {
         let at = Spot {
             at: f.at(a, o, y),
-            q: turn(f) * Quat::from_rotation_y(yaw) * Quat::from_rotation_z(0.15),
+            q: f.turn() * Quat::from_rotation_y(yaw) * Quat::from_rotation_z(0.15),
         };
         let mut part = |p: Vec3, size: Vec3, q: Quat| at.part(lib, p * k, size * k, q, kind::PAPER, paper);
         part(
