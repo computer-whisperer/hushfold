@@ -138,6 +138,72 @@ impl Mount {
     fn rot(self, spin: f32) -> Quat {
         Quat::from_mat3(&Mat3::from_cols(self.right(), Vec3::Y, self.n)) * Quat::from_rotation_z(spin)
     }
+
+    /// A box on it at `off`, turned `spin` about its normal.
+    fn boxed(self, off: Vec3, size: Vec3, spin: f32, kind: u32, color: [f32; 4]) -> Inst {
+        Inst::new(self.at(off), self.rot(spin), size, kind, color, 0)
+    }
+}
+
+/// A turned piece: (radius, height) points up its outside, from the axis at its foot
+/// (`Mesh::lathe`), `segs` round.
+fn lathe(lib: &mut Library, profile: &[(f32, f32)], segs: usize) -> Shape {
+    let p: Vec<Vec2> = profile.iter().map(|&(r, h)| Vec2::new(r, h)).collect();
+    lib.shape(Mesh::lathe(&p, segs))
+}
+
+/// A round rod `d` across from `a` to `b`.
+fn rod(lib: &mut Library, (a, b): (Vec3, Vec3), d: f32, kind: u32, color: [f32; 4]) -> Inst {
+    let along = b - a;
+    let s = lib.shape(Mesh::cylinder(12)).sized(Vec3::new(d, along.length(), d));
+    s.inst(
+        (a + b) * 0.5,
+        Quat::from_rotation_arc(Vec3::Y, along / along.length()),
+        kind,
+        color,
+    )
+}
+
+/// A mover that stirs now and then about `axis` through `pivot`: two swings `amp`
+/// either way, one every `period` and one a little slower, so that it sways while
+/// they are in step and rests while they cancel, once every `beat` seconds.
+fn stir(lib: &mut Library, pivot: Vec3, axis: Vec3, (amp, period, beat): (f32, f32, f32), phase: f32) -> u32 {
+    let first = lib.mover(pivot, Motion::Swing { axis, amp, period }, phase, None);
+    let period = 1.0 / (1.0 / period - 1.0 / beat);
+    lib.mover(pivot, Motion::Swing { axis, amp, period }, phase, Some(first))
+}
+
+/// A small gilt finial, a ball on a collar, its foot at the origin and pointing up y.
+fn finial(lib: &mut Library) -> Shape {
+    let p = [
+        (0.0, 0.0),
+        (0.03, 0.0),
+        (0.03, 0.012),
+        (0.018, 0.022),
+        (0.022, 0.032),
+        (0.05, 0.06),
+        (0.045, 0.085),
+        (0.024, 0.105),
+        (0.008, 0.125),
+        (0.0, 0.13),
+    ];
+    lathe(lib, &p, 16)
+}
+
+/// A tassel: a knob on a cord, and the threads falling from it in a skirt; its head
+/// at the origin, hanging down y.
+fn tassel(lib: &mut Library) -> Shape {
+    let p = [
+        (0.0, -0.22),
+        (0.03, -0.22),
+        (0.027, -0.1),
+        (0.013, -0.065),
+        (0.021, -0.045),
+        (0.016, -0.02),
+        (0.006, -0.008),
+        (0.0, 0.0),
+    ];
+    lathe(lib, &p, 12)
 }
 
 impl Library {
@@ -225,6 +291,9 @@ impl Library {
                 (FRAC_PI_2 - half, FRAC_PI_2 + half, n),
                 (kind::WOOD, rgba(BEAM_WOOD)),
             );
+            if sx > 0.0 && span > 10.0 {
+                self.wing_names(centre, r - 0.14);
+            }
         }
         // A gilt crescent on a dark roundel hung at the crown of the middle arch, on
         // both its faces.
@@ -238,6 +307,31 @@ impl Library {
             self.disc(m, at + Vec3::Z * 0.025, (0.3, 0.03), kind::METAL, rgba(GILT));
             let shadow = at + Vec3::new(0.1, 0.07, 0.035);
             self.disc(m, shadow, (0.25, 0.03), kind::WOOD, rgba(BEAM_WOOD));
+        }
+    }
+
+    /// The wings named in gold leaf on the faces of the arch over the veil, either side
+    /// of its roundel: the East Wing from the reading room, the West from the East. The
+    /// arch is about `c` (on the veil's line), `r` to the middle of its band. Lettering
+    /// only, not a `Label`: the Signposts' guides are the boards', and this leaves them
+    /// as they were.
+    fn wing_names(&mut self, c: Vec3, r: f32) {
+        const LETTERS: Style = Style {
+            em: 0.23,
+            tracking: 0.12,
+            lettering: Lettering::Gilt,
+            color: GOLD_LEAF,
+        };
+        for (n, words) in [(-Vec3::X, ["EAST", "WING"]), (Vec3::X, ["WEST", "WING"])] {
+            let right = Vec3::Y.cross(n);
+            for (word, u) in words.into_iter().zip([-0.95f32, 0.95]) {
+                // Along the arch's curve and up out of it, at `u` along the reading way.
+                let z = right.z * u;
+                let rise = libm::sqrtf(r * r - z * z);
+                let at = Vec3::new(c.x, c.y + rise, c.z + z) + n * (0.12 + 0.0015);
+                let along = (right + Vec3::Y * (-z / rise * right.z)).normalize();
+                text::set_line(&mut self.text, word, LETTERS, at, along, n.cross(along), 0.9);
+            }
         }
     }
 
@@ -287,18 +381,24 @@ impl Library {
 
     /// A box on a wall (see `Mount`).
     fn mounted(&mut self, m: Mount, off: Vec3, size: Vec3, spin: f32, kind: u32, color: [f32; 4]) {
-        self.decor(Inst::new(m.at(off), m.rot(spin), size, kind, color, 0));
+        self.decor(m.boxed(off, size, spin, kind, color));
     }
 
     /// A disc on a wall, `r` round and `d` thick at `off`.
     fn disc(&mut self, m: Mount, off: Vec3, (r, d): (f32, f32), kind: u32, color: [f32; 4]) {
+        let i = self.disc_inst(m, off, (r, d), kind, color);
+        self.decor(i);
+    }
+
+    /// The disc `disc` lays down.
+    fn disc_inst(&mut self, m: Mount, off: Vec3, (r, d): (f32, f32), kind: u32, color: [f32; 4]) -> Inst {
         let segs = match r {
             r if r < 0.08 => 16,
             r if r < 0.45 => 32,
             _ => 64,
         };
         let disc = self.shape(Mesh::cylinder(segs)).sized(Vec3::new(2.0 * r, d, 2.0 * r));
-        self.decor(disc.inst(m.at(off), m.rot(0.0) * Quat::from_rotation_x(FRAC_PI_2), kind, color));
+        disc.inst(m.at(off), m.rot(0.0) * Quat::from_rotation_x(FRAC_PI_2), kind, color)
     }
 
     /// The timbers: girders on the columns, beams across the hall, and between them
@@ -310,6 +410,22 @@ impl Library {
         let wood = |lib: &mut Self, min: Vec3, max: Vec3| lib.decor(Inst::minmax(min, max, kind::WOOD, BEAM_WOOD));
         let gilt = |lib: &mut Self, min: Vec3, max: Vec3| lib.decor(Inst::minmax(min, max, kind::METAL, GILT));
         let inner = VEIL_X - 0.4;
+        // Gilt bosses where the ribs cross the beams, turned, hanging from them.
+        let boss = lathe(
+            self,
+            &[
+                (0.0, 0.0),
+                (0.15, 0.0),
+                (0.15, 0.012),
+                (0.128, 0.026),
+                (0.11, 0.03),
+                (0.075, 0.05),
+                (0.04, 0.066),
+                (0.03, 0.07),
+                (0.0, 0.08),
+            ],
+            24,
+        );
         for sx in [-VEIL_X, VEIL_X] {
             wood(self, Vec3::new(sx - 0.4, GIRDER_Y, -hz), Vec3::new(sx + 0.4, hh, hz));
         }
@@ -322,17 +438,9 @@ impl Library {
                 Vec3::new(-inner, y - 0.012, z - 0.05),
                 Vec3::new(inner, y, z + 0.05),
             );
-            // Gilt bosses where the ribs cross.
             for x in RIBS_X {
-                let boss = Inst::new(
-                    Vec3::new(x, y - 0.035, z),
-                    Quat::from_rotation_y(FRAC_PI_4),
-                    Vec3::new(0.3, 0.07, 0.3),
-                    kind::METAL,
-                    rgba(GILT),
-                    0,
-                );
-                self.decor(boss);
+                let hang = Quat::from_rotation_x(PI);
+                self.decor(boss.at(Vec3::new(x, y, z), hang, kind::METAL, rgba(GILT)));
             }
             // Under its ends, a pilaster (main beams) or a corbel on the end walls.
             for s in [-1.0f32, 1.0] {
@@ -606,8 +714,11 @@ impl Library {
             kind::METAL,
             gilt,
         );
-        let (top, tie, foot) = (6.95, 3.4, 2.05);
+        // Falling to the sill, clear above anyone's head where they stir.
+        let (top, tie, foot) = (6.95, 3.4, 2.25);
+        let tassel = tassel(self);
         for s in [-1.0f32, 1.0] {
+            let mut below = Vec::new();
             for k in 0..4 {
                 let kf = k as f32;
                 let at = |along: f32, y: f32| Vec2::new(s * along, y);
@@ -629,13 +740,30 @@ impl Library {
                         velvet,
                         0,
                     );
-                    self.decor(pleat);
+                    if q == c {
+                        below.push(pleat);
+                    } else {
+                        self.decor(pleat);
+                    }
                 }
             }
             let band = Vec3::new(s * 1.37, tie, 0.27);
             self.mounted(m, band, Vec3::new(0.36, 0.08, 0.1), 0.0, kind::METAL, gilt);
-            let tassel = Vec3::new(s * 1.52, tie - 0.16, 0.3);
-            self.mounted(m, tassel, Vec3::new(0.05, 0.22, 0.05), 0.0, kind::METAL, gilt);
+            below.push(tassel.at(
+                m.at(Vec3::new(s * 1.52, tie - 0.05, 0.3)),
+                Quat::IDENTITY,
+                kind::CLOTH,
+                gilt,
+            ));
+            // Below the tieback each curtain sways a little in a draught off the glass,
+            // now and then, each in its own time.
+            let mut r = StdRng::seed_from_u64(0xd2a9 ^ x.to_bits() as u64 ^ (s > 0.0) as u64);
+            let sway = (0.011, r.gen_range(5.5..7.5), r.gen_range(50.0..90.0));
+            let phase = r.gen_range(0.0..90.0);
+            let mover = stir(self, m.at(Vec3::new(s * 1.37, tie, 0.24)), m.n, sway, phase);
+            for pleat in below {
+                self.moving(mover, pleat);
+            }
         }
         self.light(
             Vec3::new(x, 3.2, face + 1.5),
@@ -676,69 +804,96 @@ impl Library {
     }
 
     /// A tapestry on a rod: a border, a field strewn with small gilt lozenges, and a
-    /// roundel with a crescent moon over an open book.
+    /// roundel with a crescent moon over an open book. It stirs on its rod now and then.
     fn tapestry(&mut self, m: Mount, s: f32) {
         let (w, h, mid) = (3.0f32, 4.0f32, 4.45f32);
         let field = if s < 0.0 { [0.06, 0.16, 0.12] } else { [0.08, 0.1, 0.22] };
-        self.mounted(
-            m,
-            Vec3::new(0.0, mid, 0.08),
-            Vec3::new(w, h, 0.02),
-            0.0,
-            kind::CLOTH,
-            rgba([0.3, 0.07, 0.05]),
-        );
-        let inner = Vec3::new(w - 0.36, h - 0.36, 0.02);
-        self.mounted(m, Vec3::new(0.0, mid, 0.09), inner, 0.0, kind::CLOTH, rgba(field));
+        let mut parts = vec![
+            m.boxed(
+                Vec3::new(0.0, mid, 0.08),
+                Vec3::new(w, h, 0.02),
+                0.0,
+                kind::CLOTH,
+                rgba([0.3, 0.07, 0.05]),
+            ),
+            m.boxed(
+                Vec3::new(0.0, mid, 0.09),
+                Vec3::new(w - 0.36, h - 0.36, 0.02),
+                0.0,
+                kind::CLOTH,
+                rgba(field),
+            ),
+        ];
+        // The lozenges, gilt and cream, each colour one piece (it moves).
         let mut r = StdRng::seed_from_u64(0x7a9e ^ (s > 0.0) as u64);
+        let (mut gilt, mut cream) = (Mesh::default(), Mesh::default());
+        let lozenge = Mesh::cube();
         for i in 0..6 {
             for j in 0..7 {
                 let p = Vec2::new(-1.1 + i as f32 * 0.44, mid - 1.6 + j as f32 * 0.53);
                 if (p - Vec2::new(0.0, mid)).length() < 1.05 {
                     continue;
                 }
-                let off = Vec3::new(p.x + (j % 2) as f32 * 0.22 - 0.11, p.y, 0.1);
-                let c = if r.gen_range(0.0..1.0f32) < 0.75 { GILT } else { CREAM };
-                self.mounted(m, off, Vec3::new(0.09, 0.09, 0.01), FRAC_PI_4, kind::CLOTH, rgba(c));
+                let at = Vec3::new(p.x + (j % 2) as f32 * 0.22 - 0.11, p.y, 0.0);
+                let to = if r.gen_range(0.0..1.0f32) < 0.75 {
+                    &mut gilt
+                } else {
+                    &mut cream
+                };
+                to.add(
+                    &lozenge,
+                    at,
+                    Quat::from_rotation_z(FRAC_PI_4),
+                    Vec3::new(0.09, 0.09, 0.01),
+                );
             }
         }
+        for (mesh, c) in [(gilt, GILT), (cream, CREAM)] {
+            if mesh.idx.is_empty() {
+                continue;
+            }
+            let shape = self.shape(mesh);
+            parts.push(shape.at(m.at(Vec3::Z * 0.1), m.rot(0.0), kind::CLOTH, rgba(c)));
+        }
         let centre = Vec3::new(0.0, mid, 0.1);
-        self.disc(m, centre, (0.85, 0.012), kind::CLOTH, rgba(GILT));
-        self.disc(
-            m,
-            centre + Vec3::Z * 0.006,
-            (0.75, 0.012),
-            kind::CLOTH,
-            rgba([0.04, 0.05, 0.12]),
-        );
+        let night = rgba([0.04, 0.05, 0.12]);
         let moon = centre + Vec3::new(0.0, 0.25, 0.012);
-        self.disc(m, moon, (0.24, 0.012), kind::CLOTH, rgba(CREAM));
-        self.disc(
-            m,
-            moon + Vec3::new(0.1, 0.06, 0.006),
-            (0.21, 0.012),
-            kind::CLOTH,
-            rgba([0.04, 0.05, 0.12]),
-        );
+        for (at, r, c) in [
+            (centre, 0.85, rgba(GILT)),
+            (centre + Vec3::Z * 0.006, 0.75, night),
+            (moon, 0.24, rgba(CREAM)),
+            (moon + Vec3::new(0.1, 0.06, 0.006), 0.21, night),
+        ] {
+            parts.push(self.disc_inst(m, at, (r, 0.012), kind::CLOTH, c));
+        }
         for side in [-1.0f32, 1.0] {
             let page = centre + Vec3::new(side * 0.22, -0.3, 0.012);
-            self.mounted(
-                m,
-                page,
-                Vec3::new(0.4, 0.26, 0.012),
-                side * 0.2,
-                kind::CLOTH,
-                rgba(CREAM),
-            );
+            let size = Vec3::new(0.4, 0.26, 0.012);
+            parts.push(m.boxed(page, size, side * 0.2, kind::CLOTH, rgba(CREAM)));
         }
-        // Rod and tassels.
-        let rod = Vec3::new(0.0, mid + h * 0.5 + 0.06, 0.09);
-        self.mounted(m, rod, Vec3::new(w + 0.5, 0.06, 0.06), 0.0, kind::WOOD, rgba(WALNUT));
+        let tassel = tassel(self);
         for side in [-1.0f32, 1.0] {
-            let end = rod + Vec3::X * side * (w * 0.5 + 0.28);
-            self.mounted(m, end, Vec3::new(0.12, 0.12, 0.12), FRAC_PI_4, kind::METAL, rgba(GILT));
-            let tassel = Vec3::new(side * (w * 0.5 - 0.1), mid - h * 0.5 - 0.12, 0.09);
-            self.mounted(m, tassel, Vec3::new(0.06, 0.24, 0.06), 0.0, kind::CLOTH, rgba(GILT));
+            let head = m.at(Vec3::new(side * (w * 0.5 - 0.1), mid - h * 0.5, 0.09));
+            parts.push(tassel.at(head, Quat::IDENTITY, kind::CLOTH, rgba(GILT)));
+        }
+        // The rod, with finials, it hangs from.
+        let rod_at = Vec3::new(0.0, mid + h * 0.5 + 0.06, 0.09);
+        let ends = (
+            m.at(rod_at - Vec3::X * (w * 0.5 + 0.22)),
+            m.at(rod_at + Vec3::X * (w * 0.5 + 0.22)),
+        );
+        let i = rod(self, ends, 0.06, kind::WOOD, rgba(WALNUT));
+        self.decor(i);
+        let finial = finial(self);
+        for (end, out) in [(ends.0, -m.right()), (ends.1, m.right())] {
+            let turn = Quat::from_rotation_arc(Vec3::Y, out);
+            self.decor(finial.at(end, turn, kind::METAL, rgba(GILT)));
+        }
+        let mut r = StdRng::seed_from_u64(0x7a9f ^ (s > 0.0) as u64);
+        let sway = (0.0045, r.gen_range(7.5..9.0), r.gen_range(80.0..110.0));
+        let mover = stir(self, m.at(rod_at), m.right(), sway, r.gen_range(0.0..100.0));
+        for p in parts {
+            self.moving(mover, p);
         }
     }
 
@@ -913,31 +1068,28 @@ impl Library {
                 ink,
             );
         }
-        // The rollers, with gilt ends, and a cord up to a hook.
+        // The rollers, with gilt finials, and a cord up to a hook.
         let roller = rgba(DARK_WOOD);
+        let finial = finial(self);
         for ry in [y + h * 0.5 + 0.03, y - h * 0.5 - 0.03] {
-            self.mounted(
-                m,
-                Vec3::new(0.0, ry, 0.06),
-                Vec3::new(w + 0.3, 0.1, 0.1),
-                0.0,
-                kind::WOOD,
-                roller,
-            );
-            for s in [-1.0f32, 1.0] {
-                let end = Vec3::new(s * (w * 0.5 + 0.2), ry, 0.06);
-                self.mounted(m, end, Vec3::new(0.1, 0.14, 0.14), FRAC_PI_4, kind::METAL, gilt);
+            let half = Vec3::X * (w * 0.5 + 0.15);
+            let at = Vec3::new(0.0, ry, 0.06);
+            let ends = (m.at(at - half), m.at(at + half));
+            let i = rod(self, ends, 0.1, kind::WOOD, roller);
+            self.decor(i);
+            for (end, out) in [(ends.0, -m.right()), (ends.1, m.right())] {
+                let turn = Quat::from_rotation_arc(Vec3::Y, out);
+                self.decor(finial.scaled(1.3).at(end, turn, kind::METAL, gilt));
             }
         }
-        let hook = Vec3::new(0.0, y + h * 0.5 + 0.75, 0.05);
+        let hook = m.at(Vec3::new(0.0, y + h * 0.5 + 0.75, 0.05));
         for s in [-1.0f32, 1.0] {
-            let foot = Vec3::new(s * (w * 0.5 - 0.1), y + h * 0.5 + 0.06, 0.05);
-            let d = hook - foot;
-            let spin = libm::atan2f(d.y, d.x);
-            let cord = Vec3::new(d.length(), 0.02, 0.02);
-            self.mounted(m, (hook + foot) * 0.5, cord, spin, kind::CLOTH, rgba([0.35, 0.25, 0.1]));
+            let foot = m.at(Vec3::new(s * (w * 0.5 - 0.1), y + h * 0.5 + 0.06, 0.05));
+            let i = rod(self, (foot, hook), 0.018, kind::CLOTH, rgba([0.35, 0.25, 0.1]));
+            self.decor(i);
         }
-        self.mounted(m, hook, Vec3::new(0.08, 0.08, 0.1), FRAC_PI_4, kind::METAL, gilt);
+        let knob = self.shape(Mesh::sphere(16)).sized(Vec3::splat(0.07));
+        self.decor(knob.inst(hook, Quat::IDENTITY, kind::METAL, gilt));
     }
 
     /// A great clock face on a walnut board, at ten to midnight as the library opens.
@@ -1184,30 +1336,7 @@ impl Library {
             kind::PLAIN,
             [0.02, 0.015, 0.012],
         ));
-        for (i, (x, ang)) in [(-0.3f32, 0.3f32), (0.25, -0.25), (0.0, 0.05)].iter().enumerate() {
-            let p = fc + Vec3::new(*x, 0.12 + i as f32 * 0.07, -0.75);
-            self.decor(Inst::new(
-                p,
-                Quat::from_rotation_y(*ang),
-                Vec3::new(0.9, 0.14, 0.14),
-                kind::WOOD,
-                [0.08, 0.04, 0.02, 1.0],
-                0,
-            ));
-        }
-        for k in 0..7 {
-            let x = -0.45 + k as f32 * 0.15;
-            let h = 0.25 + 0.2 * (libm::sinf(k as f32 * 1.7) * 0.5 + 0.5);
-            let mut flame = Inst::aabox(
-                fc + Vec3::new(x, 0.25 + h * 0.5, -0.75),
-                Vec3::new(0.09, h, 0.09),
-                kind::EMISSIVE,
-                [1.0, 0.42, 0.1],
-            );
-            flame.color[3] = 8.0;
-            flame.param = 1;
-            self.decor(flame);
-        }
+        hearth_fire(self, fc + Vec3::new(0.0, 0.0, -0.75));
         self.collide(
             fc + Vec3::new(-2.5, 0.0, -1.7),
             fc + Vec3::new(2.5, 3.0, 0.0),
@@ -1245,6 +1374,27 @@ impl Library {
         let metal =
             |lib: &mut Self, min: Vec3, max: Vec3, rgb| lib.decor(Inst::minmax(fc + min, fc + max, kind::METAL, rgb));
         metal(self, Vec3::new(-2.2, 0.08, -1.56), Vec3::new(2.2, 0.2, -1.5), BRASS);
+        let i = rod(
+            self,
+            (fc + Vec3::new(-2.2, 0.215, -1.53), fc + Vec3::new(2.2, 0.215, -1.53)),
+            0.035,
+            kind::METAL,
+            brass,
+        );
+        self.decor(i);
+        let knob = lathe(
+            self,
+            &[
+                (0.0, 0.0),
+                (0.02, 0.0),
+                (0.016, 0.012),
+                (0.04, 0.04),
+                (0.036, 0.062),
+                (0.012, 0.078),
+                (0.0, 0.082),
+            ],
+            16,
+        );
         for s in [-1.0f32, 1.0] {
             let (a, b) = (s * 2.17, s * 2.23);
             metal(
@@ -1253,124 +1403,118 @@ impl Library {
                 Vec3::new(a.max(b), 0.2, -0.9),
                 BRASS,
             );
-            // Firedogs under the logs.
+            // Firedogs under the logs: an upright with a brass knob, and a bar back
+            // under the fire.
             let x = s * 0.55;
-            metal(
+            let foot = fc + Vec3::new(x, 0.0, -1.05);
+            let i = rod(
                 self,
-                Vec3::new(x - 0.03, 0.08, -1.08),
-                Vec3::new(x + 0.03, 0.34, -1.02),
-                IRON,
-            );
-            metal(
-                self,
-                Vec3::new(x - 0.02, 0.06, -1.02),
-                Vec3::new(x + 0.02, 0.1, -0.45),
-                IRON,
-            );
-            let knob = fc + Vec3::new(x, 0.38, -1.05);
-            self.decor(Inst::new(
-                knob,
-                Quat::from_rotation_y(FRAC_PI_4),
-                Vec3::splat(0.08),
+                (foot + Vec3::Y * 0.08, foot + Vec3::Y * 0.34),
+                0.05,
                 kind::METAL,
-                brass,
-                0,
-            ));
+                iron,
+            );
+            self.decor(i);
+            self.decor(knob.at(foot + Vec3::Y * 0.33, Quat::IDENTITY, kind::METAL, brass));
+            let bar = (foot + Vec3::new(0.0, 0.08, 0.03), foot + Vec3::new(0.0, 0.08, 0.6));
+            let i = rod(self, bar, 0.035, kind::METAL, iron);
+            self.decor(i);
         }
-        // Fire irons on a stand by the right jamb, on the hearthstone.
+        // Fire irons on a stand by the right jamb, on the hearthstone: a poker, a
+        // shovel and a brush, hanging by their brass handles.
         let stand = fc + Vec3::new(2.32, 0.08, -1.3);
-        self.decor(Inst::aabox(
-            stand + Vec3::Y * 0.01,
-            Vec3::new(0.16, 0.02, 0.16),
-            kind::METAL,
-            IRON,
-        ));
-        self.decor(Inst::aabox(
-            stand + Vec3::Y * 0.4,
-            Vec3::new(0.03, 0.78, 0.03),
-            kind::METAL,
-            IRON,
-        ));
+        let base = lathe(
+            self,
+            &[(0.0, 0.0), (0.08, 0.0), (0.08, 0.012), (0.05, 0.025), (0.0, 0.025)],
+            16,
+        );
+        self.decor(base.at(stand, Quat::IDENTITY, kind::METAL, iron));
+        let i = rod(self, (stand, stand + Vec3::Y * 0.8), 0.03, kind::METAL, iron);
+        self.decor(i);
         let top = stand + Vec3::Y * 0.78;
-        for lean in [-0.14f32, 0.0, 0.14] {
+        let handle = lathe(
+            self,
+            &[
+                (0.0, 0.0),
+                (0.012, 0.0),
+                (0.02, 0.03),
+                (0.016, 0.07),
+                (0.022, 0.085),
+                (0.0, 0.1),
+            ],
+            12,
+        );
+        for (k, lean) in [-0.14f32, 0.0, 0.14].into_iter().enumerate() {
             let rot = Quat::from_rotation_x(lean);
-            let tool = top + rot * Vec3::new(0.0, -0.33, 0.0);
-            self.decor(Inst::new(tool, rot, Vec3::new(0.02, 0.6, 0.02), kind::METAL, iron, 0));
-            let handle = top + rot * Vec3::new(0.0, 0.04, 0.0);
-            self.decor(Inst::new(
-                handle,
-                rot,
-                Vec3::new(0.035, 0.09, 0.035),
-                kind::METAL,
-                brass,
-                0,
-            ));
+            let i = rod(self, (top + rot * Vec3::Y * -0.62, top), 0.018, kind::METAL, iron);
+            self.decor(i);
+            self.decor(handle.at(top, rot, kind::METAL, brass));
+            let end = top + rot * Vec3::Y * -0.62;
+            let head = match k {
+                0 => Inst::new(
+                    end + rot * Vec3::new(0.0, 0.02, 0.03),
+                    rot,
+                    Vec3::new(0.016, 0.016, 0.07),
+                    kind::METAL,
+                    iron,
+                    0,
+                ),
+                1 => Inst::new(end, rot, Vec3::new(0.11, 0.13, 0.008), kind::METAL, iron, 0),
+                _ => self.shape(Mesh::cylinder(12)).sized(Vec3::new(0.06, 0.1, 0.06)).inst(
+                    end,
+                    rot,
+                    kind::CLOTH,
+                    rgba([0.12, 0.08, 0.05]),
+                ),
+            };
+            self.decor(head);
         }
-        // On the mantel: candlesticks at its ends and a clock between.
+        // On the mantel: candlesticks under glass chimneys at its ends, and a clock
+        // between.
         let shelf = fc + Vec3::new(0.0, 2.85, -0.85);
+        let stick = lathe(
+            self,
+            &[
+                (0.0, 0.0),
+                (0.068, 0.0),
+                (0.068, 0.01),
+                (0.055, 0.022),
+                (0.03, 0.032),
+                (0.015, 0.05),
+                (0.013, 0.11),
+                (0.024, 0.13),
+                (0.013, 0.15),
+                (0.011, 0.27),
+                (0.02, 0.29),
+                (0.05, 0.305),
+                (0.05, 0.315),
+                (0.024, 0.32),
+                (0.024, 0.345),
+                (0.0, 0.345),
+            ],
+            24,
+        );
+        let candle = self.shape(Mesh::cylinder(16)).sized(Vec3::new(0.04, 0.2, 0.04));
+        let chimney = Mesh::lathe(
+            &[(0.044, 0.0), (0.058, 0.06), (0.066, 0.13), (0.06, 0.2), (0.047, 0.28)].map(Vec2::from),
+            24,
+        );
+        let chimney = self.shape(chimney.two_sided());
         for s in [-1.0f32, 1.0] {
             let p = shelf + Vec3::X * s * 2.1;
-            self.decor(Inst::aabox(
-                p + Vec3::Y * 0.015,
-                Vec3::new(0.14, 0.03, 0.14),
-                kind::METAL,
-                BRASS,
+            self.decor(stick.at(p, Quat::IDENTITY, kind::METAL, brass));
+            self.decor(candle.inst(p + Vec3::Y * 0.42, Quat::IDENTITY, kind::PLAIN, rgba([0.8, 0.75, 0.6])));
+            self.translucent(Inst::new(
+                p + Vec3::Y * 0.555,
+                Quat::IDENTITY,
+                Vec3::new(0.026, 0.06, 0.026),
+                kind::FIRE,
+                [1.0, 0.6, 0.22, 3.0],
+                0,
             ));
-            self.decor(Inst::aabox(
-                p + Vec3::Y * 0.17,
-                Vec3::new(0.04, 0.28, 0.04),
-                kind::METAL,
-                BRASS,
-            ));
-            self.decor(Inst::aabox(
-                p + Vec3::Y * 0.32,
-                Vec3::new(0.1, 0.02, 0.1),
-                kind::METAL,
-                BRASS,
-            ));
-            self.decor(Inst::aabox(
-                p + Vec3::Y * 0.43,
-                Vec3::new(0.045, 0.2, 0.045),
-                kind::PLAIN,
-                [0.8, 0.75, 0.6],
-            ));
-            let mut flame = Inst::aabox(
-                p + Vec3::Y * 0.56,
-                Vec3::new(0.025, 0.05, 0.025),
-                kind::EMISSIVE,
-                [1.0, 0.55, 0.18],
-            );
-            flame.color[3] = 14.0;
-            flame.param = 1;
-            self.decor(flame);
+            self.translucent(chimney.at(p + Vec3::Y * 0.315, Quat::IDENTITY, kind::CLEAR, [0.9, 0.95, 1.0, 0.08]));
         }
-        self.decor(Inst::aabox(
-            shelf + Vec3::Y * 0.22,
-            Vec3::new(0.44, 0.44, 0.2),
-            kind::WOOD,
-            WALNUT,
-        ));
-        self.decor(Inst::aabox(
-            shelf + Vec3::Y * 0.48,
-            Vec3::new(0.3, 0.08, 0.16),
-            kind::WOOD,
-            WALNUT,
-        ));
-        let mantel = Mount {
-            at: shelf - Vec3::Z * 0.1,
-            n: -Vec3::Z,
-        };
-        self.disc(
-            mantel,
-            Vec3::new(0.0, 0.24, 0.01),
-            (0.15, 0.01),
-            kind::PLAIN,
-            rgba(CREAM),
-        );
-        for (a, len) in [(1.9f32, 0.09f32), (0.5, 0.12)] {
-            let at = Vec3::new(0.0, 0.24, 0.022) + Vec3::new(libm::cosf(a), libm::sinf(a), 0.0) * len * 0.45;
-            self.mounted(mantel, at, Vec3::new(len, 0.012, 0.004), a, kind::METAL, iron);
-        }
+        mantel_clock(self, shelf);
         // The emblem over the mantel: a crescent moon over an open book, gilt on a
         // blue field in a stone frame.
         let m = Mount {
@@ -1417,38 +1561,74 @@ impl Library {
         self.rug(rug);
     }
 
-    /// A banker's lamp standing on a table at `p`: a brass stem under a green glass
-    /// shade, lit from under it.
+    /// A banker's lamp standing on a table at `p`: a brass stem on a stepped foot
+    /// under a half-round shade of green cased glass, white inside, lit from under it.
     fn desk_lamp(&mut self, p: Vec3) {
-        let brass =
-            |lib: &mut Self, y: f32, size: Vec3| lib.decor(Inst::aabox(p + Vec3::Y * y, size, kind::METAL, BRASS));
-        brass(self, 0.015, Vec3::new(0.22, 0.03, 0.14));
-        brass(self, 0.19, Vec3::new(0.025, 0.32, 0.025));
-        brass(self, 0.33, Vec3::new(0.05, 0.025, 0.05));
-        // The shade, a half-round of green glass: a crown and two slopes.
-        let glass = [0.02, 0.17, 0.065, 0.3];
-        let shade = p + Vec3::Y * 0.37;
-        self.decor(Inst::new(
-            shade + Vec3::Y * 0.035,
-            Quat::IDENTITY,
-            Vec3::new(0.4, 0.012, 0.07),
-            kind::CRYSTAL,
-            glass,
-            0,
-        ));
-        for s in [-1.0f32, 1.0] {
-            let rot = Quat::from_rotation_x(s * 0.8);
-            let at = shade + Vec3::new(0.0, 0.0, s * 0.055);
-            self.decor(Inst::new(at, rot, Vec3::new(0.4, 0.012, 0.1), kind::CRYSTAL, glass, 0));
-        }
-        let mut bulb = Inst::aabox(
-            shade - Vec3::Y * 0.02,
-            Vec3::new(0.3, 0.02, 0.06),
-            kind::EMISSIVE,
-            [1.0, 0.8, 0.5],
+        let brass = rgba(BRASS);
+        let foot = lathe(
+            self,
+            &[
+                (0.0, 0.0),
+                (0.11, 0.0),
+                (0.11, 0.008),
+                (0.1, 0.016),
+                (0.07, 0.024),
+                (0.035, 0.03),
+                (0.02, 0.04),
+                (0.0, 0.04),
+            ],
+            32,
         );
-        bulb.color[3] = 4.0;
-        self.decor(bulb);
+        self.decor(
+            foot.sized(Vec3::new(0.22, 0.04, 0.15))
+                .at(p, Quat::IDENTITY, kind::METAL, brass),
+        );
+        let i = rod(
+            self,
+            (p + Vec3::Y * 0.035, p + Vec3::Y * 0.335),
+            0.022,
+            kind::METAL,
+            brass,
+        );
+        self.decor(i);
+        let knop = self.shape(Mesh::sphere(12)).sized(Vec3::new(0.036, 0.03, 0.036));
+        self.decor(knop.inst(p + Vec3::Y * 0.16, Quat::IDENTITY, kind::METAL, brass));
+        // The shade, along x over the stem, open below with its ends closed.
+        let axis = p + Vec3::Y * 0.35;
+        let along = Quat::from_rotation_y(FRAC_PI_2);
+        let half_round = |r: f32| -> Vec<Vec2> {
+            (0..=16)
+                .map(|k| Vec2::new(libm::cosf(PI * k as f32 / 16.0), libm::sinf(PI * k as f32 / 16.0)) * r)
+                .collect()
+        };
+        let band = |outer: f32, inner: f32, len: f32| {
+            let mut o = half_round(outer);
+            o.extend(half_round(inner).into_iter().rev());
+            Mesh::prism(&o, len)
+        };
+        let mut glass = band(0.085, 0.079, 0.4);
+        for z in [-0.196, 0.196] {
+            glass.add(
+                &Mesh::prism(&half_round(0.08), 0.006),
+                Vec3::Z * z,
+                Quat::IDENTITY,
+                Vec3::ONE,
+            );
+        }
+        let glass = self.shape(glass);
+        self.decor(glass.at(axis, along, kind::CRYSTAL, [0.02, 0.17, 0.065, 0.3]));
+        let lining = self.shape(band(0.0785, 0.0765, 0.388));
+        self.decor(lining.at(axis, along, kind::PAPER, [1.0, 0.86, 0.6, 0.9]));
+        let collar = self.shape(Mesh::cylinder(16)).sized(Vec3::new(0.05, 0.03, 0.05));
+        self.decor(collar.inst(axis - Vec3::Y * 0.005, Quat::IDENTITY, kind::METAL, brass));
+        let tube = self.shape(Mesh::cylinder(12)).sized(Vec3::new(0.028, 0.26, 0.028));
+        let lit = [1.0, 0.82, 0.55, 4.0];
+        self.decor(tube.inst(
+            axis + Vec3::Y * 0.035,
+            along * Quat::from_rotation_x(FRAC_PI_2),
+            kind::EMISSIVE,
+            lit,
+        ));
         self.light(p + Vec3::Y * 0.25, 3.2, [1.0, 0.82, 0.55], 0.7, LightKind::Static);
     }
 
@@ -1456,18 +1636,46 @@ impl Library {
     /// ecliptic rings round a small globe on its polar axis; the heavens (the equator,
     /// the ecliptic and the globe) turn slowly about the pole.
     fn armillary(&mut self, c: Vec3) {
-        let wood =
-            |lib: &mut Self, y: f32, size: Vec3, rgb| lib.decor(Inst::aabox(c + Vec3::Y * y, size, kind::WOOD, rgb));
-        wood(self, 0.04, Vec3::new(0.7, 0.08, 0.7), WALNUT);
-        wood(self, 0.12, Vec3::new(0.42, 0.08, 0.42), DARK_WOOD);
-        wood(self, 0.5, Vec3::new(0.12, 0.7, 0.12), WALNUT);
-        wood(self, 0.45, Vec3::new(0.2, 0.12, 0.2), WALNUT);
-        self.decor(Inst::aabox(
-            c + Vec3::Y * 0.84,
-            Vec3::new(0.24, 0.06, 0.24),
-            kind::METAL,
-            BRASS,
-        ));
+        // A round foot, a step, a turned baluster and a brass cup.
+        let foot = lathe(
+            self,
+            &[(0.0, 0.0), (0.35, 0.0), (0.35, 0.05), (0.33, 0.08), (0.0, 0.08)],
+            48,
+        );
+        self.decor(foot.at(c, Quat::IDENTITY, kind::WOOD, rgba(WALNUT)));
+        let step = lathe(
+            self,
+            &[(0.0, 0.0), (0.21, 0.0), (0.21, 0.055), (0.18, 0.08), (0.0, 0.08)],
+            32,
+        );
+        self.decor(step.at(c + Vec3::Y * 0.08, Quat::IDENTITY, kind::WOOD, rgba(DARK_WOOD)));
+        let baluster = lathe(
+            self,
+            &[
+                (0.0, 0.0),
+                (0.075, 0.0),
+                (0.075, 0.03),
+                (0.055, 0.05),
+                (0.075, 0.12),
+                (0.095, 0.22),
+                (0.09, 0.3),
+                (0.06, 0.38),
+                (0.042, 0.5),
+                (0.06, 0.56),
+                (0.06, 0.6),
+                (0.045, 0.62),
+                (0.045, 0.65),
+                (0.0, 0.65),
+            ],
+            24,
+        );
+        self.decor(baluster.at(c + Vec3::Y * 0.16, Quat::IDENTITY, kind::WOOD, rgba(WALNUT)));
+        let cup = lathe(
+            self,
+            &[(0.0, 0.0), (0.05, 0.0), (0.11, 0.045), (0.12, 0.06), (0.0, 0.06)],
+            24,
+        );
+        self.decor(cup.at(c + Vec3::Y * 0.81, Quat::IDENTITY, kind::METAL, rgba(BRASS)));
         let o = c + Vec3::Y * 1.32;
         let r = 0.42;
         let brass = rgba(BRASS);
@@ -1482,13 +1690,9 @@ impl Library {
         for k in 0..4 {
             let a = FRAC_PI_4 + k as f32 * FRAC_PI_2;
             let d = Vec3::new(libm::cosf(a), 0.0, libm::sinf(a));
-            self.beam(
-                c + d * 0.3 + Vec3::Y * 0.08,
-                o + d * 0.52 - Vec3::Y * 0.02,
-                0.035,
-                0.035,
-                WALNUT,
-            );
+            let leg = (c + d * 0.3 + Vec3::Y * 0.08, o + d * 0.52 - Vec3::Y * 0.02);
+            let i = rod(self, leg, 0.035, kind::WOOD, rgba(WALNUT));
+            self.decor(i);
         }
         // The meridian stands square to the horizon, turned off the room's axes so it
         // shows as a ring from the doorway and the hearth; the pole leans along it.
@@ -1538,101 +1742,170 @@ impl Library {
         );
     }
 
-    /// A lectern at `c` facing south, its great book open and glowing faintly, motes
-    /// of light rising off the pages: the reading room's one enchantment within reach.
+    /// A lectern at `c` facing south: a turned walnut column on a round stone foot,
+    /// and on it a great book open, its writing glowing faintly, a leaf of it turning
+    /// over and back now and then and motes of light floating over its pages: the
+    /// reading room's one enchantment within reach.
     fn lectern(&mut self, c: Vec3) {
-        self.decor(Inst::aabox(
-            c + Vec3::Y * 0.05,
-            Vec3::new(0.6, 0.1, 0.5),
-            kind::STONE,
-            DRESSED,
-        ));
-        self.decor(Inst::aabox(
-            c + Vec3::Y * 0.15,
-            Vec3::new(0.34, 0.1, 0.3),
-            kind::STONE,
-            DRESSED,
-        ));
-        let wood =
-            |lib: &mut Self, y: f32, size: Vec3| lib.decor(Inst::aabox(c + Vec3::Y * y, size, kind::WOOD, WALNUT));
-        wood(self, 0.55, Vec3::new(0.15, 0.7, 0.15));
-        for y in [0.32, 0.62] {
-            wood(self, y, Vec3::new(0.2, 0.05, 0.2));
-        }
-        wood(self, 0.92, Vec3::new(0.22, 0.06, 0.22));
+        let foot = lathe(
+            self,
+            &[
+                (0.0, 0.0),
+                (0.3, 0.0),
+                (0.3, 0.07),
+                (0.27, 0.1),
+                (0.19, 0.1),
+                (0.19, 0.17),
+                (0.16, 0.2),
+                (0.0, 0.2),
+            ],
+            40,
+        );
+        self.decor(foot.at(c, Quat::IDENTITY, kind::STONE, rgba(DRESSED)));
+        let column = lathe(
+            self,
+            &[
+                (0.0, 0.0),
+                (0.1, 0.0),
+                (0.1, 0.035),
+                (0.08, 0.05),
+                (0.088, 0.11),
+                (0.078, 0.18),
+                (0.05, 0.26),
+                (0.045, 0.32),
+                (0.072, 0.37),
+                (0.072, 0.4),
+                (0.045, 0.45),
+                (0.04, 0.6),
+                (0.07, 0.64),
+                (0.07, 0.67),
+                (0.05, 0.69),
+                (0.11, 0.74),
+                (0.11, 0.76),
+                (0.0, 0.76),
+            ],
+            24,
+        );
+        let walnut = rgba(WALNUT);
+        self.decor(column.at(c + Vec3::Y * 0.2, Quat::IDENTITY, kind::WOOD, walnut));
         let desk_at = c + Vec3::Y * 1.05;
         let desk = Quat::from_rotation_x(0.38);
-        let walnut = rgba(WALNUT);
+        let on_desk = |p: Vec3| desk_at + desk * p;
+        let bracket = Vec3::new(0.22, 0.06, 0.3);
         self.decor(Inst::new(
-            desk_at,
+            on_desk(Vec3::Y * -0.05),
             desk,
-            Vec3::new(0.8, 0.04, 0.56),
+            bracket,
             kind::WOOD,
             walnut,
             0,
         ));
-        let lip = desk_at + desk * Vec3::new(0.0, 0.04, 0.27);
-        self.decor(Inst::new(lip, desk, Vec3::new(0.8, 0.06, 0.03), kind::WOOD, walnut, 0));
-        // The book: its boards, the pages rising to the spine, and a ribbon.
-        let book = desk_at + desk * Vec3::new(0.0, 0.03, -0.02);
+        let board = Vec3::new(0.8, 0.04, 0.56);
+        self.decor(Inst::new(desk_at, desk, board, kind::WOOD, walnut, 0));
+        let lip = Vec3::new(0.8, 0.06, 0.03);
+        self.decor(Inst::new(
+            on_desk(Vec3::new(0.0, 0.04, 0.27)),
+            desk,
+            lip,
+            kind::WOOD,
+            walnut,
+            0,
+        ));
+        // The book: its boards, and the pages on them falling away from the gutter to
+        // their fore-edges (placed by `top`, on the boards in the book's frame).
+        let book = Vec3::new(0.0, 0.0, -0.02);
+        let cover = Vec3::new(0.74, 0.02, 0.5);
         let boards = [0.26, 0.05, 0.04, 1.0];
         self.decor(Inst::new(
-            book,
+            on_desk(book + Vec3::Y * 0.03),
             desk,
-            Vec3::new(0.74, 0.02, 0.5),
+            cover,
             kind::PLAIN,
             boards,
             0,
         ));
+        let top = |p: Vec3| on_desk(book + Vec3::Y * 0.04 + p);
+        let slope = 0.0095 / 0.265;
+        let surface = |x: f32| 0.049 - (x.abs() - 0.07) * slope;
+        let page = [
+            (0.355, 0.032),
+            (0.335, 0.0395),
+            (0.07, 0.049),
+            (0.035, 0.046),
+            (0.015, 0.038),
+        ];
+        let mut block = vec![Vec2::new(-0.355, 0.0), Vec2::new(0.355, 0.0)];
+        block.extend(page.iter().map(|&(x, y)| Vec2::new(x, y)));
+        block.push(Vec2::new(0.0, 0.03));
+        block.extend(page.iter().rev().map(|&(x, y)| Vec2::new(-x, y)));
+        let block = self.shape(Mesh::prism(&block, 0.46));
+        let paper = [0.72, 0.66, 0.5, 1.0];
+        self.decor(block.at(top(Vec3::ZERO), desk, kind::PARCHMENT, paper));
+        // Its writing glows.
         for s in [-1.0f32, 1.0] {
-            let at = book + desk * Vec3::new(s * 0.18, 0.035, 0.0);
-            let rot = desk * Quat::from_rotation_z(-s * 0.12);
-            let page = [0.72, 0.66, 0.5, 1.0];
-            self.decor(Inst::new(
-                at,
-                rot,
-                Vec3::new(0.34, 0.045, 0.46),
-                kind::PARCHMENT,
-                page,
-                0,
-            ));
-            // Its writing glows.
+            let lie = desk * Quat::from_rotation_z(-s * libm::atanf(slope));
             for line in 0..7 {
-                let len = if line % 3 == 2 { 0.16 } else { 0.24 };
-                let off = Vec3::new(-0.01 * s, 0.024, -0.17 + line as f32 * 0.055);
+                let len = if line % 3 == 2 { 0.15 } else { 0.22 };
+                let x = s * (0.2 - (0.22 - len) * 0.5);
+                let at = top(Vec3::new(x, surface(x) + 0.001, -0.17 + line as f32 * 0.055));
                 let glow = [0.3, 0.55, 1.0, 1.6];
-                let ink = Vec3::new(len, 0.003, 0.012);
-                self.decor(Inst::new(at + rot * off, rot, ink, kind::CRYSTAL, glow, 0));
+                self.decor(Inst::new(at, lie, Vec3::new(len, 0.003, 0.012), kind::CRYSTAL, glow, 0));
             }
         }
-        let ribbon = book + desk * Vec3::new(0.02, 0.06, 0.27);
+        // A ribbon down the gutter and over the end of the pages.
         let red = [0.5, 0.06, 0.06, 1.0];
-        self.decor(Inst::new(
-            ribbon,
-            desk,
-            Vec3::new(0.025, 0.004, 0.14),
-            kind::CLOTH,
-            red,
-            0,
-        ));
+        for (a, b) in [
+            (Vec3::new(0.0, 0.032, 0.06), Vec3::new(0.0, 0.032, 0.23)),
+            (Vec3::new(0.0, 0.032, 0.23), Vec3::new(0.0, -0.018, 0.255)),
+        ] {
+            let d = b - a;
+            let lie = desk * Quat::from_rotation_x(libm::atan2f(-d.y, d.z));
+            let size = Vec3::new(0.025, 0.003, d.length() + 0.004);
+            self.decor(Inst::new(top((a + b) * 0.5), lie, size, kind::CLOTH, red, 0));
+        }
+        // A leaf turning over from one side to the other and back, resting a while
+        // between, sunk a hair into the pages: a swing, and one of a ninth of its reach
+        // at three times its pace, whose sum dwells at its ends (sin x + sin 3x / 9 is
+        // flat to the fourth order at its peak, 8/9).
+        let spine = top(Vec3::Y * 0.047);
+        let (reach, period) = (1.71 * 9.0 / 8.0, 34.0);
+        let axis = desk * Vec3::Z;
+        let swing = |amp: f32, period: f32| Motion::Swing { axis, amp, period };
+        let turn = self.mover(spine, swing(reach, period), 6.0, None);
+        let turn = self.mover(spine, swing(reach / 9.0, period / 3.0), 6.0, Some(turn));
+        let leaf = Vec3::new(0.33, 0.002, 0.44);
+        let upright = desk * Quat::from_rotation_z(FRAC_PI_2);
+        let at = top(Vec3::Y * (0.047 + 0.165));
+        self.moving(turn, Inst::new(at, upright, leaf, kind::PARCHMENT, paper, 0));
+        // Motes of light over it, each bobbing in its own time, the lot turning slowly.
+        let over = on_desk(book) + Vec3::Y * 0.05;
+        let cloud = self.mover(
+            over,
+            Motion::Spin {
+                axis: Vec3::Y,
+                rate: 0.15,
+            },
+            0.0,
+            None,
+        );
         let mut r = StdRng::seed_from_u64(0x1ec7);
         for k in 0..11 {
             let up = 0.1 + k as f32 * 0.07;
             let a = k as f32 * 2.4;
-            let at = book + Vec3::new(libm::cosf(a) * 0.14, up, libm::sinf(a) * 0.1);
+            let p = over + Vec3::new(libm::cosf(a) * 0.14, up, libm::sinf(a) * 0.1);
             let s = r.gen_range(0.012..0.022);
             let rot = Quat::from_rotation_y(a) * Quat::from_rotation_x(FRAC_PI_4);
             let glow = r.gen_range(1.5..3.0) * (1.0 - k as f32 * 0.06);
-            self.decor(Inst::new(
-                at,
-                rot,
-                Vec3::splat(s),
-                kind::CRYSTAL,
-                [0.55, 0.75, 1.0, glow],
-                0,
-            ));
+            let bob = Motion::Bob {
+                amp: r.gen_range(0.03..0.06),
+                period: r.gen_range(5.0..9.0),
+                rock: 0.6,
+            };
+            let mote = self.mover(p, bob, r.gen_range(0.0..9.0), Some(cloud));
+            let i = Inst::new(p, rot, Vec3::splat(s), kind::CRYSTAL, [0.55, 0.75, 1.0, glow], 0);
+            self.moving(mote, i);
         }
-        self.light(book + Vec3::Y * 0.8, 3.0, [0.55, 0.72, 1.0], 0.5, LightKind::Flicker);
+        self.light(over + Vec3::Y * 0.8, 3.0, [0.55, 0.72, 1.0], 0.5, LightKind::Flicker);
         self.collide(
             c - Vec3::new(0.42, 0.0, 0.36),
             c + Vec3::new(0.42, 1.3, 0.36),
@@ -1709,4 +1982,120 @@ impl Library {
         }
         !spots.iter().any(|q| q.distance(p) < r * 2.0 + 1.1)
     }
+}
+
+/// The fire on the hearth, `c` under its middle: logs on a bed of embers, flames
+/// licking up off them, and a wisp of smoke going up the flue.
+fn hearth_fire(lib: &mut Library, c: Vec3) {
+    let log = lib.shape(Mesh::cylinder(12)).sized(Vec3::new(0.14, 0.9, 0.14));
+    for (i, (x, ang)) in [(-0.3f32, 0.3f32), (0.25, -0.25), (0.0, 0.05)].into_iter().enumerate() {
+        let p = c + Vec3::new(x, 0.12 + i as f32 * 0.07, 0.0);
+        let lie = Quat::from_rotation_y(ang) * Quat::from_rotation_z(FRAC_PI_2);
+        lib.decor(log.inst(p, lie, kind::WOOD, [0.08, 0.04, 0.02, 1.0]));
+    }
+    let mut embers = Inst::aabox(
+        c + Vec3::new(0.0, 0.035, 0.03),
+        Vec3::new(1.1, 0.05, 0.32),
+        kind::EMISSIVE,
+        [1.0, 0.28, 0.05],
+    );
+    embers.color[3] = 2.5;
+    embers.param = 1;
+    lib.decor(embers);
+    // A broad sheet of flame along the logs, and tongues off it at either end.
+    for (at, size, turn) in [
+        (Vec3::new(0.0, 0.62, 0.0), Vec3::new(1.2, 0.85, 0.34), 0.0f32),
+        (Vec3::new(-0.38, 0.5, 0.04), Vec3::new(0.5, 0.55, 0.24), 0.5),
+        (Vec3::new(0.4, 0.47, -0.03), Vec3::new(0.45, 0.5, 0.24), -0.4),
+    ] {
+        lib.translucent(Inst::new(
+            c + at,
+            Quat::from_rotation_y(turn),
+            size,
+            kind::FIRE,
+            [1.0, 0.5, 0.16, 2.5],
+            1,
+        ));
+    }
+    // Up into the dark under the lintel.
+    lib.translucent(Inst::new(
+        c + Vec3::new(0.0, 1.45, 0.08),
+        Quat::IDENTITY,
+        Vec3::new(0.5, 1.1, 0.26),
+        kind::MIST,
+        [0.4, 0.38, 0.36, 0.5],
+        0,
+    ));
+}
+
+/// A clock on the mantel at `shelf` (the shelf's top, under the clock's middle): a
+/// walnut case with a round head, its dial under a domed glass, keeping the great
+/// clock's time.
+fn mantel_clock(lib: &mut Library, shelf: Vec3) {
+    let m = Mount {
+        at: shelf - Vec3::Z * 0.1,
+        n: -Vec3::Z,
+    };
+    let walnut = rgba(WALNUT);
+    let gilt = rgba(GILT);
+    lib.mounted(
+        m,
+        Vec3::new(0.0, 0.015, -0.1),
+        Vec3::new(0.5, 0.03, 0.24),
+        0.0,
+        kind::WOOD,
+        walnut,
+    );
+    let (half, shoulder) = (0.21f32, 0.27f32);
+    let mut outline = vec![Vec2::new(-half, 0.0), Vec2::new(half, 0.0)];
+    outline.extend((0..=16).map(|k| {
+        let a = PI * k as f32 / 16.0;
+        Vec2::new(half * libm::cosf(a), shoulder + half * libm::sinf(a))
+    }));
+    let case = lib.shape(Mesh::prism(&outline, 0.2));
+    lib.decor(case.at(m.at(Vec3::new(0.0, 0.03, -0.1)), m.rot(0.0), kind::WOOD, walnut));
+    let knob = lib.shape(Mesh::sphere(12)).sized(Vec3::splat(0.04));
+    lib.decor(knob.inst(
+        m.at(Vec3::new(0.0, 0.03 + shoulder + half + 0.015, -0.1)),
+        Quat::IDENTITY,
+        kind::METAL,
+        gilt,
+    ));
+    let centre = Vec3::new(0.0, 0.03 + shoulder, 0.0);
+    lib.disc(m, centre + Vec3::Z * 0.01, (0.15, 0.01), kind::PLAIN, rgba(CREAM));
+    let face = m.at(centre + Vec3::Z * 0.015);
+    lib.arc(
+        face,
+        (m.right(), Vec3::Y),
+        (0.157, 0.016, 0.012),
+        (0.0, TAU, 32),
+        (kind::METAL, gilt),
+    );
+    let ink = rgba(IRON);
+    for k in 0..12 {
+        let a = FRAC_PI_2 - k as f32 * TAU / 12.0;
+        let at = centre + Vec3::new(libm::cosf(a), libm::sinf(a), 0.0) * 0.125 + Vec3::Z * 0.016;
+        let len = if k % 3 == 0 { 0.03 } else { 0.018 };
+        lib.mounted(m, at, Vec3::new(len, 0.007, 0.002), a, kind::METAL, ink);
+    }
+    lib.clock_hands((face, m.n, 0.15), (11.0, 50.0), (ink, gilt), false);
+    let glass = Mesh::lathe(
+        &[
+            (0.15, 0.0),
+            (0.146, 0.02),
+            (0.133, 0.04),
+            (0.105, 0.058),
+            (0.06, 0.07),
+            (0.0, 0.074),
+        ]
+        .map(Vec2::from),
+        32,
+    );
+    let glass = lib.shape(glass.two_sided());
+    lib.translucent(glass.at(
+        face,
+        Quat::from_rotation_arc(Vec3::Y, m.n),
+        kind::CLEAR,
+        [0.92, 0.95, 1.0, 0.08],
+    ));
 }
