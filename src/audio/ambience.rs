@@ -179,13 +179,9 @@ impl Pair {
 
 /// One strand of a place's sound.
 enum Layer {
-    /// Still air: a low, soft hush, with `air` of a faint high one.
-    Hush {
-        level: f32,
-        air: f32,
-        low: Pair,
-        high: Pair,
-    },
+    /// Still air: a low, soft hush, nothing high in it (which would be heard as
+    /// hiss under everything).
+    Hush { level: f32, low: Pair },
     /// Moving air in gusts; `loft` is how much stronger it grows up under the
     /// atrium's roof.
     Wind {
@@ -230,12 +226,10 @@ enum Layer {
     },
 }
 
-fn hush(level: f32, cutoff: f32, air: f32) -> Layer {
+fn hush(level: f32, cutoff: f32) -> Layer {
     Layer::Hush {
         level,
-        air,
         low: Pair::new(cutoff, 0.6),
-        high: Pair::new(3500.0, 0.5),
     }
 }
 
@@ -301,13 +295,13 @@ impl Bed {
         let r = Sound::Ring;
         let (layers, rt60, damp) = match place {
             Place::Hall => (
-                vec![hush(0.07, 240.0, 0.12), scatter(g(Creak), 50.0, (0.05, 0.09), 0.7)],
+                vec![hush(0.07, 240.0), scatter(g(Creak), 50.0, (0.05, 0.09), 0.7)],
                 1.5,
                 0.45,
             ),
             Place::Atrium => (
                 vec![
-                    hush(0.075, 190.0, 0.2),
+                    hush(0.075, 190.0),
                     wind(0.03, 520.0, 2.5),
                     scatter(g(Creak), 70.0, (0.04, 0.07), 0.8),
                 ],
@@ -316,7 +310,7 @@ impl Bed {
             ),
             Place::Observatory => (
                 vec![
-                    hush(0.065, 260.0, 0.18),
+                    hush(0.065, 260.0),
                     wind(0.02, 700.0, 0.0),
                     scatter(r(Glint), 5.0, (0.006, 0.015), 0.8),
                     scatter(g(Owl), 140.0, (0.035, 0.05), 0.5),
@@ -326,7 +320,7 @@ impl Bed {
             ),
             Place::AlchemicalWing => (
                 vec![
-                    hush(0.065, 230.0, 0.1),
+                    hush(0.065, 230.0),
                     clusters(g(Bubble), 2.2, (0.012, 0.04), 0.35, (2, 7), 0.09),
                 ],
                 1.1,
@@ -334,7 +328,7 @@ impl Bed {
             ),
             Place::Herbarium => (
                 vec![
-                    hush(0.06, 300.0, 0.15),
+                    hush(0.06, 300.0),
                     clusters(g(Cricket), 9.0, (0.006, 0.012), 0.6, (3, 7), 0.55),
                     scatter(g(Drip), 6.0, (0.02, 0.04), 0.5),
                 ],
@@ -343,7 +337,7 @@ impl Bed {
             ),
             Place::Bestiary => (
                 vec![
-                    hush(0.07, 170.0, 0.08),
+                    hush(0.07, 170.0),
                     beat([Heart, Heart], 1.7, 0.025, 0.1),
                     scatter(g(Creak), 30.0, (0.025, 0.05), 0.6),
                 ],
@@ -352,7 +346,7 @@ impl Bed {
             ),
             Place::MapRoom => (
                 vec![
-                    hush(0.06, 250.0, 0.12),
+                    hush(0.06, 250.0),
                     Layer::Sea {
                         level: 0.03,
                         t: 0.0,
@@ -367,7 +361,7 @@ impl Bed {
             ),
             Place::ChronicleHall => (
                 vec![
-                    hush(0.065, 230.0, 0.1),
+                    hush(0.065, 230.0),
                     scatter(g(Quill), 9.0, (0.02, 0.04), 0.8),
                     scatter(g(Page), 40.0, (0.02, 0.035), 0.6),
                 ],
@@ -376,7 +370,7 @@ impl Bed {
             ),
             Place::VerseGallery => (
                 vec![
-                    hush(0.06, 290.0, 0.1),
+                    hush(0.06, 290.0),
                     scatter(g(Page), 12.0, (0.02, 0.04), 0.7),
                     scatter(r(Glint), 9.0, (0.004, 0.009), 0.6),
                 ],
@@ -385,7 +379,7 @@ impl Bed {
             ),
             Place::Arcanum => (
                 vec![
-                    hush(0.055, 210.0, 0.1),
+                    hush(0.055, 210.0),
                     Layer::Hum {
                         level: 0.003,
                         base: 0.0,
@@ -398,7 +392,7 @@ impl Bed {
             ),
             Place::Clockworks => (
                 vec![
-                    hush(0.06, 250.0, 0.1),
+                    hush(0.06, 250.0),
                     beat([Tick, Tock], 1.0, 0.05, 0.25),
                     beat([Tick, Tick], 0.37, 0.01, -0.5),
                     scatter(r(Strike), 240.0, (0.02, 0.025), 0.3),
@@ -407,13 +401,13 @@ impl Bed {
                 0.4,
             ),
             Place::MusicRoom => (
-                vec![hush(0.06, 260.0, 0.12), scatter(r(String), 4.5, (0.004, 0.01), 0.5)],
+                vec![hush(0.06, 260.0), scatter(r(String), 4.5, (0.004, 0.01), 0.5)],
                 1.7,
                 0.35,
             ),
             Place::Weatherhouse => (
                 vec![
-                    hush(0.05, 250.0, 0.1),
+                    hush(0.05, 250.0),
                     Layer::Wash {
                         level: 0.014,
                         f: Pair::new(2500.0, 0.5),
@@ -427,11 +421,11 @@ impl Bed {
                 0.45,
             ),
             Place::HearthLibrary => (
-                vec![hush(0.06, 230.0, 0.08), scatter(g(Knit), 30.0, (0.015, 0.03), 0.4)],
+                vec![hush(0.06, 230.0), scatter(g(Knit), 30.0, (0.015, 0.03), 0.4)],
                 0.8,
                 0.6,
             ),
-            Place::Room => (vec![hush(0.07, 250.0, 0.1)], 1.1, 0.45),
+            Place::Room => (vec![hush(0.07, 250.0)], 1.1, 0.45),
         };
         Bed { layers, rt60, damp }
     }
@@ -497,13 +491,12 @@ impl Layer {
     fn render(&mut self, c: &mut Ctx) {
         let n = c.l.len();
         match self {
-            Layer::Hush { level, air, low, high } => {
+            Layer::Hush { level, low } => {
                 for i in 0..n {
                     let g = c.ramp(i) * *level;
                     let (a, b) = (c.noise.white(), c.noise.white());
-                    let (x, y) = (c.noise.white(), c.noise.white());
-                    c.l[i] += (low.0[0].low(a) + high.0[0].band(x) * *air) * g;
-                    c.r[i] += (low.0[1].low(b) + high.0[1].band(y) * *air) * g;
+                    c.l[i] += low.0[0].low(a) * g;
+                    c.r[i] += low.0[1].low(b) * g;
                 }
             }
             Layer::Wind {

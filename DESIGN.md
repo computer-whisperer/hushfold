@@ -360,7 +360,9 @@ bells and glints where something magical happens. Everything is synthesised;
   quieter, duller and more reverberant with distance. Bursts of one effect thin
   out (`crowd`), so the Aura's and Rush's flurries of filing stay soft.
 - **Places** (`Place`): each has a bed (room tone, weather, its flavour as
-  scattered grains and rung tones) and its reverb. `game/sound.rs` sends the
+  scattered grains and rung tones) and its reverb. Room tone is a low hush only,
+  below a few hundred hertz: a faint high band in it once sat under every sound
+  as audible static. `game/sound.rs` sends the
   weights each frame: a room fills in from its doorway and spills out into the
   atrium; the engine eases between them over a second. Fires are found by their
   light (a bright flicker near the floor) and heard from where they burn;
