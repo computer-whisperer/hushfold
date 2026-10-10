@@ -3,38 +3,36 @@
 //! department room off each side of the atrium on every storey, opened one by one.
 
 use super::kit::RAIL_T;
+use super::rooms;
 use super::*;
 
 const STOREYS: usize = 3;
 const STOREY: f32 = 6.0;
 /// Clear height of a storey (to the underside of the floor above).
-const ROOM_H: f32 = STOREY - SLAB;
+pub(super) const ROOM_H: f32 = STOREY - SLAB;
 /// Half-size of the atrium, and of the open well inside it.
-const ATRIUM: f32 = 14.0;
+pub(super) const ATRIUM: f32 = 14.0;
 const WELL: f32 = 9.0;
 /// Rooms reach from the atrium wall out to `OUTER`, `ROOM_HALF` either side.
-const OUTER: f32 = 32.0;
-const ROOM_HALF: f32 = 13.0;
-const WALL_T: f32 = 0.4;
-const DOOR_HALF: f32 = 1.5;
-const DOOR_H: f32 = 3.6;
+pub(super) const OUTER: f32 = 32.0;
+pub(super) const ROOM_HALF: f32 = 13.0;
+pub(super) const WALL_T: f32 = 0.4;
+pub(super) const DOOR_HALF: f32 = 1.5;
+pub(super) const DOOR_H: f32 = 3.6;
 /// A flight of stairs runs along the inner edge of a gallery strip.
 const STAIR_W: f32 = 2.4;
 const STAIR_HALF_RUN: f32 = 5.5;
 const STEPS: usize = 33;
 /// The skylight over the well.
 const SKY: f32 = 2.0 * STOREY + ROOM_H + 2.5;
-/// Rows of cases in a room (across), and cases in a row (outward).
-const ROWS_A: [f32; 4] = [-9.0, -3.0, 3.0, 9.0];
-const CASES_PER_ROW: usize = 5;
 /// The share of the departments already open that must be home to open the next.
 const GATE_NEED: f32 = 0.5;
 
 /// A side of the atrium, as a frame: `a` runs across it, `o` outward from the centre.
 #[derive(Clone, Copy)]
-struct Side {
-    out: Vec2,
-    across: Vec2,
+pub(super) struct Side {
+    pub(super) out: Vec2,
+    pub(super) across: Vec2,
 }
 
 /// North, east, south, west. Rooms open in this order on each storey, ground floor first.
@@ -58,31 +56,31 @@ const SIDES: [Side; 4] = [
 ];
 
 impl Side {
-    fn at(&self, a: f32, o: f32) -> Vec2 {
+    pub(super) fn at(&self, a: f32, o: f32) -> Vec2 {
         self.across * a + self.out * o
     }
 
-    fn at3(&self, a: f32, o: f32, y: f32) -> Vec3 {
+    pub(super) fn at3(&self, a: f32, o: f32, y: f32) -> Vec3 {
         let p = self.at(a, o);
         Vec3::new(p.x, y, p.y)
     }
 
     /// The world rectangle of the local one `a0..a1` × `o0..o1`.
-    fn rect(&self, a0: f32, a1: f32, o0: f32, o1: f32) -> (Vec2, Vec2) {
+    pub(super) fn rect(&self, a0: f32, a1: f32, o0: f32, o1: f32) -> (Vec2, Vec2) {
         let (p, q) = (self.at(a0, o0), self.at(a1, o1));
         (p.min(q), p.max(q))
     }
 
     /// Cases in this side's rooms run outward: along x for east and west.
-    fn along_x(&self) -> bool {
+    pub(super) fn along_x(&self) -> bool {
         self.out.x != 0.0
     }
 
-    fn out3(&self) -> Vec3 {
+    pub(super) fn out3(&self) -> Vec3 {
         Vec3::new(self.out.x, 0.0, self.out.y)
     }
 
-    fn across3(&self) -> Vec3 {
+    pub(super) fn across3(&self) -> Vec3 {
         Vec3::new(self.across.x, 0.0, self.across.y)
     }
 }
@@ -102,7 +100,7 @@ fn floor_y(level: usize) -> f32 {
     level as f32 * STOREY
 }
 
-fn box3(min: Vec2, max: Vec2, y0: f32, y1: f32) -> (Vec3, Vec3) {
+pub(super) fn box3(min: Vec2, max: Vec2, y0: f32, y1: f32) -> (Vec3, Vec3) {
     (Vec3::new(min.x, y0, min.y), Vec3::new(max.x, y1, max.y))
 }
 
@@ -174,7 +172,10 @@ pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
     lib.build_atrium(&mut newels);
     let mut titles = HashSet::new();
     for room in 0..STOREYS * 4 {
-        lib.build_room(rng, room, &mut titles);
+        // Each room's books from its own generator, so changing one room's layout
+        // leaves the others' books as they were.
+        let mut room_rng = StdRng::seed_from_u64(rng.next_u64());
+        lib.build_room(&mut room_rng, room, &mut titles);
     }
     lib.scatter_books(rng);
 }
@@ -394,6 +395,9 @@ impl Library {
 
     /// Room `r`: storey `r / 4`, off side `r % 4`: four rows of five cases running
     /// out from the door, a category on each side of a row; department `r`.
+    /// Department `r`'s room: its walls, the doorway from the atrium with the
+    /// department's sign over it and its gate, and then what stands inside, which
+    /// is the department's own (`rooms::furnish`).
     fn build_room(&mut self, rng: &mut StdRng, r: usize, titles: &mut HashSet<String>) {
         let (l, side) = (r / 4, SIDES[r % 4]);
         let y = floor_y(l);
@@ -402,58 +406,16 @@ impl Library {
         self.wall(l, side.rect(-ROOM_HALF - h, -ROOM_HALF + h, ATRIUM, OUTER + h), ROOM_H);
         self.wall(l, side.rect(ROOM_HALF - h, ROOM_HALF + h, ATRIUM, OUTER + h), ROOM_H);
         self.wall(l, side.rect(-ROOM_HALF, ROOM_HALF, OUTER - h, OUTER + h), ROOM_H);
-        // Tall moonlit windows in the far wall.
-        for a in [-7.0f32, 0.0, 7.0] {
-            let c = side.at3(a, OUTER - h - 0.02, y + 3.0);
-            let size = if side.along_x() {
-                Vec3::new(0.08, 3.4, 1.6)
-            } else {
-                Vec3::new(1.6, 3.4, 0.08)
-            };
-            self.decor(Inst::aabox(c, size, kind::GLASS, [0.32, 0.42, 0.85]));
-            self.static_insts.last_mut().unwrap().color[3] = 1.2;
-            self.light(c - side.out3() * 1.5, 8.0, [0.45, 0.55, 1.0], 0.8, LightKind::Static);
-            let beam = (-side.out3() * 1.0 - Vec3::Y * 0.6).normalize();
-            let len = 7.0;
-            self.static_trans.push(Inst::new(
-                c + beam * len * 0.5,
-                Quat::from_rotation_arc(Vec3::Y, beam),
-                Vec3::new(1.4, len, 2.6),
-                kind::SHAFT,
-                [0.35, 0.45, 0.9, 0.04],
-                0,
-            ));
-        }
-        for o in [19.5, 27.0] {
-            for sa in [-1.0f32, 1.0] {
-                let p = side.at3(sa * (ROOM_HALF - h - 0.15), o, y + 2.6);
-                self.sconce(p, -side.across3() * sa);
-            }
-        }
-        // Panelling round the walls, beams across the ceiling.
-        let inner = ROOM_HALF - h;
-        let t = 0.07;
-        self.wainscot(y, side.rect(-inner, -inner + t, ATRIUM + h, OUTER - h - t), side.across);
-        self.wainscot(y, side.rect(inner - t, inner, ATRIUM + h, OUTER - h - t), -side.across);
-        self.wainscot(y, side.rect(-inner, inner, OUTER - h - t, OUTER - h), -side.out);
-        for (a0, a1) in [(-inner + t, d - DOOR_HALF - 0.3), (d + DOOR_HALF + 0.3, inner - t)] {
-            self.wainscot(y, side.rect(a0, a1, ATRIUM + h, ATRIUM + h + t), side.out);
-        }
-        for k in 0..6 {
-            let o = ATRIUM + h + 1.6 + k as f32 * 3.0;
-            let rect = side.rect(-inner, inner, o - 0.13, o + 0.13);
-            let (lo, hi) = box3(rect.0, rect.1, y + ROOM_H - 0.3, y + ROOM_H);
-            self.decor(Inst::minmax(lo, hi, kind::WOOD, [0.11, 0.055, 0.025]));
-        }
         // The department's sign over its door, on the atrium side.
         let dept = r;
         let (mn, mx) = side.rect(-ROOM_HALF, ROOM_HALF, ATRIUM, OUTER);
+        let drop = side.at3(d + 2.6, ATRIUM + 1.5, y);
         self.rooms.push(Room {
             level: l,
             min: mn,
             max: mx,
             door: side.at3(d, ATRIUM + 0.5, y),
-            drop: side.at3(d + 2.6, ATRIUM + 1.5, y),
+            drop,
         });
         let sign = side.at3(d, ATRIUM - h - 0.03, y + DOOR_H + 0.75);
         let rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Y.cross(-side.out3()), Vec3::Y, -side.out3()));
@@ -486,26 +448,16 @@ impl Library {
                 need: GATE_NEED,
             });
         }
-        // The cases, then each side of each row as a category.
-        let case_o = |k: usize| ATRIUM + h + 2.5 + UNIT_W * 0.5 + k as f32 * UNIT_PITCH;
-        for &ra in &ROWS_A {
-            for k in 0..CASES_PER_ROW {
-                self.bookcase(side.at3(ra, case_o(k), y), side.along_x());
-            }
-        }
-        let mut cat = self.catalog.departments[dept].categories.start;
-        for &ra in &ROWS_A {
-            for s in [-1.0f32, 1.0] {
-                let normal = side.across3() * s;
-                let right = Vec3::Y.cross(normal);
-                let mut cases: Vec<Vec3> = (0..CASES_PER_ROW)
-                    .map(|k| side.at3(ra + s * UNIT_DEPTH * 0.5, case_o(k), y))
-                    .collect();
-                cases.sort_by(|a, b| a.dot(right).total_cmp(&b.dot(right)));
-                self.add_category(rng, cat, &cases, normal, titles);
-                cat += 1;
-            }
-        }
+        let frame = rooms::RoomFrame {
+            dept,
+            level: l,
+            y,
+            side,
+            door: d,
+            drop,
+            categories: self.catalog.departments[dept].categories.clone(),
+        };
+        rooms::furnish(self, &frame, rng, titles);
     }
 
     /// Where the books start. A department's books lie in its own room, the atrium,

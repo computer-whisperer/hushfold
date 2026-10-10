@@ -20,6 +20,21 @@ pub mod kind {
     pub const VEIL: u32 = 10;
     pub const SHAFT: u32 = 11;
     pub const PAPER: u32 = 12;
+    /// Brass, iron, silver: the colour is the metal's.
+    #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
+    pub const METAL: u32 = 13;
+    /// Banners, upholstery, curtains.
+    #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
+    pub const CLOTH: u32 = 14;
+    /// Leaves and stems.
+    #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
+    pub const LEAF: u32 = 15;
+    /// Gems and glass that glow from inside: color.w is how brightly.
+    #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
+    pub const CRYSTAL: u32 = 16;
+    /// Maps, charts, scrolls.
+    #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
+    pub const PARCHMENT: u32 = 17;
 }
 
 #[repr(C)]

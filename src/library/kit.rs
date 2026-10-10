@@ -168,8 +168,10 @@ impl Library {
     }
 
     /// A double-sided bookcase standing at `c` (floor level), running along x with its
-    /// faces toward ±z, or (`along_x` false) running along z, faces toward ±x.
-    pub(super) fn bookcase(&mut self, c: Vec3, along_x: bool) {
+    /// faces toward ±z, or (`along_x` false) running along z, faces toward ±x. Returns
+    /// its faces, toward - and + of that axis: (front plane centre at floor level,
+    /// outward normal), as `add_category` takes them.
+    pub(super) fn bookcase(&mut self, c: Vec3, along_x: bool) -> [(Vec3, Vec3); 2] {
         // Boxes are laid out for a case along x; `sw` turns offsets and sizes.
         let sw = |v: Vec3| if along_x { v } else { Vec3::new(v.z, v.y, v.x) };
         let part = |lib: &mut Self, off: Vec3, size: Vec3, rgb: [f32; 3]| {
@@ -230,6 +232,79 @@ impl Library {
             top + Vec3::Y * 1.07,
             Stops::SIGHT,
         );
+        let n = sw(Vec3::Z);
+        [(c - n * hd, -n), (c + n * hd, n)]
+    }
+
+    /// A single-sided bookcase with its back on a wall: `at` is the middle of its back
+    /// at floor level, `normal` (along x or z) the way it faces. Returns its face, as
+    /// `bookcase` does.
+    #[allow(dead_code)] // TEMP(visual pass): until a department stands one on a wall.
+    pub(super) fn wall_bookcase(&mut self, at: Vec3, normal: Vec3) -> (Vec3, Vec3) {
+        // Laid out across (x), up (y) and out from the wall (z), then turned to face
+        // `normal`.
+        let right = Vec3::Y.cross(normal);
+        let sw = |v: Vec3| {
+            if right.x.abs() > 0.5 {
+                v
+            } else {
+                Vec3::new(v.z, v.y, v.x)
+            }
+        };
+        let place = |off: Vec3| at + right * off.x + Vec3::Y * off.y + normal * off.z;
+        let part = |lib: &mut Self, off: Vec3, size: Vec3, rgb: [f32; 3]| {
+            lib.decor(Inst::aabox(place(off), sw(size), kind::WOOD, rgb));
+        };
+        let hw = UNIT_W * 0.5;
+        let back = 0.04;
+        let d = back + FACE_DEPTH;
+        for s in [-1.0, 1.0] {
+            part(
+                self,
+                Vec3::new(s * (hw - SIDE_T * 0.5), UNIT_H * 0.5, d * 0.5),
+                Vec3::new(SIDE_T, UNIT_H, d),
+                WALNUT,
+            );
+        }
+        part(
+            self,
+            Vec3::new(0.0, UNIT_H + 0.04, d * 0.5 + 0.02),
+            Vec3::new(UNIT_W + 0.08, 0.08, d + 0.04),
+            WALNUT,
+        );
+        part(
+            self,
+            Vec3::new(0.0, UNIT_H + 0.105, d * 0.5 + 0.04),
+            Vec3::new(UNIT_PITCH, 0.05, d + 0.08),
+            [0.12, 0.06, 0.028],
+        );
+        part(
+            self,
+            Vec3::new(0.0, SHELF_BASE * 0.5, d * 0.5 - 0.01),
+            Vec3::new(UNIT_W - 0.02, SHELF_BASE, d - 0.02),
+            [0.1, 0.05, 0.022],
+        );
+        part(
+            self,
+            Vec3::new(0.0, UNIT_H * 0.5, back * 0.5),
+            Vec3::new(UNIT_W - 2.0 * SIDE_T, UNIT_H, back),
+            DARK_WOOD,
+        );
+        for i in 1..ROWS {
+            let y = SHELF_BASE + i as f32 * SHELF_STEP;
+            part(
+                self,
+                Vec3::new(0.0, y - BOARD_T * 0.5, back + FACE_DEPTH * 0.5),
+                Vec3::new(UNIT_W - 2.0 * SIDE_T, BOARD_T, FACE_DEPTH),
+                WALNUT,
+            );
+        }
+        let (a, b) = (
+            place(Vec3::new(-hw - 0.04, 0.0, 0.0)),
+            place(Vec3::new(hw + 0.04, UNIT_H + 0.13, d + 0.04)),
+        );
+        self.collide(a.min(b), a.max(b), Stops::ALL);
+        (at + normal * d, normal)
     }
 
     /// A flight of stairs, declared in the world and drawn from its profile: solid

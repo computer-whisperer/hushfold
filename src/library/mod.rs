@@ -7,6 +7,7 @@
 mod great;
 mod hall;
 mod kit;
+mod rooms;
 
 #[cfg(test)]
 pub use hall::{HALL_X, HALL_Z, VEIL_X};
@@ -288,30 +289,25 @@ impl Library {
     /// A category's shelves: `cases` (front-plane centre at floor level, in reading
     /// order) facing along `normal`; generates its series, lays them out, and hangs
     /// its sign and lantern over the middle case.
-    fn add_category(
-        &mut self,
-        rng: &mut StdRng,
-        cat: usize,
-        cases: &[Vec3],
-        normal: Vec3,
-        titles: &mut HashSet<String>,
-    ) {
-        let right = Vec3::Y.cross(normal);
+    /// Shelve category `cat` across `faces` (front plane centre at floor level,
+    /// outward normal; see `bookcase`), in reading order, and hang its sign and
+    /// lantern over the middle one.
+    fn add_category(&mut self, rng: &mut StdRng, cat: usize, faces: &[(Vec3, Vec3)], titles: &mut HashSet<String>) {
         let first_face = self.faces.len();
-        for (ci, &center) in cases.iter().enumerate() {
+        for (ci, &(center, normal)) in faces.iter().enumerate() {
             self.faces.push(Face {
                 center,
                 normal,
-                right,
+                right: Vec3::Y.cross(normal),
                 category: cat,
                 case_idx: ci,
             });
             self.runs.push(Default::default());
         }
-        self.fill_category(rng, cat, first_face..first_face + cases.len(), titles);
+        self.fill_category(rng, cat, first_face..first_face + faces.len(), titles);
         // Sign + lantern above the middle case.
-        let mid = &self.faces[first_face + cases.len() / 2];
-        let (mid_center, mid_rot) = (mid.center, mid.rot());
+        let mid = &self.faces[first_face + faces.len() / 2];
+        let (mid_center, mid_rot, normal) = (mid.center, mid.rot(), mid.normal);
         let sign_pos = mid_center + Vec3::Y * (UNIT_H + 0.38) + normal * 0.02;
         let ccol = catalog::category_color(&self.catalog.categories[cat]);
         let plaque = Inst::new(

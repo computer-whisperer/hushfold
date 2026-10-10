@@ -266,12 +266,12 @@ impl Library {
                     let right = Vec3::Y.cross(normal);
                     let mut order: Vec<f32> = xs.to_vec();
                     order.sort_by(|a, b| (a * right.x).partial_cmp(&(b * right.x)).unwrap());
-                    let cases: Vec<Vec3> = order
+                    let faces: Vec<(Vec3, Vec3)> = order
                         .iter()
-                        .map(|&cx| Vec3::new(cx, 0.0, rz + nz * UNIT_DEPTH * 0.5))
+                        .map(|&cx| (Vec3::new(cx, 0.0, rz + nz * UNIT_DEPTH * 0.5), normal))
                         .collect();
-                    debug_assert_eq!(cases.len(), CASES_PER_CATEGORY);
-                    self.add_category(rng, cat, &cases, normal, &mut titles);
+                    debug_assert_eq!(faces.len(), CASES_PER_CATEGORY);
+                    self.add_category(rng, cat, &faces, &mut titles);
                     cat += 1;
                 }
             }

@@ -503,6 +503,17 @@ impl Player {
 /// had the guide signs and the glow of carried series free.
 const SAVE_VERSION: u32 = 2;
 
+/// Which generation of its library a save was made in: saves name books by index,
+/// so one made in another generation would put the wrong books on the shelves. The
+/// Hall's is pinned (`hall_generates_as_before`), so its stamp stays 0, as 0.1.x
+/// saves have it. Bump the Great Library's whenever where its books go changes.
+fn generation(layout: Layout) -> u32 {
+    match layout {
+        Layout::Hall => 0,
+        Layout::Great => 1,
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct SaveData {
     #[serde(default)]
@@ -537,6 +548,9 @@ struct SaveData {
     /// Each familiar's role and where it is posted (none: riding).
     #[serde(default)]
     familiars: Vec<(String, Option<[f32; 3]>)>,
+    /// See `generation`.
+    #[serde(default)]
+    generation: u32,
 }
 
 /// The 0.1.x upgrade order, for reading old saves.
@@ -2333,6 +2347,7 @@ impl Game {
         let p = &self.player;
         let data = SaveData {
             version: SAVE_VERSION,
+            generation: generation(self.layout),
             seed: SEED,
             lumens: self.lumens,
             earned: self.earned,
@@ -2399,6 +2414,16 @@ impl Game {
             return false;
         };
         if data.seed != SEED {
+            return false;
+        }
+        if data.generation != generation(self.layout) {
+            // Kept aside rather than overwritten by the fresh game's first save.
+            let old = self.save_path().with_extension("old.json");
+            eprintln!(
+                "hushfold: the save is from another version of this library; starting fresh (kept as {})",
+                old.display()
+            );
+            let _ = std::fs::rename(self.save_path(), old);
             return false;
         }
         let n = self.lib.books.len() as u32;
@@ -3247,7 +3272,38 @@ mod tests {
         // Saves before reading was earned keep the guide signs and the full glow.
         assert_eq!((old.level(Upg::Signposts), old.level(Upg::Glow)), (1, 3));
         assert_eq!((hall.level(Upg::Signposts), hall.level(Upg::Glow)), (0, 0));
+        // A Great Library save from another generation of it starts fresh, kept aside.
+        let great = Game::new(Layout::Great);
+        let json = format!(
+            r#"{{"seed":{SEED},"lumens":5,"earned":900,"shelved":[1,2,3],"held":[],"player":[0.0,0.0,6.5,0.0,0.0],"play_time":60.0}}"#
+        );
+        std::fs::write(great.save_path(), json).unwrap();
+        let mut other = Game::new(Layout::Great);
+        assert!(!other.load());
+        assert!(!great.save_path().exists() && great.save_path().with_extension("old.json").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// However a Great Library department lays out its room, it shelves as many
+    /// books as the others (40 faces) and leaves the floor room enough that its
+    /// books lie in heaps, not towers.
+    #[test]
+    fn great_library_rooms_keep_their_shape() {
+        let g = Game::new(Layout::Great);
+        let n = g.lib.books.len();
+        assert!((110_000..126_000).contains(&n), "{n} books");
+        for (d, r) in g.lib.rooms.iter().enumerate() {
+            let faces = g.lib.faces.iter().filter(|f| g.lib.dept_of(f.category) == d).count();
+            assert_eq!(faces, 40, "room {d}");
+            let floor = g.lib.world.levels[r.level].y;
+            let top = (0..n as u32)
+                .filter(|&b| g.loose.is_resting(b))
+                .map(|b| g.loose.rest(b).c)
+                .filter(|&c| g.lib.room_at(c) == Some(d))
+                .map(|c| c.y - floor)
+                .fold(0.0f32, f32::max);
+            assert!(top < 2.0, "room {d}: books heaped {top:.1} m high");
+        }
     }
 
     /// Every department has a room holding all its slots, entered by a doorway that is

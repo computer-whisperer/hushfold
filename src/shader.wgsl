@@ -31,6 +31,11 @@ const K_GLASS: u32 = 9u;
 const K_VEIL: u32 = 10u;
 const K_SHAFT: u32 = 11u;
 const K_PAPER: u32 = 12u;
+const K_METAL: u32 = 13u;
+const K_CLOTH: u32 = 14u;
+const K_LEAF: u32 = 15u;
+const K_CRYSTAL: u32 = 16u;
+const K_PARCHMENT: u32 = 17u;
 
 struct VIn {
     @location(0) pos: vec3<f32>,
@@ -507,6 +512,30 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
         case 12u: { // K_PAPER (familiar)
             albedo = vec3<f32>(0.9, 0.86, 0.75);
             emit = i.color.rgb * i.color.w;
+        }
+        // Stand-ins for the visual pass's new materials, to be developed.
+        case 13u: { // K_METAL
+            spec = 0.6;
+            gloss = 60.0;
+        }
+        case 14u: { // K_CLOTH
+            albedo = albedo * (0.85 + 0.15 * vnoise(m * 20.0));
+            spec = 0.02;
+            gloss = 4.0;
+        }
+        case 15u: { // K_LEAF
+            albedo = albedo * (0.8 + 0.3 * vnoise(m * 12.0));
+            spec = 0.1;
+            gloss = 12.0;
+        }
+        case 16u: { // K_CRYSTAL
+            spec = 0.9;
+            gloss = 80.0;
+            emit = i.color.rgb * i.color.w * 0.6;
+        }
+        case 17u: { // K_PARCHMENT
+            albedo = albedo * (0.85 + 0.2 * fbm(m * 6.0));
+            spec = 0.03;
         }
         default: {
             albedo = albedo * (0.9 + 0.15 * vnoise(m * 8.0));
