@@ -328,9 +328,9 @@ impl Familiar {
 pub(super) struct Look {
     /// Where its wings are in their beat (0 to 1 from the top of the stroke, the
     /// downstroke first), beats a second, and how hard they beat (0 held still).
-    pub(super) phase: f32,
-    pub(super) rate: f32,
-    pub(super) flap: f32,
+    phase: f32,
+    rate: f32,
+    flap: f32,
     /// Seconds left of the glide it is in, beats to go before it may glide again, and
     /// glides so far (which pick the next one's length).
     glide: f32,
@@ -352,6 +352,13 @@ pub(super) struct Look {
 }
 
 impl Look {
+    /// Its beat as heard: where the wings are in it, how fast that moves on (not at
+    /// all while it glides, the wings held), and how hard they beat.
+    pub(super) fn beat(&self) -> (f32, f32, f32) {
+        let rate = if self.glide > 0.0 { 0.0 } else { self.rate };
+        (self.phase, rate, self.flap)
+    }
+
     /// Riding, wings raised, facing `heading`.
     fn new(role: Role, heading: f32) -> Self {
         Look {

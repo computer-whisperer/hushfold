@@ -162,17 +162,16 @@ fn crane(b: &mut Builder) {
     });
     let mid = v(0.0, s.ridge, 0.0);
     let (lw, tw) = s.wrist;
-    // The crease runs from the root out to the tip, standing a little proud.
-    let cw = v(lw.x, s.ridge, (lw.z + tw.z) * 0.5);
     let t = v(-0.36, 0.0, 0.055);
-    b.wing(|b| {
-        b.quad(rf, mid, cw, lw);
-        b.quad(mid, rb, tw, cw);
-    });
-    b.wing(|b| {
-        b.tri(lw, cw, t);
-        b.tri(cw, tw, t);
-    });
+    // The crease runs from the root out to the tip, standing a little proud in each
+    // half (on the hinge at the wrist, so the halves stay joined as the wing bends).
+    let cw = lw.lerp(tw, 0.5);
+    let (inner, outer) = (
+        mid.lerp(cw, 0.5) + v(0.0, 0.008, 0.0),
+        cw.lerp(t, 0.4) + v(0.0, 0.006, 0.0),
+    );
+    b.wing(|b| b.fan(inner, &[mid, rf, lw, cw, tw, rb, mid]));
+    b.wing(|b| b.fan(outer, &[lw, t, tw, cw, lw]));
 }
 
 /// The swift: a slim body, a pointed head held forward, wings long and swept back to
@@ -195,17 +194,15 @@ fn swift(b: &mut Builder) {
     });
     let mid = v(0.0, s.ridge, -0.005);
     let (lw, tw) = s.wrist;
-    let cw = lw.lerp(tw, 0.45) + v(0.0, 0.004, 0.0);
     let (lead, t) = (v(-0.235, 0.008, 0.02), v(-0.3, 0.0, 0.1));
-    b.wing(|b| {
-        b.quad(rf, mid, cw, lw);
-        b.quad(mid, rb, tw, cw);
-    });
-    b.wing(|b| {
-        b.tri(lw, cw, lead);
-        b.tri(lead, cw, t);
-        b.tri(cw, tw, t);
-    });
+    // Creased as the crane's wings are.
+    let cw = lw.lerp(tw, 0.45);
+    let (inner, outer) = (
+        mid.lerp(cw, 0.5) + v(0.0, 0.005, 0.0),
+        cw.lerp(t, 0.4) + v(0.0, 0.004, 0.0),
+    );
+    b.wing(|b| b.fan(inner, &[mid, rf, lw, cw, tw, rb, mid]));
+    b.wing(|b| b.fan(outer, &[lw, lead, t, tw, cw, lw]));
 }
 
 /// The meshes being built: two-sided facets, and the run of indices each part has.
@@ -365,7 +362,7 @@ impl Cranes {
         &self.rest
     }
 
-    /// Draw them (with the scene pipeline set).
+    /// Draw them (with the scene pipeline set), leaving their meshes bound.
     pub(super) fn draw(&self, rp: &mut wgpu::RenderPass) {
         rp.set_vertex_buffer(0, self.vb.slice(..));
         rp.set_index_buffer(self.ib.slice(..), wgpu::IndexFormat::Uint16);

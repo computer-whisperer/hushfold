@@ -426,7 +426,7 @@ bells and glints where something magical happens. Everything is synthesised;
   the bottom of the stroke, and silent while it glides. A shelver's are deeper and
   slower (~1.9 beats a second, air round 400–600 Hz), a courier's lighter and
   quicker (~2.9, round 650–1000 Hz); both are dulled above ~2 kHz. One circling 3 m
-  off peaks −28 to −30 dBFS (a footfall −27). The first wings (noise round 1.4 kHz
+  off peaks −28 to −31 dBFS (a footfall −27). The first wings (noise round 1.4 kHz
   at a random 6–8.5 beats a second, apart from the drawn beat) peaked −26 with 30%
   of their energy above 3 kHz; now 3–6%. Posting a familiar and taking it back
   (`Unfold`, `Fold`) sound its role's wings, in one of three voices each.

@@ -668,8 +668,10 @@ struct Wings {
     /// Whose wings: the familiar's number, until they have fallen silent.
     id: Option<usize>,
     level: Smooth,
-    /// Where it is and how its wings beat, as last told.
+    /// Where it is and how its wings beat, as last told, and where the beat told has
+    /// got to since (it is told once a frame).
     beat: Wingbeat,
+    aim: f32,
     /// The beat as heard, kept to the one told, the flutter's, and seconds since the
     /// last snap.
     phase: f32,
@@ -705,6 +707,7 @@ impl Wings {
                 flap: 0.0,
                 courier: false,
             },
+            aim: 0.0,
             phase: 0.0,
             flutter: 0.0,
             snap: 1.0,
@@ -727,9 +730,10 @@ impl Wings {
         }
         let b = self.beat;
         // Keep to the beat as drawn: eased toward it, or caught up at once when well
-        // out (as when a glide ends).
-        let off = (b.phase - self.phase + 0.5).rem_euclid(1.0) - 0.5;
+        // out (after a hitch).
+        let off = (self.aim - self.phase + 0.5).rem_euclid(1.0) - 0.5;
         self.phase = (self.phase + if off.abs() > 0.2 { off } else { off * 0.15 }).rem_euclid(1.0);
+        self.aim = (self.aim + b.rate * DT).fract();
         self.flap.target = b.flap;
         let (f0, f1) = self.flap.step(DT, 0.05);
         // (centre of the rush of air, its Q, how dull, flutters a second, the snap's
@@ -854,6 +858,10 @@ impl Ambience {
         for wings in &mut self.wings {
             match wings.id.and_then(|id| flying().find(|w| w.id == id)) {
                 Some(&beat) => {
+                    // A new frame's beat to keep to.
+                    if beat.phase != wings.beat.phase {
+                        wings.aim = beat.phase;
+                    }
                     wings.beat = beat;
                     wings.level.target = 1.0;
                 }
@@ -871,6 +879,7 @@ impl Ambience {
             if let Some(free) = self.wings.iter_mut().find(|w| w.id.is_none()) {
                 free.id = Some(beat.id);
                 free.beat = beat;
+                free.aim = beat.phase;
                 free.phase = beat.phase;
                 free.level.target = 1.0;
             }

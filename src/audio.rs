@@ -156,7 +156,8 @@ pub struct Wingbeat {
     pub id: usize,
     pub at: Vec3,
     /// Where its wings are in their beat (0 to 1 from the top, the downstroke first,
-    /// as it is drawn), beats a second, and how hard they beat (0 held still).
+    /// as it is drawn), beats a second (0 while it glides), and how hard they beat (0
+    /// held still).
     pub phase: f32,
     pub rate: f32,
     pub flap: f32,

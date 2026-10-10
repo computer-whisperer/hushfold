@@ -61,6 +61,8 @@ fn scene_in(place: Place) -> Scene {
 /// few beats with a glide between (a shelver's or a courier's).
 struct Flier {
     beat: Wingbeat,
+    /// Beats a second while beating.
+    rate: f32,
     glide: f32,
     beats: u32,
     rng: StdRng,
@@ -78,6 +80,7 @@ impl Flier {
                 flap: 0.65,
                 courier,
             },
+            rate,
             glide: 0.0,
             beats: 3,
             rng: StdRng::seed_from_u64(id as u64),
@@ -93,6 +96,7 @@ impl Flier {
             b.flap -= b.flap * (1.0 - (-dt * 8.0).exp());
             return *b;
         }
+        b.rate = self.rate;
         b.flap += (0.65 - b.flap) * (1.0 - (-dt * 8.0).exp());
         b.phase += b.rate * dt;
         if b.phase >= 1.0 {
@@ -102,6 +106,7 @@ impl Flier {
                 self.glide = self.rng.gen_range(short..long);
                 self.beats = self.rng.gen_range(2..5);
                 b.phase = 0.0;
+                b.rate = 0.0;
             } else {
                 self.beats -= 1;
             }

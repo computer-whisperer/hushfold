@@ -91,12 +91,13 @@ impl Game {
         let mut wings: Vec<(f32, Wingbeat)> = (self.familiars.iter().enumerate())
             .filter(|(_, f)| f.on_the_wing())
             .map(|(i, f)| {
+                let (phase, rate, flap) = f.look.beat();
                 let beat = Wingbeat {
                     id: i,
                     at: f.pos,
-                    phase: f.look.phase,
-                    rate: f.look.rate,
-                    flap: f.look.flap,
+                    phase,
+                    rate,
+                    flap,
                     courier: f.role == Role::Courier,
                 };
                 (f.pos.distance(ears), beat)
