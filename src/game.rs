@@ -913,10 +913,10 @@ impl Game {
             audio.play(Sfx::Step, if input.sprint { 0.16 } else { 0.12 });
         }
         if can_play && grounded && !self.player.grounded && self.player.vel.y > 0.0 {
-            audio.play(Sfx::Step, 0.1);
+            audio.play(Sfx::Hop, 0.3);
         }
         if can_play && let Some(speed) = landed {
-            audio.play(Sfx::Step, (0.12 + speed * 0.04).min(0.35));
+            audio.play(Sfx::Alight, (speed / 6.0).clamp(0.15, 1.0));
         }
         self.aim = if can_play { self.compute_aim() } else { Aim::None };
 
@@ -979,13 +979,9 @@ impl Game {
         self.update_streams(dt);
         let landings = self.loose.update(dt, &mut self.pos, &mut self.rot);
         self.dirty_save |= !landings.is_empty();
-        let eye = self.player.eye();
+        // The mixer makes them quieter with distance.
         for l in landings.iter().take(3) {
-            let near = (1.0 - l.at.distance(eye) / 25.0).max(0.0f32);
-            let v = (0.15 + l.speed * 0.04).min(0.45f32) * near;
-            if v > 0.01 {
-                audio.play_at(Sfx::Land, v, l.at);
-            }
+            audio.play_at(Sfx::Land, (0.15 + l.speed * 0.04).min(0.45), l.at);
         }
         self.home_tossed(&landings);
         self.update_familiars(dt);
