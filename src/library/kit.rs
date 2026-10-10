@@ -3,6 +3,7 @@
 //! decides where things go.
 
 use super::*;
+use std::ops::Range;
 
 /// A railing's height, and the thickness of the guard standing for it.
 const RAIL_H: f32 = 1.05;
@@ -13,6 +14,17 @@ const PIER_STONE: [f32; 3] = [0.42, 0.39, 0.35];
 const STEP_STONE: [f32; 3] = [0.4, 0.37, 0.33];
 /// Thickness of a stair's wooden tread.
 const TREAD_T: f32 = 0.05;
+/// A wall case's back board, between the wall and its shelves.
+const WALL_BACK: f32 = 0.04;
+/// A bookcase's stiles, its ends: wider than a side board, reaching in to just
+/// outside the books, and standing proud of the faces like pilasters.
+const STILE_IN: f32 = UNIT_W * 0.5 - SIDE_T - 0.03;
+const STILE_OUT: f32 = UNIT_W * 0.5 + 0.01;
+const STILE_PROUD: f32 = 0.025;
+/// The frieze across the top of a face, clear of the tallest book on the top shelf.
+const FRIEZE_Y: f32 = 2.98;
+const CASE_FIELD: [f32; 3] = [0.25, 0.12, 0.05];
+const CASE_TRIM: [f32; 3] = [0.12, 0.06, 0.028];
 
 impl Library {
     /// A brass wall sconce with a candle flame, lighting the room in front of it.
@@ -174,54 +186,17 @@ impl Library {
     pub(super) fn bookcase(&mut self, c: Vec3, along_x: bool) -> [(Vec3, Vec3); 2] {
         // Boxes are laid out for a case along x; `sw` turns offsets and sizes.
         let sw = |v: Vec3| if along_x { v } else { Vec3::new(v.z, v.y, v.x) };
-        let part = |lib: &mut Self, off: Vec3, size: Vec3, rgb: [f32; 3]| {
-            lib.decor(Inst::aabox(c + sw(off), sw(size), kind::WOOD, rgb));
-        };
         let hw = UNIT_W * 0.5;
         let hd = UNIT_DEPTH * 0.5;
-        for s in [-1.0, 1.0] {
-            part(
-                self,
-                Vec3::new(s * (hw - SIDE_T * 0.5), UNIT_H * 0.5, 0.0),
-                Vec3::new(SIDE_T, UNIT_H, UNIT_DEPTH),
-                WALNUT,
-            );
-        }
-        part(
-            self,
-            Vec3::Y * (UNIT_H + 0.04),
-            Vec3::new(UNIT_W + 0.08, 0.08, UNIT_DEPTH + 0.08),
-            WALNUT,
-        );
-        part(
-            self,
-            Vec3::Y * (UNIT_H + 0.105),
-            // As wide as the pitch, so the caps of a row of cases meet without overlapping.
-            Vec3::new(UNIT_PITCH, 0.05, UNIT_DEPTH + 0.16),
-            [0.12, 0.06, 0.028],
-        );
-        part(
-            self,
-            Vec3::Y * (SHELF_BASE * 0.5),
-            Vec3::new(UNIT_W - 0.02, SHELF_BASE, UNIT_DEPTH - 0.04),
-            [0.1, 0.05, 0.022],
-        );
-        part(
-            self,
-            Vec3::Y * (UNIT_H * 0.5),
-            Vec3::new(UNIT_W - 2.0 * SIDE_T, UNIT_H, 0.04),
-            DARK_WOOD,
-        );
-        for nz in [-1.0f32, 1.0] {
-            for i in 1..ROWS {
-                let y = SHELF_BASE + i as f32 * SHELF_STEP;
-                part(
-                    self,
-                    Vec3::new(0.0, y - BOARD_T * 0.5, nz * (0.02 + FACE_DEPTH * 0.5)),
-                    Vec3::new(UNIT_W - 2.0 * SIDE_T, BOARD_T, FACE_DEPTH),
-                    WALNUT,
-                );
-            }
+        for (mn, mx, k, color) in case_boxes(-hd, hd, true) {
+            self.decor(Inst::new(
+                c + sw((mn + mx) * 0.5),
+                Quat::IDENTITY,
+                sw(mx - mn),
+                k,
+                color,
+                0,
+            ));
         }
         // Solid to the cornice, and no aiming over its top at the far side's shelves.
         let half = sw(Vec3::new(hw + 0.04, 0.0, hd + 0.04));
@@ -244,60 +219,12 @@ impl Library {
         // Laid out across (x), up (y) and out from the wall (z), then turned to face
         // `normal`.
         let right = Vec3::Y.cross(normal);
-        let sw = |v: Vec3| {
-            if right.x.abs() > 0.5 {
-                v
-            } else {
-                Vec3::new(v.z, v.y, v.x)
-            }
-        };
         let place = |off: Vec3| at + right * off.x + Vec3::Y * off.y + normal * off.z;
-        let part = |lib: &mut Self, off: Vec3, size: Vec3, rgb: [f32; 3]| {
-            lib.decor(Inst::aabox(place(off), sw(size), kind::WOOD, rgb));
-        };
         let hw = UNIT_W * 0.5;
-        let back = 0.04;
-        let d = back + FACE_DEPTH;
-        for s in [-1.0, 1.0] {
-            part(
-                self,
-                Vec3::new(s * (hw - SIDE_T * 0.5), UNIT_H * 0.5, d * 0.5),
-                Vec3::new(SIDE_T, UNIT_H, d),
-                WALNUT,
-            );
-        }
-        part(
-            self,
-            Vec3::new(0.0, UNIT_H + 0.04, d * 0.5 + 0.02),
-            Vec3::new(UNIT_W + 0.08, 0.08, d + 0.04),
-            WALNUT,
-        );
-        part(
-            self,
-            Vec3::new(0.0, UNIT_H + 0.105, d * 0.5 + 0.04),
-            Vec3::new(UNIT_PITCH, 0.05, d + 0.08),
-            [0.12, 0.06, 0.028],
-        );
-        part(
-            self,
-            Vec3::new(0.0, SHELF_BASE * 0.5, d * 0.5 - 0.01),
-            Vec3::new(UNIT_W - 0.02, SHELF_BASE, d - 0.02),
-            [0.1, 0.05, 0.022],
-        );
-        part(
-            self,
-            Vec3::new(0.0, UNIT_H * 0.5, back * 0.5),
-            Vec3::new(UNIT_W - 2.0 * SIDE_T, UNIT_H, back),
-            DARK_WOOD,
-        );
-        for i in 1..ROWS {
-            let y = SHELF_BASE + i as f32 * SHELF_STEP;
-            part(
-                self,
-                Vec3::new(0.0, y - BOARD_T * 0.5, back + FACE_DEPTH * 0.5),
-                Vec3::new(UNIT_W - 2.0 * SIDE_T, BOARD_T, FACE_DEPTH),
-                WALNUT,
-            );
+        let d = WALL_BACK + FACE_DEPTH;
+        for (mn, mx, k, color) in case_boxes(0.0, d, false) {
+            let (p, q) = (place(mn), place(mx));
+            self.decor(Inst::new((p + q) * 0.5, Quat::IDENTITY, (q - p).abs(), k, color, 0));
         }
         let (a, b) = (
             place(Vec3::new(-hw - 0.04, 0.0, 0.0)),
@@ -537,4 +464,128 @@ impl Library {
             );
         }
     }
+}
+
+/// A bookcase's boxes in its own frame (x along it from its middle, y up from the
+/// floor, z through it) as (min, max, kind, colour): the carcass spans `z0..z1` with
+/// shelves opening toward +z, and toward -z too if `both`; otherwise its back stands
+/// on a wall at `z0`. The nearest parts come first, so they hide what is behind them
+/// before it is shaded.
+fn case_boxes(z0: f32, z1: f32, both: bool) -> Vec<(Vec3, Vec3, u32, [f32; 4])> {
+    let mut out = Vec::with_capacity(40);
+    let mut add = |(mn, mx): (Vec3, Vec3), k: u32, rgb: [f32; 3]| out.push((mn, mx, k, [rgb[0], rgb[1], rgb[2], 1.0]));
+    let faces: &[f32] = if both { &[-1.0, 1.0] } else { &[1.0] };
+    // `a..b` out from face `s`'s plane.
+    let before = |s: f32, a: f32, b: f32| {
+        let f = if s > 0.0 { z1 } else { z0 };
+        (f + s * a).min(f + s * b)..(f + s * a).max(f + s * b)
+    };
+    // Through the carcass, standing `proud` out of each face; on a wall case `off`
+    // the wall, so no two of its parts share the wall's plane.
+    let through = |proud: f32, off: f32| (if both { z0 - proud } else { z0 + off })..z1 + proud;
+    let bx =
+        |x: Range<f32>, y0: f32, y1: f32, z: Range<f32>| (Vec3::new(x.start, y0, z.start), Vec3::new(x.end, y1, z.end));
+    let wide = |hx: f32| -hx..hx;
+    let pitch = UNIT_PITCH * 0.5;
+    for &s in faces {
+        // Brass label holders where each shelf's label hangs, the bottom one on the plinth.
+        for row in 0..ROWS {
+            let top = row_floor_y(row);
+            let holder = if row + 1 == ROWS {
+                bx(wide(0.06), 0.07, 0.13, before(s, 0.04, 0.046))
+            } else {
+                bx(wide(0.06), top - 0.029, top - 0.001, before(s, 0.0, 0.006))
+            };
+            add(holder, kind::METAL, BRASS);
+        }
+        // A rail for a library ladder, resting on the stiles under their capitals.
+        add(
+            bx(wide(pitch), 2.885, 2.905, before(s, STILE_PROUD, STILE_PROUD + 0.02)),
+            kind::METAL,
+            BRASS,
+        );
+        add(
+            bx(wide(STILE_IN), FRIEZE_Y, UNIT_H, before(s, 0.0, 0.015)),
+            kind::WOOD,
+            WALNUT,
+        );
+    }
+    // Each stile is a pilaster on both faces: a capital under the frieze and an inlaid
+    // flute, each one box through the case. Its end has two raised fields.
+    for e in [-1.0f32, 1.0] {
+        let x = |a: f32, b: f32| (e * a).min(e * b)..(e * a).max(e * b);
+        let mid = (STILE_IN + STILE_OUT) * 0.5;
+        add(
+            bx(
+                x(STILE_IN - 0.012, STILE_OUT + 0.008),
+                FRIEZE_Y - 0.06,
+                FRIEZE_Y,
+                through(STILE_PROUD + 0.012, 0.01),
+            ),
+            kind::WOOD,
+            CASE_TRIM,
+        );
+        add(
+            bx(
+                x(mid - 0.018, mid + 0.018),
+                0.3,
+                FRIEZE_Y - 0.14,
+                through(STILE_PROUD + 0.003, 0.01),
+            ),
+            kind::WOOD,
+            [0.07, 0.034, 0.016],
+        );
+        add(
+            bx(x(STILE_IN, STILE_OUT), 0.0, UNIT_H, through(STILE_PROUD, 0.004)),
+            kind::WOOD,
+            WALNUT,
+        );
+        for (y0, y1) in [(0.34, 0.98), (1.12, 2.8)] {
+            add(
+                bx(x(STILE_OUT, STILE_OUT + 0.015), y0, y1, z0 + 0.09..z1 - 0.09),
+                kind::WOOD,
+                CASE_FIELD,
+            );
+        }
+    }
+    // Plinth (the bottom shelf) over a dark toe-kick; cornice in two steps over the
+    // frieze, its crown as wide as the pitch so a row's crowns run on unbroken.
+    add(
+        bx(wide(STILE_OUT + 0.015), 0.04, SHELF_BASE, through(0.04, 0.008)),
+        kind::WOOD,
+        [0.11, 0.055, 0.025],
+    );
+    add(
+        bx(wide(pitch), UNIT_H + 0.07, UNIT_H + 0.13, through(0.085, 0.006)),
+        kind::WOOD,
+        CASE_TRIM,
+    );
+    add(
+        bx(wide(UNIT_W * 0.5 + 0.04), UNIT_H, UNIT_H + 0.07, through(0.055, 0.002)),
+        kind::WOOD,
+        WALNUT,
+    );
+    for &s in faces {
+        for i in 1..ROWS {
+            let y = SHELF_BASE + i as f32 * SHELF_STEP;
+            add(
+                bx(wide(STILE_IN), y - BOARD_T, y, before(s, -FACE_DEPTH, 0.0)),
+                kind::WOOD,
+                WALNUT,
+            );
+        }
+    }
+    add(
+        bx(wide(UNIT_W * 0.5 - 0.02), 0.0, 0.04, through(-0.02, 0.012)),
+        kind::WOOD,
+        [0.035, 0.018, 0.009],
+    );
+    let back = if both {
+        let m = (z0 + z1) * 0.5;
+        m - 0.02..m + 0.02
+    } else {
+        z0..z0 + WALL_BACK
+    };
+    add(bx(wide(STILE_IN), SHELF_BASE, UNIT_H, back), kind::WOOD, DARK_WOOD);
+    out
 }
