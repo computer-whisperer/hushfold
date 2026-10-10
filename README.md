@@ -67,8 +67,9 @@ pause screen replaces the current library's save with a fresh one (settings, in
   sweeping through them). The active book's card names the start of its shelf's
   letter range ("under Al"). Click anywhere on a series' run to file a volume you
   carry; it flies to its exact slot.
-- The Hall's East Wing is veiled until 60% of the West Wing is home. In the
-  Great Library each room is veiled until half the books of the rooms opened
+- The Hall's East Wing is veiled until 40% of the West Wing is home. In the
+  Great Library the second room is veiled until a quarter of the Observatory's
+  books are home, and each room after it until half the books of the rooms opened
   before it are home; a department's books start in its own room, the atrium or
   rooms that open earlier. Colour tells a book's department there, and the
   spine pattern its category.

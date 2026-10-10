@@ -26,8 +26,10 @@ const STAIR_HALF_RUN: f32 = 5.5;
 const STEPS: usize = 33;
 /// The skylight over the well.
 const SKY: f32 = 2.0 * STOREY + ROOM_H + 2.5;
-/// The share of the departments already open that must be home to open the next.
+/// The share of the departments already open that must be home to open the next;
+/// the first veil lifts sooner, to show more of the library early.
 const GATE_NEED: f32 = 0.5;
+const FIRST_GATE_NEED: f32 = 0.25;
 
 /// A stretch from one value to another along an axis.
 type Span = (f32, f32);
@@ -479,7 +481,7 @@ impl Library {
                 max: hi,
                 opens: dept,
                 counts: (0..dept).collect(),
-                need: GATE_NEED,
+                need: if dept == 1 { FIRST_GATE_NEED } else { GATE_NEED },
             });
         }
         let frame = rooms::RoomFrame {

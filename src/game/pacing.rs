@@ -254,11 +254,16 @@ impl Bot {
     fn gather(&mut self, lv: usize, c: Vec3, sift: Sift) -> bool {
         let fileable = self.fileable();
         let floor = self.g.lib.world.ground(Vec2::new(c.x, c.z), c.y + 0.1).unwrap_or(c.y);
-        let at = self.g.nav.standable_near(Vec3::new(c.x, floor, c.z));
+        let pile = Vec3::new(c.x, floor, c.z);
         let reach = self.g.gather_reach();
-        if self.walk(at, reach).is_none() {
+        // The free spot nearest the pile, or the pile itself where that spot is boxed in
+        // by furniture (`choose` found a walk to it).
+        let Some(at) = [self.g.nav.standable_near(pile), pile]
+            .into_iter()
+            .find(|&p| self.walk(p, reach).is_some())
+        else {
             return false;
-        }
+        };
         if sift.is_some() && sift != self.seeking {
             self.seeking = sift;
             self.t += SEEK;

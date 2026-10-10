@@ -91,14 +91,14 @@ pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
         door: Vec3::new(VEIL_X + 0.4, 0.0, 0.0),
         drop: Vec3::new(12.6, 0.0, 0.0),
     });
-    // The veil hangs between the east columns until 60% of the West Wing is home.
+    // The veil hangs between the east columns until 40% of the West Wing is home.
     lib.world.add_gate(Gate {
         level: 0,
         min: Vec3::new(VEIL_X - 0.05, 0.0, -HALL_Z),
         max: Vec3::new(VEIL_X + 0.05, HALL_H, HALL_Z),
         opens: 1,
         counts: vec![0],
-        need: 0.6,
+        need: 0.4,
     });
     // Moonbeams through the north windows.
     let beam_dir = Vec3::new(0.0, -0.62, 1.0).normalize();

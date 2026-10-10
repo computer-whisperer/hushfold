@@ -254,7 +254,10 @@ filed or you gather again. Sort Sense's marker sits on the slot when the walk is
 line, and otherwise on the farthest visible point along the route.
 Books belong to departments (the Hall's are its two wings). A gate (drawn as the
 veil) closes the way into a department until the departments it counts are
-shelved to a fraction: the East Wing opens at 60% of the West. A closed gate is
+shelved to a fraction: the East Wing opens at 40% of the West; in the Great
+Library the second room at a quarter of the Observatory, each after it at half of
+the rooms opened before it (the first veil lifted at half too, at ~1.6 h by the
+pacing bot, too late to show the library early). A closed gate is
 a solid to walking, throwing, gathering, aiming and routes; gate states follow
 from what is shelved, so saves don't store them.
 
@@ -306,6 +309,10 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   8.5 → 9.6 h (filing 7.8 → 8.7 h). Costs not refit for it.
 - The visual pass (each Great Library department its own layout): the Hall 1.60 h,
   the Great Library 9.76 h. Costs not refit for it.
+- Earlier first veils (the East Wing at 40% of the West, from 60%; the Great
+  Library's second room at a quarter of the Observatory, from half): the Hall 1.60 →
+  1.57 h, the East Wing open at ~55 min (from ~65); the Great Library 9.85 → 9.87 h,
+  its second room at ~65 min (from ~95). Costs not refit for it.
 
 ## Rendering
 Box-only geometry; each instance's `kind` picks a procedural material in WGSL:
