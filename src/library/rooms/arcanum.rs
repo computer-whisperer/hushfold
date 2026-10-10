@@ -19,7 +19,7 @@ const SIDE_CASES: [f32; 5] = [17.65, 20.35, 23.05, 25.75, 28.45];
 const NEAR_LEFT: [f32; 3] = [-10.6, -7.9, -5.2];
 const NEAR_RIGHT: [f32; 2] = [7.0, 9.7];
 const RUNE: [f32; 4] = [0.75, 0.35, 1.0, 1.6];
-const CRYSTAL_RGBA: [f32; 4] = [0.62, 0.36, 0.95, 1.4];
+const CRYSTAL_RGBA: [f32; 4] = [0.5, 0.26, 0.88, 1.1];
 const DRAPE: [f32; 3] = [0.1, 0.04, 0.13];
 const IRON: [f32; 4] = [0.16, 0.16, 0.18, 1.0];
 
@@ -370,7 +370,7 @@ fn crystals(lib: &mut Library, f: &RoomFrame) {
             0.25 + k as f32 * 0.2,
         );
     }
-    lib.light(f.at(0.0, WARD, 2.6), 7.5, [0.65, 0.4, 1.0], 1.2, LightKind::Static);
+    lib.light(f.at(0.0, WARD, 1.4), 7.5, [0.65, 0.4, 1.0], 1.1, LightKind::Static);
 }
 
 /// The rune circle in the floor of the court: two rings with runes between them, a
@@ -514,7 +514,7 @@ fn lectern(lib: &mut Library, f: &RoomFrame, s: f32, o: f32, k: usize) {
             0,
         ));
     }
-    if k % 2 == 0 {
+    if k.is_multiple_of(2) {
         // A guttering candle.
         let c = Vec3::new(0.26, 1.15, -0.05);
         at.block(lib, c, Vec3::new(0.05, 0.12, 0.05), kind::PLAIN, [0.75, 0.7, 0.58, 1.0]);

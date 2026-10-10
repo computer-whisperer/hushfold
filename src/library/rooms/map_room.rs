@@ -692,20 +692,21 @@ fn globe(lib: &mut Library, f: &RoomFrame) {
     // out. Here and there one square is land, showing where its corners stand proud
     // (a hair thinner, so its top stays under the sea's); the slices at the poles are
     // ice.
-    let sea = [0.03, 0.13, 0.2, 1.1];
+    let sea = [0.03, 0.13, 0.2, 0.6];
     let land = [0.34, 0.31, 0.17, 0.15];
     let ice = [0.62, 0.66, 0.66, 0.2];
-    let slices = 12;
-    let t = 2.0 * r / slices as f32;
+    // Which of each slice's squares are land, from pole to pole.
     let lands: [u8; 12] = [
         0, 0b000100, 0b100100, 0b000110, 0b010010, 0b110000, 0b011000, 0b001001, 0b000011, 0b000010, 0b100000, 0,
     ];
-    for j in 0..slices {
+    let slices = lands.len();
+    let t = 2.0 * r / slices as f32;
+    for (j, bits) in lands.into_iter().enumerate() {
         let h = -r + (j as f32 + 0.5) * t;
         let rad = (r * r - h * h).max(0.0).sqrt() * 1.03;
         let polar = j == 0 || j == slices - 1;
         for k in 0..6 {
-            let is_land = lands[j] & (1 << k) != 0;
+            let is_land = bits & (1 << k) != 0;
             let (color, thick) = match (polar, is_land) {
                 (true, _) => (ice, t + 0.002),
                 (false, true) => (land, t - 0.004),
