@@ -17,7 +17,7 @@ struct Globals {
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
-// The opaque scene's depth, for translucent things (fs_trans).
+// The opaque scene's depth, for translucent things (fs_trans, fs_beam).
 @group(1) @binding(0) var scene_depth: texture_depth_multisampled_2d;
 
 const K_PLAIN: u32 = 0u;
@@ -31,7 +31,7 @@ const K_RUG: u32 = 7u;
 const K_PLAQUE: u32 = 8u;
 const K_GLASS: u32 = 9u;
 const K_VEIL: u32 = 10u;
-const K_SHAFT: u32 = 11u;
+const K_SHAFT: u32 = 11u; // drawn by fs_beam
 const K_PAPER: u32 = 12u;
 const K_METAL: u32 = 13u;
 const K_CLOTH: u32 = 14u;
@@ -962,7 +962,10 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
             parchment(&s, i, fw);
         }
         default: {
+            // Plain stuff (wax, marble) with a soft polish.
             s.albedo = s.albedo * (0.9 + 0.15 * vnoise(i.local * i.scale * 8.0));
+            s.spec = vec3<f32>(0.08);
+            s.gloss = 24.0;
         }
     }
     let amb = mix(g.ambient_bottom.rgb, g.ambient_top.rgb, s.n.y * 0.5 + 0.5) * ao;
@@ -982,22 +985,16 @@ fn beam_fade(y: f32) -> f32 {
 // A moonbeam: the light scattered along the eye's path through a soft round shaft
 // (local y runs down the beam from the window), so it reads from outside and from
 // within; dust drifts in it and motes glint.
-fn moonbeam(i: VOut, front: bool) -> vec4<f32> {
+// `seen`: how far the eye sees along this fragment's ray, in multiples of the distance
+// to it; `facing`: how squarely the surface it meets there faces up the beam.
+fn moonbeam(i: VOut, front: bool, seen: f32, facing: f32) -> vec4<f32> {
     let cam = qrot_inv(i.rot, g.cam_pos.xyz - i.centre) / i.scale;
     let inside = all(abs(cam) < vec3<f32>(0.5));
     // From outside, shade where the eye's ray enters; from inside, where it leaves.
     if (inside == front) {
         return vec4<f32>(0.0);
     }
-    // The eye sees along this ray as far as the opaque scene: `seen` times as far as this
-    // fragment. View depth is p23 / (z + p22) from the projection's third row; p22 is
-    // recovered from view_proj, whose fourth row is the view's (unit) depth axis.
-    let r2 = vec3<f32>(g.view_proj[0][2], g.view_proj[1][2], g.view_proj[2][2]);
-    let r3 = vec3<f32>(g.view_proj[0][3], g.view_proj[1][3], g.view_proj[2][3]);
-    let p22 = -length(r2) / length(r3);
-    let seen = (i.clip.z + p22) / (textureLoad(scene_depth, vec2<i32>(i.clip.xy), 0) + p22);
-    // Drawn without a depth test (`fs_beam`): from outside, nothing if the near side is
-    // hidden.
+    // Drawn without a depth test: from outside, nothing if the near side is hidden.
     if (!inside && seen < 1.0) {
         return vec4<f32>(0.0);
     }
@@ -1018,12 +1015,10 @@ fn moonbeam(i: VOut, front: bool) -> vec4<f32> {
     // x^2 = qa t^2 + 2 qb t + qc for t from 0 (a) to 1 (b).
     let d = b - a;
     let k = 4.0 / (0.45 * 0.45);
-    // Where something stands in the beam, a pool of moonlight on it; only below the eye,
-    // as the light falls downward (and a ceiling poking into the beam of the room
-    // above is not lit).
+    // Where something stands in the beam, a pool of moonlight on what faces the window.
     var pool = 0.0;
-    if (seen < u1 && (i.centre + qrot(i.rot, b * i.scale)).y < g.cam_pos.y) {
-        pool = exp(-k * dot(b.xz, b.xz)) * beam_fade(b.y);
+    if (seen < u1) {
+        pool = exp(-k * dot(b.xz, b.xz)) * beam_fade(b.y) * facing;
     }
     let qa = k * dot(d.xz, d.xz);
     let qb = k * dot(a.xz, d.xz);
@@ -1068,12 +1063,24 @@ fn moonbeam(i: VOut, front: bool) -> vec4<f32> {
 // scene's depth.
 @fragment
 fn fs_beam(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return moonbeam(i, front);
+    // View depth is p23 / (z + p22) from the projection's third row; p22 is recovered
+    // from view_proj, whose fourth row is the view's (unit) depth axis.
+    let r2 = vec3<f32>(g.view_proj[0][2], g.view_proj[1][2], g.view_proj[2][2]);
+    let r3 = vec3<f32>(g.view_proj[0][3], g.view_proj[1][3], g.view_proj[2][3]);
+    let p22 = -length(r2) / length(r3);
+    let seen = (i.clip.z + p22) / (textureLoad(scene_depth, vec2<i32>(i.clip.xy), 0) + p22);
+    // The scene's surface there, and its normal from how that point moves across the
+    // screen (derivatives here, in uniform control flow).
+    let hit = g.cam_pos.xyz + (i.world - g.cam_pos.xyz) * seen;
+    var n = normalize(cross(dpdx(hit), dpdy(hit)) + vec3<f32>(0.0, 1e-6, 0.0));
+    n = select(n, -n, dot(n, g.cam_pos.xyz - hit) < 0.0);
+    let facing = max(dot(n, -qrot(i.rot, vec3<f32>(0.0, 1.0, 0.0))), 0.0);
+    return moonbeam(i, front, seen, facing);
 }
 
-// Translucent things: slot ghosts, the veil, moonbeams. Premultiplied alpha.
+// Translucent things: slot ghosts and the veil. Premultiplied alpha.
 @fragment
-fn fs_trans(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+fn fs_trans(i: VOut) -> @location(0) vec4<f32> {
     // Ghost outline distance, and its screen-space rate (derivatives need uniform control flow).
     let edge = box_edge(i.local, i.scale, i.lnormal);
     let px = max(fwidth(edge), 1e-5);
@@ -1089,9 +1096,6 @@ fn fs_trans(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         let a = (0.12 + 0.3 * n1 * n2) * i.color.w;
         let c = mix(vec3<f32>(0.2, 0.25, 0.7), vec3<f32>(0.55, 0.3, 0.8), n2) * (0.3 + 0.7 * n1);
         return vec4<f32>(c * a, a * 0.7);
-    }
-    if (i.kind == K_SHAFT) {
-        return moonbeam(i, front);
     }
     // Ghost slot. param: 0 = waiting, 1 = a series you carry, 2 = the active book's slot.
     // Highlighted ghosts arrive in a fixed-brightness signal colour; color.w scales them.
