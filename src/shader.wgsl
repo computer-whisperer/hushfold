@@ -894,14 +894,14 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
     s.back = 0.0;
     var ao = mix(0.55, 1.0, smoothstep(0.0, 2.2, i.world.y));
     switch i.kind {
-        case 1u: { // K_WOOD
+        case K_WOOD: {
             // The bevel first: its inputs are then dead through the grain's noise.
             s.spec = vec3<f32>(0.07 + 0.05 * max(s.n.y, 0.0));
             s.n = bevel(i, 0.006, 1.0, 0.0, fw);
             s.albedo = wood(i, fw);
             s.gloss = 28.0;
         }
-        case 2u: { // K_BOOK
+        case K_BOOK: {
             let b = book_surface(i);
             s.albedo = b.albedo;
             s.spec = vec3<f32>(b.spec);
@@ -909,19 +909,19 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
             s.emit = b.emit;
             ao = mix(0.7, 1.0, ao);
         }
-        case 3u: { // K_FLOOR
+        case K_FLOOR: {
             let f = floorboards(i.color.rgb, i.world, fw);
             s.albedo = f.rgb;
             s.spec = vec3<f32>(0.12 * f.a);
             s.gloss = 40.0;
             ao = 1.0;
         }
-        case 4u: { // K_STONE
+        case K_STONE: {
             let st = stone(i.color.rgb, i.world, s.n, fw);
             s.albedo = st.albedo;
             s.n = st.n;
         }
-        case 5u: { // K_EMISSIVE
+        case K_EMISSIVE: {
             var flick = 1.0;
             if (i.param == 1u) {
                 let t = g.cam_pos.w;
@@ -929,36 +929,36 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
             }
             return vec4<f32>(apply_fog(i.color.rgb * i.color.w * flick, i.world), 1.0);
         }
-        case 7u: { // K_RUG
+        case K_RUG: {
             let second = vec3<f32>(f32(i.param & 255u), f32((i.param >> 8u) & 255u), f32((i.param >> 16u) & 255u)) / 255.0;
             s.albedo = rug_albedo(i.color.rgb, second * second, i.local * i.scale, i.scale);
             ao = 1.0;
         }
-        case 8u: { // K_PLAQUE
+        case K_PLAQUE: {
             plaque(&s, i, fw);
         }
-        case 9u: { // K_GLASS (moonlit window)
+        case K_GLASS: { // moonlit window
             return vec4<f32>(apply_fog(window(i, fw), i.world), 1.0);
         }
-        case 12u: { // K_PAPER (familiar)
+        case K_PAPER: { // familiar
             s.albedo = vec3<f32>(0.9, 0.86, 0.75);
             s.emit = i.color.rgb * i.color.w;
         }
-        case 13u: { // K_METAL
+        case K_METAL: {
             let lo = min(i.scale.x, min(i.scale.y, i.scale.z));
             s.n = bevel(i, clamp(lo * 0.2, 0.003, 0.03), 1.2, 0.5, fw);
             metal(&s, i.color.rgb, i.local * i.scale + i.centre, i.world, f32(i.param & 1u));
         }
-        case 14u: { // K_CLOTH
+        case K_CLOTH: {
             cloth(&s, i, fw);
         }
-        case 15u: { // K_LEAF
+        case K_LEAF: {
             ao *= leaf(&s, i, fw);
         }
-        case 16u: { // K_CRYSTAL
+        case K_CRYSTAL: {
             crystal(&s, i, fw);
         }
-        case 17u: { // K_PARCHMENT
+        case K_PARCHMENT: {
             parchment(&s, i, fw);
         }
         default: {
