@@ -225,6 +225,19 @@ impl Library {
                 (kind::WOOD, rgba(BEAM_WOOD, 1.0)),
             );
         }
+        // A gilt crescent on a dark roundel hung at the crown of the middle arch, on
+        // both its faces.
+        for n in [Vec3::X, -Vec3::X] {
+            let m = Mount {
+                at: Vec3::new(sx, 0.0, 0.0) + n * 0.12,
+                n,
+            };
+            let at = Vec3::new(0.0, GIRDER_Y - 0.62, 0.0);
+            self.disc(m, at, (0.4, 0.02), kind::WOOD, rgba(BEAM_WOOD, 1.0));
+            self.disc(m, at + Vec3::Z * 0.025, (0.3, 0.03), kind::METAL, rgba(GILT, 1.0));
+            let shadow = at + Vec3::new(0.1, 0.07, 0.035);
+            self.disc(m, shadow, (0.25, 0.03), kind::WOOD, rgba(BEAM_WOOD, 1.0));
+        }
     }
 
     /// Boxes round an arc about `c` in the plane of `u` and `v` (unit, at right angles),
@@ -256,9 +269,13 @@ impl Library {
     }
 
     /// A disc on a wall: a fan of strips, none of them square to the wall's edges (so
-    /// no two share a face), `r` round and `d` thick at `off`.
+    /// no two share a face), `r` round and `d` thick at `off`; fewer strips when small.
     fn disc(&mut self, m: Mount, off: Vec3, (r, d): (f32, f32), kind: u32, color: [f32; 4]) {
-        let n = 8;
+        let n = match r {
+            r if r < 0.16 => 4,
+            r if r < 0.45 => 6,
+            _ => 8,
+        };
         let step = PI / n as f32;
         let w = 2.0 * r * (step * 0.5).sin() * 1.08;
         for k in 0..n {
@@ -1585,7 +1602,7 @@ impl Library {
             for line in 0..7 {
                 let len = if line % 3 == 2 { 0.16 } else { 0.24 };
                 let off = Vec3::new(-0.01 * s, 0.024, -0.17 + line as f32 * 0.055);
-                let glow = [0.45, 0.65, 1.0, 1.6];
+                let glow = [0.3, 0.55, 1.0, 1.6];
                 let ink = Vec3::new(len, 0.003, 0.012);
                 self.decor(Inst::new(at + rot * off, rot, ink, kind::CRYSTAL, glow, 0));
             }
