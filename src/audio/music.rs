@@ -11,10 +11,10 @@ use rand::prelude::*;
 /// Seconds of quiet before the first piece, and between pieces.
 const FIRST: (f64, f64) = (8.0, 16.0);
 const BETWEEN: (f64, f64) = (35.0, 95.0);
-/// Most notes sounding at once (the oldest give way).
+/// Notes sounding at once before the oldest are let go (quickly faded).
 const MAX_TONES: usize = 72;
 /// The music's level in the mix.
-const LEVEL: f32 = 0.45;
+const LEVEL: f32 = 0.38;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Mode {
@@ -402,7 +402,7 @@ impl Composer<'_> {
                 while root < 38.0 {
                     root += 12.0;
                 }
-                self.push(at, bar_len * 0.95, root, vel, bass, 0.0);
+                self.push(at, bar_len * 0.95, root, vel * 0.8, bass, 0.0);
                 if self.meter == 4 && self.rng.gen_bool(0.3) {
                     self.push(at + 2.0 * self.beat, bar_len * 0.45, root + 7.0, vel * 0.7, bass, 0.0);
                 }
@@ -429,7 +429,7 @@ impl Composer<'_> {
             for (i, &p) in pattern.iter().enumerate() {
                 let accent = if i == 0 { 1.0 } else { 0.7 };
                 let dur = if texture == Texture::Roll { bar_len } else { step * 1.6 };
-                self.push(at + i as f64 * step, dur, tones[p], vel * accent * 0.8, arp, -0.3);
+                self.push(at + i as f64 * step, dur, tones[p], vel * accent * 0.65, arp, -0.3);
             }
         }
     }
@@ -562,6 +562,8 @@ struct Tone {
     attack: f32,
     release: f32,
     gains: (f32, f32),
+    /// Let go early to make room.
+    stopped: bool,
 }
 
 impl Tone {
@@ -635,6 +637,7 @@ impl Tone {
                 1.0
             },
             gains: (l * g, r * g),
+            stopped: false,
         }
     }
 
@@ -653,7 +656,16 @@ impl Tone {
             l[i] += s * self.gains.0;
             r[i] += s * self.gains.1;
         }
-        self.wait > 0 || self.partials.tidy() * self.env > 1e-3
+        // Still held, it is still rising (a pad's slow attack starts near nothing).
+        self.wait > 0 || self.hold > 0 || self.partials.tidy() * self.env > 1e-3
+    }
+
+    /// Let go at once, fading out over a few milliseconds.
+    fn stop(&mut self) {
+        self.hold = 0;
+        self.wait = 0;
+        self.release = decay_per_sample(0.005);
+        self.stopped = true;
     }
 }
 
@@ -728,8 +740,10 @@ impl Music {
                 while *next < notes.len() && notes[*next].at < *t + dt {
                     let n = &notes[*next];
                     let wait = ((n.at - *t).max(0.0) * SRF as f64) as usize;
-                    if self.tones.len() >= MAX_TONES {
-                        self.tones.remove(0);
+                    if self.tones.iter().filter(|t| !t.stopped).count() >= MAX_TONES
+                        && let Some(oldest) = self.tones.iter_mut().find(|t| !t.stopped)
+                    {
+                        oldest.stop();
                     }
                     self.tones.push(Tone::new(n, wait));
                     *next += 1;
@@ -765,6 +779,25 @@ mod tests {
 
     fn pitch_classes(key: Key) -> Vec<i32> {
         (0..7).map(|d| (key.note(d) as i32).rem_euclid(12)).collect()
+    }
+
+    #[test]
+    fn a_pad_starting_late_in_a_block_still_sounds() {
+        let note = Note {
+            at: 0.0,
+            dur: 3.0,
+            key: 57.0,
+            vel: 1.0,
+            inst: Inst::Pad,
+            pan: 0.0,
+        };
+        let mut t = Tone::new(&note, BLOCK - 3);
+        let (mut l, mut r) = (vec![0.0; BLOCK], vec![0.0; BLOCK]);
+        assert!(t.render(&mut l, &mut r), "dropped in its first block");
+        for _ in 0..200 {
+            t.render(&mut l, &mut r);
+        }
+        assert!(t.env > 0.5, "it never swelled in");
     }
 
     #[test]

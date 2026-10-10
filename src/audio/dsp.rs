@@ -206,14 +206,18 @@ impl Partials {
         out
     }
 
-    /// Keep the phasors on the unit circle (call once a block or so); returns the
-    /// loudest partial's amplitude.
+    /// Keep the phasors on the unit circle and silence partials that have died
+    /// (before they sink into slow denormal arithmetic); call once a block or so.
+    /// Returns the loudest partial's amplitude.
     pub fn tidy(&mut self) -> f32 {
         let mut loudest = 0.0f32;
         for p in &mut self.p[..self.n] {
             let m = 1.5 - 0.5 * (p.c * p.c + p.s * p.s);
             p.c *= m;
             p.s *= m;
+            if p.amp < 1e-12 {
+                p.amp = 0.0;
+            }
             loudest = loudest.max(p.amp);
         }
         loudest

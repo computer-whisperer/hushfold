@@ -351,7 +351,7 @@ bells and glints where something magical happens. Everything is synthesised;
   answer in A A B A), then a quiet spell of 35–95 s. Tonal effects and the
   ambience's bells are written in D pentatonic and moved to the relative major
   of the piece's mode, so they always sit in its key.
-- Levels at default settings: music ~−31 dBFS RMS, place beds ~−48 to −50, a
+- Levels at default settings: music ~−33 dBFS RMS, place beds ~−48 to −50, a
   near thunk peaks ~−18, a category's fanfare ~−13. A look-ahead limiter at
   −6 dBFS and a soft knee guard the sum; the busiest scenes measured (Aura III,
   Rush) peak at −9 to −11, so it rarely acts.

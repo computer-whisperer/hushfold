@@ -39,10 +39,8 @@ impl Game {
     fn fires(&self) -> impl Iterator<Item = Vec3> + '_ {
         let world = &self.lib.world;
         (self.lib.lights.iter())
-            .filter(move |l| {
-                let floor = world.levels[world.level_at(l.pos)].y;
-                l.kind == LightKind::Flicker && l.intensity >= FIRE_LIGHT && l.pos.y - floor <= FIRE_HIGH
-            })
+            .filter(|l| l.kind == LightKind::Flicker && l.intensity >= FIRE_LIGHT)
+            .filter(move |l| l.pos.y - world.levels[world.level_at(l.pos)].y <= FIRE_HIGH)
             .map(|l| l.pos)
     }
 
@@ -96,14 +94,14 @@ impl Game {
             *slot = (at, heard);
         }
         // Familiars on the wing, nearest first.
-        let mut wings: Vec<(f32, Vec3)> = (self.familiars.iter())
-            .filter(|f| f.post.as_ref().is_some_and(|p| f.pos.distance(p.at) > PERCHED))
-            .map(|f| (f.pos.distance(ears), f.pos))
+        let mut wings: Vec<(f32, usize, Vec3)> = (self.familiars.iter().enumerate())
+            .filter(|(_, f)| f.post.as_ref().is_some_and(|p| f.pos.distance(p.at) > PERCHED))
+            .map(|(i, f)| (f.pos.distance(ears), i, f.pos))
             .filter(|w| w.0 < WINGS_REACH)
             .collect();
         wings.sort_by(|a, b| a.0.total_cmp(&b.0));
-        for (slot, (_, at)) in scene.wings.iter_mut().zip(wings) {
-            *slot = Some(at);
+        for (slot, (_, i, at)) in scene.wings.iter_mut().zip(wings) {
+            *slot = Some((i, at));
         }
         scene
     }

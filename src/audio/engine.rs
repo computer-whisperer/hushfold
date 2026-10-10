@@ -20,6 +20,9 @@ pub const DT: f32 = BLOCK as f32 / SRF;
 const MAX_VOICES: usize = 96;
 /// Seconds over which a crowd of one effect thins out again.
 const CROWD_TAU: f32 = 0.6;
+/// Heard at least this loud (about 13 m off or nearer), an effect counts towards
+/// its kind's gap and crowd.
+const NEAR: f32 = 0.3;
 
 /// What the game asks of the engine.
 pub enum Cmd {
@@ -139,13 +142,19 @@ impl Heard {
         }
     }
 
+    /// How loud it is overall (1 for something at arm's length ahead).
+    fn gain(&self) -> f32 {
+        ((self.left * self.left + self.right * self.right) * 0.5).sqrt()
+    }
+
     /// Heard from `at`: quieter and duller with distance (and a little duller from
     /// behind), panned by its bearing but never wholly into one ear, and more of it
     /// by way of the room the further it is.
     pub fn from(ears: &Ears, at: Vec3) -> Self {
         let rel = at - ears.pos;
         let d = rel.length();
-        let gain = (1.0 / (1.0 + (d - 1.5).max(0.0) / 5.0)) * (1.0 - ((d - 40.0) / 20.0).clamp(0.0, 1.0));
+        let fade = 1.0 - ((d - 40.0) / 20.0).clamp(0.0, 1.0);
+        let gain = fade / (1.0 + (d - 1.5).max(0.0) / 5.0);
         let dir = rel / d.max(0.01);
         let width = (d / 1.5).min(1.0);
         let (l, r) = pan_gains(dir.dot(ears.right) * 0.8 * width);
@@ -154,7 +163,7 @@ impl Heard {
             left: l * SQRT_2 * gain,
             right: r * SQRT_2 * gain,
             cutoff: 16000.0 * 0.15f32.powf((d / 40.0).min(1.0)) * (1.0 - 0.4 * behind),
-            wet: (0.6 + 1.4 * (d / 25.0).min(1.0)) * gain.max(0.15),
+            wet: (0.6 + 1.4 * (d / 25.0).min(1.0)) * gain.max(0.15 * fade),
         }
     }
 }
@@ -173,6 +182,8 @@ pub struct Voice {
     lp: OnePole,
     gains: (f32, f32),
     started: bool,
+    /// Fading out, made way for: its gain now, falling to nothing.
+    fading: Option<f32>,
 }
 
 impl Voice {
@@ -191,6 +202,7 @@ impl Voice {
             lp: OnePole::new(20000.0),
             gains: (0.0, 0.0),
             started: false,
+            fading: None,
         }
     }
 
@@ -200,9 +212,16 @@ impl Voice {
         self
     }
 
-    /// Roughly how loud it is now: its gain, less as it nears its end.
-    fn level(&self) -> f32 {
-        self.gain * (1.0 - self.pos / self.clip.len() as f32)
+    /// Roughly how loud it is now as heard: its gain where it is, less as it nears
+    /// its end.
+    fn level(&self, ears: &Ears) -> f32 {
+        let heard = self.at.map_or(1.0, |at| Heard::from(ears, at).gain());
+        self.gain * heard * (1.0 - self.pos / self.clip.len() as f32)
+    }
+
+    /// Make way: fade out over a few milliseconds and stop.
+    fn fade_out(&mut self) {
+        self.fading.get_or_insert(1.0);
     }
 
     /// Add this block to the dry pair and the room's send; false once it is done.
@@ -234,6 +253,13 @@ impl Voice {
             }
             let frac = self.pos - idx as f32;
             let mut x = (data[idx] + (data[idx + 1] - data[idx]) * frac) * self.gain;
+            if let Some(f) = &mut self.fading {
+                *f -= 1.0 / (0.005 * SRF);
+                if *f <= 0.0 {
+                    return false;
+                }
+                x *= *f;
+            }
             if filtered {
                 x = self.lp.lp(x);
             }
@@ -349,17 +375,35 @@ impl Engine {
         }
     }
 
+    /// Take a command, refusing anything not finite: one NaN in a filter or the
+    /// reverb would silence the mix for good.
     fn command(&mut self, c: Cmd) {
+        let finite = |v: Vec3| v.is_finite();
         match c {
             Cmd::Banks(b) => self.banks = Some(b),
-            Cmd::Play { sfx, vol, variant, at } => self.play(sfx, vol, variant, at),
-            Cmd::Scene(s) => {
-                self.ears = Ears::new(s.ears, s.right);
-                self.scene = s;
+            Cmd::Play { sfx, vol, variant, at } => {
+                if vol.is_finite() && at.is_none_or(finite) {
+                    self.play(sfx, vol, variant, at);
+                }
+            }
+            Cmd::Scene(mut s) => {
+                let fine = finite(s.ears)
+                    && finite(s.right)
+                    && s.fires.iter().all(|&(at, v)| finite(at) && v.is_finite())
+                    && s.wings.iter().flatten().all(|&(_, at)| finite(at));
+                if fine {
+                    for w in s.places.iter_mut().chain([&mut s.loft]) {
+                        *w = if w.is_finite() { w.clamp(0.0, 1.0) } else { 0.0 };
+                    }
+                    self.ears = Ears::new(s.ears, s.right);
+                    self.scene = s;
+                }
             }
             Cmd::Gains { music, effects } => {
-                self.music_gain.target = music;
-                self.effects_gain.target = effects;
+                if music.is_finite() && effects.is_finite() {
+                    self.music_gain.target = music.clamp(0.0, 1.0);
+                    self.effects_gain.target = effects.clamp(0.0, 1.0);
+                }
             }
         }
     }
@@ -368,13 +412,21 @@ impl Engine {
         let Some(banks) = &self.banks else { return };
         let bank = &banks.sfx[sfx as usize];
         let p = props(sfx);
-        let gap = (p.gap * SRF) as u64;
-        let last = &mut self.last[sfx as usize];
-        if last.is_some_and(|(t, _)| self.clock < t + gap) || vol <= 0.0 {
+        let heard = at.map_or(1.0, |at| Heard::from(&self.ears, at).gain());
+        if vol <= 0.0 || heard <= 0.0 {
             return;
         }
+        // Only what is heard near at hand keeps others of its kind apart and thins
+        // them out; far-off ones (a familiar filing across the library) neither.
+        let gap = (p.gap * SRF) as u64;
+        let last = &mut self.last[sfx as usize];
         let crowd = last.map_or(0.0, |(t, n)| n * (-((self.clock - t) as f32 / SRF) / CROWD_TAU).exp());
-        *last = Some((self.clock, crowd + 1.0));
+        if heard >= NEAR {
+            if last.is_some_and(|(t, _)| self.clock < t + gap) {
+                return;
+            }
+            *last = Some((self.clock, crowd + 1.0));
+        }
         let clip = match variant {
             Some(v) => bank[v.min(bank.len() - 1)].clone(),
             None => bank.choose(&mut self.rng).unwrap().clone(),
@@ -390,11 +442,14 @@ impl Engine {
         } else {
             self.rng.gen_range(-1.0..=1.0) * p.spread
         };
-        if self.voices.len() >= MAX_VOICES {
-            // Make way by stopping whichever is quietest by now.
-            let quietest =
-                (0..self.voices.len()).min_by(|&a, &b| self.voices[a].level().total_cmp(&self.voices[b].level()));
-            self.voices.swap_remove(quietest.unwrap());
+        let live = self.voices.iter().filter(|v| v.fading.is_none());
+        if live.count() >= MAX_VOICES {
+            // Make way by fading out whichever is quietest by now.
+            let ears = self.ears;
+            let quietest = (self.voices.iter_mut())
+                .filter(|v| v.fading.is_none())
+                .min_by(|a, b| a.level(&ears).total_cmp(&b.level(&ears)));
+            quietest.unwrap().fade_out();
         }
         let gain = vol * p.gain / (1.0 + p.crowd * crowd);
         self.voices.push(Voice::new(clip, gain, rate, p.send, at, pan));

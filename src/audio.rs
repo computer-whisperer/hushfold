@@ -155,8 +155,9 @@ pub struct Scene {
     pub loft: f32,
     /// Fires: where each burns and how much of it is heard (0 for none).
     pub fires: [(Vec3, f32); MAX_FIRES],
-    /// Familiars in flight, nearest first.
-    pub wings: [Option<Vec3>; MAX_WINGS],
+    /// Familiars in flight, nearest first: each one's own number (so it keeps its
+    /// own wingbeat from frame to frame) and where it is.
+    pub wings: [Option<(usize, Vec3)>; MAX_WINGS],
 }
 
 impl Default for Scene {

@@ -118,6 +118,10 @@ impl Ring {
 /// A ring sounding.
 struct Ringing {
     partials: Partials,
+    /// The place it rings in, and how much of that place was heard last block (it
+    /// fades with it, should the listener leave while it rings).
+    place: usize,
+    heard: f32,
     /// Samples before it starts.
     wait: usize,
     env: f32,
@@ -129,20 +133,24 @@ struct Ringing {
 }
 
 impl Ringing {
-    /// Add this block to the dry pair and the room's send; false once it has died.
-    fn render(&mut self, l: &mut [f32], r: &mut [f32], wet: &mut [f32]) -> bool {
+    /// Add this block to the dry pair and the room's send, its place now heard by
+    /// `heard`; false once it has died.
+    fn render(&mut self, heard: f32, l: &mut [f32], r: &mut [f32], wet: &mut [f32]) -> bool {
         let start = self.wait.min(l.len());
         self.wait -= start;
+        let h0 = self.heard;
+        self.heard = heard;
         for i in start..l.len() {
+            let h = h0 + (heard - h0) * (i + 1) as f32 / l.len() as f32;
             self.env = (self.env + self.attack).min(1.0);
             self.phase = (self.phase + self.tremolo.0 / SRF).fract();
             let trem = 1.0 + self.tremolo.1 * (TAU * self.phase).sin();
-            let x = self.partials.next() * self.env * trem;
+            let x = self.partials.next() * self.env * trem * h;
             l[i] += x * self.gains.0;
             r[i] += x * self.gains.1;
             wet[i] += x * self.send;
         }
-        self.wait > 0 || self.partials.tidy() > 1e-4
+        self.wait > 0 || self.partials.tidy() * heard > 1e-4
     }
 }
 
@@ -197,8 +205,9 @@ enum Layer {
     },
     /// Rain's wash against the glass (the drops are a `Scatter`).
     Wash { level: f32, f: Pair, gust: Wander },
-    /// A low hum of a few slowly beating tones, in the music's key.
-    Hum { level: f32, phases: [f32; 6] },
+    /// A low hum of a few slowly beating tones, in the music's key (gliding to a
+    /// new one): `base` is its pitch now, 0 until it first sounds.
+    Hum { level: f32, base: f32, phases: [f32; 6] },
     /// Grains at random, one every `every` seconds on average, `cluster` at a time
     /// `spacing` apart.
     Scatter {
@@ -379,6 +388,7 @@ impl Bed {
                     hush(0.055, 210.0, 0.1),
                     Layer::Hum {
                         level: 0.003,
+                        base: 0.0,
                         phases: [0.0; 6],
                     },
                     scatter(r(Crystal), 6.0, (0.006, 0.015), 0.6),
@@ -429,7 +439,8 @@ impl Bed {
 
 /// What a layer renders with: the block's ramps and where to put it.
 struct Ctx<'a> {
-    /// The place's weight at the block's start and end.
+    /// The place, and its weight at the block's start and end.
+    place: usize,
     w: (f32, f32),
     loft: f32,
     /// Playback rate putting D at the music's key.
@@ -449,7 +460,8 @@ impl Ctx<'_> {
         self.w.0 + (self.w.1 - self.w.0) * (i + 1) as f32 / self.l.len() as f32
     }
 
-    /// Start `sound` `delay` seconds from now.
+    /// Start `sound` `delay` seconds from now, at `gain` while its place is heard
+    /// in full.
     fn start(&mut self, sound: Sound, gain: f32, pan: f32, delay: f32, send: f32) {
         let wait = (delay * SRF) as usize;
         match sound {
@@ -457,6 +469,7 @@ impl Ctx<'_> {
                 let Some(banks) = self.banks else { return };
                 let clip = banks.grain(g).choose(self.rng).unwrap().clone();
                 let rate = self.rng.gen_range(0.96..1.04);
+                let gain = gain * self.w.1;
                 self.voices
                     .push(Voice::new(clip, gain, rate, send, None, pan).after(wait));
             }
@@ -465,6 +478,8 @@ impl Ctx<'_> {
                 let (l, r) = pan_gains(pan);
                 self.rings.push(Ringing {
                     partials,
+                    place: self.place,
+                    heard: self.w.1,
                     wait,
                     env: 0.0,
                     attack: 1.0 / (attack * SRF),
@@ -542,9 +557,15 @@ impl Layer {
                     c.r[i] += f.0[1].band(c.noise.white()) * g;
                 }
             }
-            Layer::Hum { level, phases } => {
+            Layer::Hum { level, base, phases } => {
                 // D2 and its fifth and octave, each beside a twin a fraction off.
-                let base = midi_hz(38.0) * c.shift;
+                let key = midi_hz(38.0) * c.shift;
+                *base = if *base == 0.0 {
+                    key
+                } else {
+                    *base + (key - *base) * (1.0 - (-DT / 1.5).exp())
+                };
+                let base = *base;
                 let tones = [(1.0, 1.0), (1.0, 0.9), (1.5, 0.35), (1.5, 0.3), (2.0, 0.25), (2.0, 0.2)];
                 let beats = [0.0, 0.13, 0.0, 0.21, 0.0, 0.17];
                 for i in 0..n {
@@ -572,11 +593,11 @@ impl Layer {
                     let count = c.rng.gen_range(cluster.0..=cluster.1);
                     let pan = c.rng.gen_range(-1.0..=1.0) * *spread;
                     for k in 0..count {
-                        let a = c.rng.gen_range(gain.0..=gain.1) * w;
+                        let a = c.rng.gen_range(gain.0..=gain.1);
                         let jitter = c.rng.gen_range(0.6..1.4);
                         let at = wait.max(0.0) + k as f32 * *spacing * jitter;
                         let pan = (pan + c.rng.gen_range(-0.15..=0.15)).clamp(-1.0, 1.0);
-                        if a > 1e-4 {
+                        if a * w > 1e-4 {
                             c.start(*sound, a, pan, at, 0.4);
                         }
                     }
@@ -596,8 +617,8 @@ impl Layer {
                 while *wait < DT {
                     let g = grains[*count % 2];
                     *count += 1;
-                    let a = *gain * w * c.rng.gen_range(0.85..1.0);
-                    if a > 1e-4 {
+                    let a = *gain * c.rng.gen_range(0.85..1.0);
+                    if a * w > 1e-4 {
                         c.start(Sound::Grain(g), a, *pan, wait.max(0.0), 0.3);
                     }
                     *wait += *period * c.rng.gen_range(0.99..1.01);
@@ -696,6 +717,8 @@ impl Fire {
 
 /// A paper familiar's wings, beating as it flies.
 struct Wings {
+    /// Whose wings: the familiar's number, until they have fallen silent.
+    id: Option<usize>,
     level: Smooth,
     at: Vec3,
     band: Svf,
@@ -708,6 +731,7 @@ struct Wings {
 impl Wings {
     fn new() -> Self {
         Wings {
+            id: None,
             level: Smooth::new(0.0),
             at: Vec3::ZERO,
             band: Svf::new(1400.0, 0.8),
@@ -722,6 +746,9 @@ impl Wings {
         let (v0, v1) = self.level.step(DT, 0.25);
         if v0 < 1e-4 && v1 < 1e-4 {
             self.gains = None;
+            if self.level.target == 0.0 {
+                self.id = None;
+            }
             return;
         }
         let h = Heard::from(ears, self.at);
@@ -804,6 +831,7 @@ impl Ambience {
         self.loft.target = scene.loft;
         let (_, loft) = self.loft.step(DT, 2.0);
         let mut c = Ctx {
+            place: 0,
             w: (0.0, 0.0),
             loft,
             shift,
@@ -819,6 +847,7 @@ impl Ambience {
         for (i, bed) in self.beds.iter_mut().enumerate() {
             let w = &mut self.weights[i];
             w.target = scene.places[i];
+            c.place = i;
             c.w = w.step(DT, 0.8);
             if c.w.0 > 1e-4 || c.w.1 > 1e-4 {
                 for layer in &mut bed.layers {
@@ -834,16 +863,33 @@ impl Ambience {
             fire.level.target = level;
             fire.render(&ears, &mut c);
         }
-        for (wings, at) in self.wings.iter_mut().zip(&scene.wings) {
-            match at {
-                Some(at) => {
-                    wings.at = *at;
+        // Each familiar keeps its own wings while it is heard; a newcomer takes a
+        // pair that has fallen silent.
+        let flying = || scene.wings.iter().flatten();
+        for wings in &mut self.wings {
+            match wings.id.and_then(|id| flying().find(|w| w.0 == id)) {
+                Some(&(_, at)) => {
+                    wings.at = at;
                     wings.level.target = 1.0;
                 }
                 None => wings.level.target = 0.0,
             }
+        }
+        for &(id, at) in flying() {
+            if self.wings.iter().any(|w| w.id == Some(id)) {
+                continue;
+            }
+            if let Some(free) = self.wings.iter_mut().find(|w| w.id.is_none()) {
+                free.id = Some(id);
+                free.at = at;
+                free.level.target = 1.0;
+            }
+        }
+        for wings in &mut self.wings {
             wings.render(&ears, &mut c);
         }
-        c.rings.retain_mut(|ring| ring.render(c.l, c.r, c.wet));
+        let weights = &self.weights;
+        c.rings
+            .retain_mut(|ring| ring.render(weights[ring.place].value, c.l, c.r, c.wet));
     }
 }

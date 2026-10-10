@@ -97,7 +97,7 @@ fn the_mix_stays_in_bounds_and_moves_smoothly() {
     for place in Place::ALL {
         let mut scene = scene_in(place);
         scene.fires[0] = (Vec3::new(2.0, 0.5, -3.0), 1.0);
-        scene.wings[0] = Some(Vec3::new(-1.0, 1.8, -2.0));
+        scene.wings[0] = Some((0, Vec3::new(-1.0, 1.8, -2.0)));
         o.scene(scene);
         for i in 0..20 {
             o.play(Sfx::Thunk, 0.5, None, Some(Vec3::new(i as f32 * 0.4 - 4.0, 1.0, -1.5)));
@@ -125,6 +125,36 @@ fn the_mix_stays_in_bounds_and_moves_smoothly() {
         worst = worst.max(jump / rms.max(1e-4));
     }
     assert!(worst < 40.0, "a jump {worst}× the bed's RMS");
+}
+
+#[test]
+fn far_off_sounds_fade_out_of_the_room_too() {
+    let ears = engine::Ears::new(Vec3::ZERO, Vec3::X);
+    let near = engine::Heard::from(&ears, Vec3::new(0.0, 0.0, -2.0));
+    let far = engine::Heard::from(&ears, Vec3::new(0.0, 0.0, -70.0));
+    assert!(near.left > 0.5 && near.wet > 0.3);
+    assert_eq!((far.left, far.right, far.wet), (0.0, 0.0, 0.0));
+}
+
+#[test]
+fn nothing_not_finite_gets_into_the_mix() {
+    let banks = Arc::new(Banks::synthesize());
+    let mut o = Offline::new(12, &banks, 1.0);
+    let mut s = scene_in(Place::Arcanum);
+    o.scene(s);
+    o.render(1.0);
+    s.places[Place::Hall as usize] = f32::NAN;
+    o.scene(s);
+    o.play(Sfx::Thunk, f32::NAN, None, None);
+    o.play(Sfx::Land, 0.4, None, Some(Vec3::NAN));
+    o.send(Cmd::Gains {
+        music: f32::INFINITY,
+        effects: 1.0,
+    });
+    o.play(Sfx::Chime, 0.45, Some(3), None);
+    let out = o.render(3.0);
+    assert!(out.iter().all(|x| x.is_finite()));
+    assert!(peak(&out[out.len() / 2..]) > 1e-4, "the mix fell silent");
 }
 
 // ---------------------------------------------------------------- export
@@ -261,7 +291,7 @@ fn export_sounds() {
     for k in 0..400 {
         let a = k as f32 * 0.025;
         let mut s = Scene::default();
-        s.wings[0] = Some(Vec3::new(3.0 * a.sin(), 1.8, -3.0 * a.cos()));
+        s.wings[0] = Some((0, Vec3::new(3.0 * a.sin(), 1.8, -3.0 * a.cos())));
         o.scene(s);
         out.extend(o.render(0.025));
     }
