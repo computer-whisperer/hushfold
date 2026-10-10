@@ -285,22 +285,64 @@ const PEOPLE: &[&str] = &[
     "Zephyrine",
 ];
 
-const FORMS: &[&str] = &[
-    "Treatise on",
-    "Notes on",
-    "Compendium of",
-    "Field Guide to",
-    "Primer of",
-    "Annals of",
-    "Lexicon of",
-    "Meditations on",
-    "Almanac of",
-    "Codex of",
-    "Catalogue of",
-    "Letters on",
-    "Grammar of",
-    "Anatomy of",
-    "Book of",
+/// Kinds of book, with the word that leads to their subject. `make_title` draws from
+/// lists as long as they have always been (15 of these, 32 `ADJ`, 26 `PEOPLE`), so the
+/// draws after a title (volumes, colours, sizes) stay as they were.
+const FORMS: &[(&str, &str)] = &[
+    ("Treatise", "on"),
+    ("Notes", "on"),
+    ("Compendium", "of"),
+    ("Field Guide", "to"),
+    ("Primer", "of"),
+    ("Annals", "of"),
+    ("Lexicon", "of"),
+    ("Meditations", "on"),
+    ("Almanac", "of"),
+    ("Natural History", "of"),
+    ("Catalogue", "of"),
+    ("Letters", "on"),
+    ("Grammar", "of"),
+    ("Anatomy", "of"),
+    ("Commonplace Book", "of"),
+];
+
+/// Plurals the rules in `plural` would get wrong, in lower case.
+const PLURALS: &[(&str, &str)] = &[
+    ("abacus", "abacuses"),
+    ("atlas", "atlases"),
+    ("aurora", "aurorae"),
+    ("automaton", "automata"),
+    ("chrysalis", "chrysalises"),
+    ("codex", "codices"),
+    ("ephemeris", "ephemerides"),
+    ("herbarium", "herbaria"),
+    ("lens", "lenses"),
+    ("loaf", "loaves"),
+    ("lunarium", "lunaria"),
+    ("nautilus", "nautili"),
+    ("penumbra", "penumbrae"),
+    ("thesaurus", "thesauri"),
+    ("trellis", "trellises"),
+    ("umbra", "umbrae"),
+];
+
+/// Things that are not counted: a title keeps them as they are.
+const UNCOUNTED: &[&str] = &[
+    "algebra",
+    "aqua regia",
+    "calculus",
+    "calx",
+    "cinnabar",
+    "drizzle",
+    "firmament",
+    "gearwork",
+    "geometry",
+    "lapis",
+    "mycelium",
+    "nativity",
+    "ouroboros",
+    "quadrature",
+    "regency",
 ];
 
 const ADJ: &[&str] = &[
@@ -370,28 +412,106 @@ fn sort_key(title: &str) -> String {
     t.to_lowercase()
 }
 
+/// "A" or "An" before `word`.
+fn article(word: &str) -> &'static str {
+    if word.starts_with(['A', 'E', 'I', 'O', 'U']) {
+        "An"
+    } else {
+        "A"
+    }
+}
+
+/// Whether a kind of book is named in the plural ("Notes", "Annals").
+fn plural_form(form: &str) -> bool {
+    form.ends_with('s')
+}
+
+/// A thing's plural ("Orreries", "Compass Roses", "Rings of Fire"); things already
+/// plural, or not counted, stay as they are.
+fn plural(thing: &str) -> String {
+    let lower = thing.to_lowercase();
+    if UNCOUNTED.contains(&lower.as_str()) {
+        return thing.to_string();
+    }
+    // The noun is the last word, or the one before "of" or "in".
+    let (head, tail) = [" of ", " in "]
+        .iter()
+        .find_map(|sep| thing.find(sep).map(|at| thing.split_at(at)))
+        .unwrap_or((thing, ""));
+    let (lead, noun) = head.rsplit_once(' ').map_or(("", head), |(l, n)| (l, n));
+    let low = noun.to_lowercase();
+    let many = if let Some(&(_, p)) = PLURALS.iter().find(|(one, _)| *one == low) {
+        // Keep the noun's own capital.
+        noun[..1].to_string() + &p[1..]
+    } else if low.ends_with("ss") || low.ends_with('x') || low.ends_with("ch") || low.ends_with("sh") {
+        format!("{noun}es")
+    } else if low.ends_with('s') {
+        noun.to_string()
+    } else if low.ends_with('y') && !low[..low.len() - 1].ends_with(['a', 'e', 'o', 'u']) {
+        format!("{}ies", &noun[..noun.len() - 1])
+    } else {
+        format!("{noun}s")
+    };
+    let sep = if lead.is_empty() { "" } else { " " };
+    format!("{lead}{sep}{many}{tail}")
+}
+
+/// A number made from `words`, to vary a title's turn of phrase by what it says rather
+/// than by another draw.
+fn turn(words: &[&str], n: usize) -> usize {
+    let h = (words.iter().flat_map(|w| w.bytes().chain([0])))
+        .fold(0x811c_9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x0100_0193));
+    (h % n as u32) as usize
+}
+
+/// A series' title. Each shape uses the same words drawn as it always has, and no two
+/// sets of them give the same title, so titles clash exactly when they used to: the
+/// draws that follow (volumes, colours, sizes) are as they were.
 fn make_title(rng: &mut StdRng, cat: &Category) -> String {
     let topic = cat.topics.choose(rng).unwrap();
     let thing = cat.things.choose(rng).unwrap();
     let adj = *ADJ.choose(rng).unwrap();
     let person = *PEOPLE.choose(rng).unwrap();
-    let form = *FORMS.choose(rng).unwrap();
+    let (form, by) = *FORMS.choose(rng).unwrap();
     match rng.gen_range(0..9) {
-        0 => format!(
-            "{} {form} {topic}",
-            if form.starts_with(['A', 'E', 'I', 'O', 'U']) {
-                "An"
+        0 => {
+            let lead = ["", "", "Short ", "New ", "Little "][turn(&[form, topic], 5)];
+            if plural_form(form) {
+                format!("{lead}{form} {by} {topic}")
             } else {
-                "A"
+                let first = if lead.is_empty() { form } else { lead };
+                format!("{} {lead}{form} {by} {topic}", article(first))
             }
-        ),
+        }
         1 => format!("The {adj} {thing}"),
         2 => format!("{person}'s {thing}"),
-        3 => format!("On {adj} {topic}"),
+        3 => {
+            let on = ["On", "On", "Concerning"][turn(&[adj, topic], 3)];
+            match topic.strip_prefix("the ") {
+                Some(rest) => format!("{on} the {adj} {rest}"),
+                None => format!("{on} {adj} {topic}"),
+            }
+        }
         4 => format!("The {thing} of {topic}"),
-        5 => format!("{adj} {thing}s"),
-        6 => format!("{person} on {topic}"),
-        7 => format!("The {form} {topic}"),
+        5 => format!("{adj} {}", plural(thing)),
+        6 => match turn(&[person, topic], 3) {
+            0 => format!("{person}'s Notes on {topic}"),
+            _ => format!("{person} on {topic}"),
+        },
+        7 => {
+            let mut chars = topic.chars();
+            let topic: String = chars
+                .next()
+                .map(|c| c.to_ascii_uppercase())
+                .into_iter()
+                .chain(chars)
+                .collect();
+            if plural_form(form) {
+                format!("{topic}: {form}")
+            } else {
+                format!("{topic}: {} {form}", article(form))
+            }
+        }
         _ => format!("{thing} & {topic}"),
     }
 }
@@ -449,4 +569,47 @@ pub fn generate_series(
     }
     out.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn things_go_into_the_plural() {
+        for (one, many) in [
+            ("Orrery", "Orreries"),
+            ("Odyssey", "Odysseys"),
+            ("Compass Rose", "Compass Roses"),
+            ("Ring of Fire", "Rings of Fire"),
+            ("Message in a Bottle", "Messages in a Bottle"),
+            ("Envoy's Pouch", "Envoy's Pouches"),
+            ("Hex", "Hexes"),
+            ("Spyglass", "Spyglasses"),
+            ("Harvest Loaf", "Harvest Loaves"),
+            ("Automaton", "Automata"),
+            ("Sonnets", "Sonnets"),
+            ("Calx", "Calx"),
+        ] {
+            assert_eq!(plural(one), many);
+        }
+        assert_eq!((article("Almanac"), article("Treatise")), ("An", "A"));
+    }
+
+    /// Titles read as English: no article before a plural, no stray plurals, no "the"
+    /// after an adjective.
+    #[test]
+    fn titles_read_well() {
+        let cats = Catalogue::great();
+        let rng = &mut StdRng::seed_from_u64(7);
+        for cat in &cats.categories {
+            for _ in 0..200 {
+                let t = make_title(rng, cat);
+                for bad in ["A Notes", "A Annals", "An Annals", " the the ", "sss", "ys ", "Calxs"] {
+                    assert!(!t.contains(bad), "{t}");
+                }
+                assert!(!ADJ.iter().any(|a| t.contains(&format!("{a} the "))), "{t}");
+            }
+        }
+    }
 }

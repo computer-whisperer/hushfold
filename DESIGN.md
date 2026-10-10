@@ -439,10 +439,13 @@ Deterministic world from a seed; save = seed + shelved/held/in-flight ids +
 lumens + upgrade levels by name + the poses of loose books that moved from where
 they were generated (books in the air are saved where they are and fall on
 load), JSON in $XDG_DATA_HOME/hushfold/save.json (%APPDATA% on Windows),
-autosaved. 0.1.x saves load: their piles keep the generated shape and fall into
-the gaps left by books already taken. Settings live beside it in settings.json.
-Each library has its own save (the Great Library's is great.json), stamped with
-the generation of the library it was made in (`game::generation`): saves name
-books by index, so one from another generation starts fresh, kept aside as
-*.old.json. The Hall's stays 0 (pinned by `hall_generates_as_before`); the Great
-Library's is bumped whenever where its books go changes (2 after the visual pass).
+autosaved. Settings live beside it in settings.json. Each library has its own save
+(the Great Library's is great.json), stamped with the generation of the library it
+was made in (`game::generation`): saves name books by index, so one from another
+generation starts fresh, kept aside as *.old.json. Each is bumped whenever where
+its books go changes. The Hall's (pinned by `hall_generates_as_before`) was 0, as
+0.1.x saves have it, until the titles were rewritten: 1. The Great Library's was 2
+after the visual pass, 3 after the titles. Titles are drawn from the same random
+values as before, so every series keeps its volumes, colour and sizes; only the
+alphabetical order, and so the shelving, changed (the Great Library's shelves now
+fit one more series).

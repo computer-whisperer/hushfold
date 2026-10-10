@@ -512,12 +512,13 @@ const SAVE_VERSION: u32 = 2;
 
 /// Which generation of its library a save was made in: saves name books by index,
 /// so one made in another generation would put the wrong books on the shelves. The
-/// Hall's is pinned (`hall_generates_as_before`), so its stamp stays 0, as 0.1.x
-/// saves have it. Bump the Great Library's whenever where its books go changes.
+/// Hall's is pinned (`hall_generates_as_before`): 0 until the titles were rewritten,
+/// which reshelved every book and ended 0.1.x saves. Bump either whenever where its
+/// books go changes.
 fn generation(layout: Layout) -> u32 {
     match layout {
-        Layout::Hall => 0,
-        Layout::Great => 2,
+        Layout::Hall => 1,
+        Layout::Great => 3,
     }
 }
 
@@ -2665,7 +2666,7 @@ mod tests {
     }
 
     /// Saves name books by index and rebuild unmoved piles from generation, so the
-    /// Hall must generate exactly as it did (0.1.x saves included).
+    /// Hall must generate exactly as it did for saves of its generation.
     #[test]
     fn hall_generates_as_before() {
         let g = Game::new(Layout::Hall);
@@ -2693,8 +2694,10 @@ mod tests {
         }
         assert_eq!(g.lib.books.len(), 11690);
         // Changed once since 0.1.1, when rugs became something books lie on: 23 books at
-        // the rugs start on them, a few centimetres from where they were.
-        assert_eq!(h, 13018789756892078726, "hall fingerprint");
+        // the rugs start on them, a few centimetres from where they were. Changed again
+        // (generation 1) when titles were rewritten: the same books, reshelved in the
+        // new order, so slots, rests and which index is which book all moved.
+        assert_eq!(h, 16481460485559855951, "hall fingerprint");
     }
 
     /// Every slot's approach (the aisle in front of it) is a walk away from the start,
