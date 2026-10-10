@@ -64,9 +64,11 @@ pause screen replaces the current library's save with a fresh one (settings, in
   shelf to bottom, left to right. Shelf edges carry their letter ranges.
 - Empty slots show as faint outlines in the series' colour; with Kindred Glow,
   outlines of series you are carrying glow (at its last level with a glint
-  sweeping through them). The active book's card names the start of its shelf's
-  letter range ("under Al"). Click anywhere on a series' run to file a volume you
-  carry; it flies to its exact slot.
+  sweeping through them). While you carry books, a line under the crosshair says
+  where the active book goes: its category and the start of its shelf's letter
+  range ("Astronomy · Al"; its room too, when you are outside it), to read against
+  the shelf you look at, whose line gives its range. Click anywhere on a series'
+  run to file a volume you carry; it flies to its exact slot.
 - The Hall's East Wing is veiled until 40% of the West Wing is home. In the
   Great Library the second room is veiled until a quarter of the Observatory's
   books are home, and each room after it until half the books of the rooms opened

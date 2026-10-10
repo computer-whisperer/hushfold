@@ -259,6 +259,14 @@ impl Library {
         (from - face.center).dot(face.normal) > 0.0 && self.world.clear(from, self.slot_front(b), Stops::BOOKS)
     }
 
+    /// The range of filing keys on a shelf ("Ab – Al"), as its label gives it; none
+    /// for an empty shelf.
+    pub fn shelf_keys(&self, face: usize, row: usize) -> Option<String> {
+        let runs = &self.runs[face][row];
+        let key = |r: &Run| self.series[r.series as usize].shelf_key();
+        Some(format!("{} – {}", key(runs.first()?), key(runs.last()?)))
+    }
+
     /// The department whose room `p` is in, if any.
     pub fn room_at(&self, p: Vec3) -> Option<usize> {
         let l = self.world.level_at(p);
@@ -490,12 +498,7 @@ impl Library {
         for f in faces {
             let (center, normal) = (self.faces[f].center, self.faces[f].normal);
             for row in 0..ROWS {
-                let runs = &self.runs[f][row];
-                if runs.is_empty() {
-                    continue;
-                }
-                let key = |s: u32| self.series[s as usize].shelf_key();
-                let keys = format!("{} – {}", key(runs[0].series), key(runs[runs.len() - 1].series));
+                let Some(keys) = self.shelf_keys(f, row) else { continue };
                 let ((y0, y1), (_, out)) = kit::label_holder(row);
                 let at = center + Vec3::Y * ((y0 + y1) * 0.5) + normal * out;
                 self.inscribe(&keys, SHELF_LETTERS, at, normal, kit::LABEL_W - 0.01);
