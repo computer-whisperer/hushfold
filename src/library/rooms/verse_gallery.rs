@@ -4,6 +4,7 @@
 //! where words drift up out of an open book and paper cranes hang in the air.
 
 use super::*;
+use crate::gfx::crane::{Crane, Fold, Paper, Print};
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 /// The double cases running out from the far wall between the alcoves, by `a`; each
@@ -636,7 +637,8 @@ fn lectern(lib: &mut Library, f: &RoomFrame, a: f32, words: bool) {
     lib.light(at.at + Vec3::Y * 1.6, 3.5, [1.0, 0.78, 0.45], 0.5, LightKind::Static);
 }
 
-/// Paper cranes hanging still in the air over the lounge, faintly aglow.
+/// Paper cranes hanging still in the air over the lounge, faintly aglow, each folded
+/// from a sheet of its own: pages of verse, one of a song, one of plain rose paper.
 fn cranes(lib: &mut Library, f: &RoomFrame) {
     let spots = [
         (-2.0f32, 18.0f32, 3.7f32, 0.4f32),
@@ -647,35 +649,28 @@ fn cranes(lib: &mut Library, f: &RoomFrame) {
         (2.4, 23.4, 4.2, 5.5),
         (-4.2, 20.8, 4.0, 2.6),
     ];
-    let paper = [1.0, 0.9, 0.7, 0.12];
-    let k = 1.7;
-    for (a, o, y, yaw) in spots {
-        let at = Spot {
+    let papers = [
+        ([0.94, 0.9, 0.8], Print::Text),
+        ([0.86, 0.9, 0.82], Print::Text),
+        ([0.95, 0.92, 0.84], Print::Music),
+        ([0.84, 0.86, 0.93], Print::Text),
+        ([0.93, 0.8, 0.78], Print::Plain),
+        ([0.95, 0.9, 0.74], Print::Text),
+        ([0.9, 0.84, 0.92], Print::Text),
+    ];
+    for (k, ((a, o, y, yaw), (tint, print))) in spots.into_iter().zip(papers).enumerate() {
+        let bird = Crane {
+            fold: Fold::Crane,
             at: f.at(a, o, y),
-            q: f.turn() * Quat::from_rotation_y(yaw) * Quat::from_rotation_z(0.15),
+            rot: f.turn() * Quat::from_rotation_y(yaw) * Quat::from_rotation_z(0.15),
+            size: 0.85,
+            raise: 0.1 + 0.08 * (k % 3) as f32,
+            wrist: -0.15,
+            paper: Paper { tint, print },
+            glow: [1.0, 0.85, 0.6, 0.12],
         };
-        let mut part = |p: Vec3, size: Vec3, q: Quat| at.part(lib, p * k, size * k, q, kind::PAPER, paper);
-        part(
-            Vec3::ZERO,
-            Vec3::new(0.16, 0.06, 0.06),
-            Quat::from_rotation_x(FRAC_PI_4),
-        );
-        for z in [-1.0f32, 1.0] {
-            part(
-                Vec3::new(0.0, 0.04, z * 0.1),
-                Vec3::new(0.1, 0.004, 0.18),
-                Quat::from_rotation_x(z * 0.45),
-            );
+        for part in bird.parts() {
+            lib.decor(part);
         }
-        part(
-            Vec3::new(0.12, 0.05, 0.0),
-            Vec3::new(0.14, 0.012, 0.012),
-            Quat::from_rotation_z(0.8),
-        );
-        part(
-            Vec3::new(-0.12, 0.04, 0.0),
-            Vec3::new(0.12, 0.012, 0.012),
-            Quat::from_rotation_z(-0.6),
-        );
     }
 }
