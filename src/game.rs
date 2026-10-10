@@ -2270,6 +2270,23 @@ impl Game {
                 0,
             ));
         }
+        // Door gems: dim and steady while their department is far from done, warming
+        // and brightening as it nears it, pulsing softly and slowly once it is.
+        for &(d, gem) in &self.lib.door_gems {
+            let share = self.dept_shelved[d] as f32 / self.dept_total[d].max(1) as f32;
+            let k = share.min(1.0).powi(2);
+            let warm = [1.0, 0.78, 0.45];
+            let mut color = gem.color;
+            for (c, w) in color.iter_mut().zip(warm) {
+                *c += (w - *c) * 0.35 * k;
+            }
+            color[3] = if share >= 1.0 {
+                1.8 + 1.4 * (0.5 - 0.5 * libm::cosf(self.time * 1.25))
+            } else {
+                0.2 + 1.2 * k
+            };
+            dyn_insts.push(Inst { color, ..gem });
+        }
 
         self.draw_familiars(&mut dyn_insts);
 
