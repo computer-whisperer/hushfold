@@ -151,8 +151,6 @@ pub struct Scene {
     pub right: Vec3,
     /// How much of each place's ambience reaches the ears, by `Place`.
     pub places: [f32; Place::ALL.len()],
-    /// 0 on the ground floor, 1 up under the atrium's roof.
-    pub loft: f32,
     /// Fires: where each burns and how much of it is heard (0 for none).
     pub fires: [(Vec3, f32); MAX_FIRES],
     /// Familiars in flight, nearest first: each one's own number (so it keeps its
@@ -166,7 +164,6 @@ impl Default for Scene {
             ears: Vec3::ZERO,
             right: Vec3::X,
             places: [0.0; Place::ALL.len()],
-            loft: 0.0,
             fires: [(Vec3::ZERO, 0.0); MAX_FIRES],
             wings: [None; MAX_WINGS],
         }

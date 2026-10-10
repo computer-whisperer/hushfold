@@ -392,7 +392,7 @@ impl Engine {
                     && s.fires.iter().all(|&(at, v)| finite(at) && v.is_finite())
                     && s.wings.iter().flatten().all(|&(_, at)| finite(at));
                 if fine {
-                    for w in s.places.iter_mut().chain([&mut s.loft]) {
+                    for w in &mut s.places {
                         *w = if w.is_finite() { w.clamp(0.0, 1.0) } else { 0.0 };
                     }
                     self.ears = Ears::new(s.ears, s.right);

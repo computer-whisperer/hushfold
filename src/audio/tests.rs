@@ -260,13 +260,6 @@ fn export_sounds() {
             &o.render(22.0),
         );
     }
-    // The atrium up on the top gallery.
-    let mut o = Offline::new(2, &banks, 0.0);
-    let mut scene = scene_in(Place::Atrium);
-    scene.loft = 0.75;
-    o.scene(scene);
-    o.render(3.0);
-    write_wav(&dir.join("ambience_atrium_high.wav"), 2, &o.render(22.0));
     // Walking from the atrium into the Clockworks and on into the Weatherhouse.
     let mut o = Offline::new(5, &banks, 0.0);
     let mut out = Vec::new();

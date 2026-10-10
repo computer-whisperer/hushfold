@@ -169,12 +169,6 @@ impl Pair {
     fn new(cutoff: f32, q: f32) -> Self {
         Pair([Svf::new(cutoff, q), Svf::new(cutoff, q)])
     }
-
-    fn set(&mut self, cutoff: f32, q: f32) {
-        for f in &mut self.0 {
-            f.set(cutoff, q);
-        }
-    }
 }
 
 /// One strand of a place's sound.
@@ -182,15 +176,6 @@ enum Layer {
     /// Still air: a low, soft hush, nothing high in it (which would be heard as
     /// hiss under everything).
     Hush { level: f32, low: Pair },
-    /// Moving air in gusts; `loft` is how much stronger it grows up under the
-    /// atrium's roof.
-    Wind {
-        level: f32,
-        band: f32,
-        loft: f32,
-        gust: Wander,
-        f: Pair,
-    },
     /// Waves breaking slowly, far off.
     Sea {
         level: f32,
@@ -230,16 +215,6 @@ fn hush(level: f32, cutoff: f32) -> Layer {
     Layer::Hush {
         level,
         low: Pair::new(cutoff, 0.6),
-    }
-}
-
-fn wind(level: f32, band: f32, loft: f32) -> Layer {
-    Layer::Wind {
-        level,
-        band,
-        loft,
-        gust: Wander::new(0.15),
-        f: Pair::new(band, 0.8),
     }
 }
 
@@ -300,18 +275,13 @@ impl Bed {
                 0.45,
             ),
             Place::Atrium => (
-                vec![
-                    hush(0.075, 190.0),
-                    wind(0.03, 520.0, 2.5),
-                    scatter(g(Creak), 70.0, (0.04, 0.07), 0.8),
-                ],
+                vec![hush(0.075, 190.0), scatter(g(Creak), 70.0, (0.04, 0.07), 0.8)],
                 2.3,
                 0.3,
             ),
             Place::Observatory => (
                 vec![
                     hush(0.065, 260.0),
-                    wind(0.02, 700.0, 0.0),
                     scatter(r(Glint), 5.0, (0.006, 0.015), 0.8),
                     scatter(g(Owl), 140.0, (0.035, 0.05), 0.5),
                 ],
@@ -436,7 +406,6 @@ struct Ctx<'a> {
     /// The place, and its weight at the block's start and end.
     place: usize,
     w: (f32, f32),
-    loft: f32,
     /// Playback rate putting D at the music's key.
     shift: f32,
     banks: Option<&'a Banks>,
@@ -497,23 +466,6 @@ impl Layer {
                     let (a, b) = (c.noise.white(), c.noise.white());
                     c.l[i] += low.0[0].low(a) * g;
                     c.r[i] += low.0[1].low(b) * g;
-                }
-            }
-            Layer::Wind {
-                level,
-                band,
-                loft,
-                gust,
-                f,
-            } => {
-                let (g0, g1) = gust.step(c.rng);
-                let lift = 1.0 + *loft * c.loft;
-                f.set(*band * (0.7 + 0.8 * g1), 0.8);
-                for i in 0..n {
-                    let k = (i + 1) as f32 / n as f32;
-                    let g = c.ramp(i) * *level * lift * (0.25 + (g0 + (g1 - g0) * k).powi(2));
-                    c.l[i] += f.0[0].band(c.noise.white()) * g;
-                    c.r[i] += f.0[1].band(c.noise.white()) * g;
                 }
             }
             Layer::Sea {
@@ -776,7 +728,6 @@ pub struct Ambience {
     beds: Vec<Bed>,
     rings: Vec<Ringing>,
     weights: Vec<Smooth>,
-    loft: Smooth,
     fires: Vec<Fire>,
     wings: Vec<Wings>,
     noise: Noise,
@@ -788,7 +739,6 @@ impl Ambience {
             beds: Place::ALL.iter().map(|&p| Bed::of(p)).collect(),
             rings: Vec::new(),
             weights: vec![Smooth::new(0.0); Place::ALL.len()],
-            loft: Smooth::new(0.0),
             fires: (0..MAX_FIRES).map(|_| Fire::new()).collect(),
             wings: (0..MAX_WINGS).map(|_| Wings::new()).collect(),
             noise: Noise::new(seed as u32 ^ 0xa3b1),
@@ -821,12 +771,9 @@ impl Ambience {
     ) {
         let ears = Ears::new(scene.ears, scene.right);
         let [l, r, wet] = out;
-        self.loft.target = scene.loft;
-        let (_, loft) = self.loft.step(DT, 2.0);
         let mut c = Ctx {
             place: 0,
             w: (0.0, 0.0),
-            loft,
             shift,
             banks,
             noise: &mut self.noise,

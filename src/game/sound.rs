@@ -13,8 +13,6 @@ const OUT_OF_ROOM: f32 = 6.0;
 /// and at most this high above its floor (chandeliers hang higher).
 const FIRE_LIGHT: f32 = 2.0;
 const FIRE_HIGH: f32 = 1.5;
-/// Height of the atrium's roof, for how lofty its sound grows.
-const ROOF: f32 = 18.0;
 /// A posted familiar further than this from its post is on the wing (its perch is
 /// lower).
 const PERCHED: f32 = 1.5;
@@ -75,7 +73,6 @@ impl Game {
                     atrium -= w;
                 }
                 scene.places[Place::Atrium as usize] = atrium;
-                scene.loft = (ears.y / ROOF).clamp(0.0, 1.0);
             }
         }
         // Fires, nearest first, each as loud as the place it burns in is heard.
