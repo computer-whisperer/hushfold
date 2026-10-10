@@ -1,6 +1,8 @@
 //! wgpu renderer: instanced boxes (opaque, translucent, moonbeams), lettering, bloom,
 //! tonemap, egui.
 
+pub mod books;
+
 use crate::text::{self, Glyph};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3, Vec4};
@@ -12,6 +14,13 @@ use winit::window::Window;
 pub mod kind {
     pub const PLAIN: u32 = 0;
     pub const WOOD: u32 = 1;
+    /// A book, its box the envelope of boards, spine and page block; drawn in a
+    /// pipeline of its own (`fs_book`) from the library's book table (`books`). The
+    /// colour is the series', w the series' index (its record in the table). param:
+    /// spine pattern in bits 0..3, trim (tooling: 0 old gold, 1 bright gold, 2 silver,
+    /// 3 blind) in 4..5, volume in 8..15, and from bit 16 flags: 1 the active book in
+    /// hand, 2 loose, then its department in bits 2..6 and category in 7..14 (for the
+    /// Seeker's Lens). Bit 31 is the shader's own: set for books modelled in the round.
     pub const BOOK: u32 = 2;
     pub const FLOOR: u32 = 3;
     pub const STONE: u32 = 4;
@@ -167,21 +176,32 @@ fn unit_box() -> (Vec<Vertex>, Vec<u16>) {
     (v, idx)
 }
 
-/// Instances (boxes, or glyphs) in a vertex buffer that grows to fit.
+/// Instances (boxes, or glyphs), or a model's vertices or indices, in a buffer that
+/// grows to fit.
 struct GrowBuf<T = Inst> {
     buf: wgpu::Buffer,
     cap: usize,
     len: u32,
     label: &'static str,
+    usage: wgpu::BufferUsages,
     of: PhantomData<T>,
 }
 
 impl<T: Pod> GrowBuf<T> {
     fn new(device: &wgpu::Device, label: &'static str, cap: usize) -> Self {
+        Self::with(device, label, cap, wgpu::BufferUsages::VERTEX)
+    }
+
+    /// For indices rather than vertices.
+    fn index(device: &wgpu::Device, label: &'static str, cap: usize) -> Self {
+        Self::with(device, label, cap, wgpu::BufferUsages::INDEX)
+    }
+
+    fn with(device: &wgpu::Device, label: &'static str, cap: usize, usage: wgpu::BufferUsages) -> Self {
         let buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
             size: (cap * std::mem::size_of::<T>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: usage | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         Self {
@@ -189,13 +209,14 @@ impl<T: Pod> GrowBuf<T> {
             cap,
             len: 0,
             label,
+            usage,
             of: PhantomData,
         }
     }
 
     fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[T]) {
         if data.len() > self.cap {
-            *self = Self::new(device, self.label, data.len().next_power_of_two());
+            *self = Self::with(device, self.label, data.len().next_power_of_two(), self.usage);
         }
         if !data.is_empty() {
             queue.write_buffer(&self.buf, 0, bytemuck::cast_slice(data));
@@ -220,10 +241,134 @@ struct ChunkGpu {
     max: Vec3,
 }
 
+/// The books in hand modelled in the round (`books::model`): the frame's vertices and
+/// indices, and each book's run of indices.
+#[derive(Default)]
+struct HeldModels {
+    verts: Vec<books::ModelVertex>,
+    idx: Vec<u32>,
+    runs: Vec<std::ops::Range<u32>>,
+}
+
+/// What the book shader reads besides its instances (`book_pipe`'s group 1): the glyph
+/// atlas, the library's book table (`books::table`) and the binding materials.
+struct BookData {
+    layout: wgpu::BindGroupLayout,
+    atlas: wgpu::TextureView,
+    glyph_sampler: wgpu::Sampler,
+    materials: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+    table: wgpu::Buffer,
+    /// The table's words, which the models of books in hand are read from too.
+    words: Vec<u32>,
+    bg: wgpu::BindGroup,
+}
+
+impl BookData {
+    fn new(
+        device: &wgpu::Device,
+        layout: wgpu::BindGroupLayout,
+        (atlas, glyph_sampler): (wgpu::TextureView, wgpu::Sampler),
+        (materials, sampler): (wgpu::TextureView, wgpu::Sampler),
+    ) -> Self {
+        // Empty until the library's table arrives: no lettering, plain bindings.
+        let table = Self::table_buffer(device, 64);
+        let bg = Self::group(device, &layout, &atlas, &glyph_sampler, &materials, &sampler, &table);
+        Self {
+            layout,
+            atlas,
+            glyph_sampler,
+            materials,
+            sampler,
+            table,
+            words: Vec::new(),
+            bg,
+        }
+    }
+
+    /// How many raised bands a book (its instance) has.
+    fn bands(&self, inst: &Inst) -> u32 {
+        let record = |w: usize| self.words.get(w).copied().unwrap_or(0) as usize;
+        let at = record(2) + inst.color[3] as usize * books::RECORD;
+        (record(at) as u32 >> 3) & 7
+    }
+
+    fn table_buffer(device: &wgpu::Device, words: usize) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("book table"),
+            size: (words * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    fn group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        atlas: &wgpu::TextureView,
+        glyph_sampler: &wgpu::Sampler,
+        materials: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+        table: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("books"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(atlas),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(glyph_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: table.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(materials),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        })
+    }
+
+    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, words: &[u32]) {
+        if words.len() * 4 > self.table.size() as usize {
+            self.table = Self::table_buffer(device, words.len().next_power_of_two());
+            self.bg = Self::group(
+                device,
+                &self.layout,
+                &self.atlas,
+                &self.glyph_sampler,
+                &self.materials,
+                &self.sampler,
+                &self.table,
+            );
+        }
+        queue.write_buffer(&self.table, 0, bytemuck::cast_slice(words));
+        self.words = words.to_vec();
+    }
+}
+
 /// The planes of a view frustum (inside where `dot(xyz, p) + w >= 0`).
 fn frustum(view_proj: Mat4) -> [Vec4; 6] {
     let r = |i| view_proj.row(i);
     [r(3) + r(0), r(3) - r(0), r(3) + r(1), r(3) - r(1), r(2), r(3) - r(2)]
+}
+
+/// Draw a buffer of box instances with the bound pipeline (the box mesh bound too).
+fn draw_boxes(rp: &mut wgpu::RenderPass, b: &GrowBuf) {
+    if b.len > 0 {
+        rp.set_vertex_buffer(1, b.buf.slice(..));
+        rp.draw_indexed(0..36, 0, 0..b.len);
+    }
 }
 
 fn box_visible(planes: &[Vec4; 6], min: Vec3, max: Vec3) -> bool {
@@ -253,6 +398,11 @@ pub struct Renderer {
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     scene_pipe: wgpu::RenderPipeline,
+    /// Books, drawn with a fragment shader of their own (`fs_book`); books in hand are
+    /// modelled in the round (`books::model`) and drawn with `model_pipe`.
+    book_pipe: wgpu::RenderPipeline,
+    model_pipe: wgpu::RenderPipeline,
+    book_data: BookData,
     trans_pipe: wgpu::RenderPipeline,
     beam_pipe: wgpu::RenderPipeline,
     /// Lettering on signs and labels, and the glyph atlas it is cut from.
@@ -274,12 +424,18 @@ pub struct Renderer {
     static_buf: GrowBuf,
     text_buf: GrowBuf<Glyph>,
     dyn_buf: GrowBuf,
+    /// Books on the move, drawn apart from the other dynamic things (see `book_pipe`).
+    dyn_books_buf: GrowBuf,
     trans_buf: GrowBuf,
-    /// Moonbeams, drawn apart from the other translucent things (see `beam_pipe`), and
-    /// the lists the frame's translucent instances are sorted into.
+    /// Moonbeams, drawn apart from the other translucent things (see `beam_pipe`).
     beam_buf: GrowBuf,
-    split: [Vec<Inst>; 2],
+    /// The lists the frame's instances are sorted into: dynamic books and the rest,
+    /// moonbeams and the other translucent things.
+    split: [Vec<Inst>; 4],
     held_buf: GrowBuf,
+    models: HeldModels,
+    model_verts: GrowBuf<books::ModelVertex>,
+    model_idx: GrowBuf<u32>,
     chunks: Vec<ChunkGpu>,
     timer: Option<Timer>,
     targets: Targets,
@@ -444,6 +600,7 @@ impl Renderer {
         ];
         let make_scene = |label: &str,
                           layout: &wgpu::PipelineLayout,
+                          (vs, buffers): (&str, &[wgpu::VertexBufferLayout]),
                           fs: &str,
                           blend: Option<wgpu::BlendState>,
                           (write, compare): (bool, wgpu::CompareFunction),
@@ -453,9 +610,9 @@ impl Renderer {
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: &scene_shader,
-                    entry_point: Some("vs_main"),
+                    entry_point: Some(vs),
                     compilation_options: Default::default(),
-                    buffers: &vb_layouts,
+                    buffers,
                 },
                 primitive: wgpu::PrimitiveState {
                     cull_mode: if cull { Some(wgpu::Face::Back) } else { None },
@@ -487,10 +644,12 @@ impl Renderer {
             })
         };
         use wgpu::CompareFunction::{Always, Less};
-        let scene_pipe = make_scene("scene", &scene_layout, "fs_main", None, (true, Less), true);
+        let boxes = ("vs_main", &vb_layouts[..]);
+        let scene_pipe = make_scene("scene", &scene_layout, boxes, "fs_main", None, (true, Less), true);
         let trans_pipe = make_scene(
             "trans",
             &trans_layout,
+            boxes,
             "fs_trans",
             Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             (false, Less),
@@ -501,11 +660,30 @@ impl Renderer {
         let beam_pipe = make_scene(
             "beams",
             &trans_layout,
+            boxes,
             "fs_beam",
             Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             (false, Always),
             false,
         );
+
+        // Fragment shaders' textures and samplers.
+        let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let samp_entry = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        };
 
         // ---- lettering: glyph quads cut from a distance-field atlas, over the surfaces
         // they are set on (so drawn after them, testing depth but not writing it).
@@ -539,32 +717,16 @@ impl Renderer {
         });
         let text_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("glyphs"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+            entries: &[tex_entry(1), samp_entry(2)],
         });
+        let atlas_view = atlas.create_view(&Default::default());
         let text_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("glyphs"),
             layout: &text_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&atlas.create_view(&Default::default())),
+                    resource: wgpu::BindingResource::TextureView(&atlas_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -625,36 +787,101 @@ impl Renderer {
             cache: None,
         });
 
+        // ---- books: a pipeline of their own (`fs_book`), which also reads the glyph
+        // atlas, the library's book table and a texture of binding materials.
+        let (tex_size, tex_levels) = books::material();
+        let materials = device.create_texture_with_data(
+            &queue,
+            &wgpu::TextureDescriptor {
+                label: Some("book materials"),
+                size: wgpu::Extent3d {
+                    width: tex_size,
+                    height: tex_size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: tex_levels.len() as u32,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::MipMajor,
+            &tex_levels.concat(),
+        );
+        let book_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("books"),
+            entries: &[
+                tex_entry(1),
+                samp_entry(2),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                tex_entry(4),
+                samp_entry(5),
+            ],
+        });
+        let book_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("books"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&book_layout)],
+            immediate_size: 0,
+        });
+        let book_pipe = make_scene("books", &book_pl, boxes, "fs_book", None, (true, Less), true);
+        let model_layouts = [
+            wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<books::ModelVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 8 => Float32x3],
+            },
+            vb_layouts[1].clone(),
+        ];
+        let model_pipe = make_scene(
+            "book models",
+            &book_pl,
+            ("vs_book_model", &model_layouts),
+            "fs_book",
+            None,
+            (true, Less),
+            true,
+        );
+        let book_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("book materials"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 8,
+            ..Default::default()
+        });
+        let book_data = BookData::new(
+            &device,
+            book_layout,
+            (atlas_view, glyph_sampler),
+            (materials.create_view(&Default::default()), book_sampler),
+        );
+
         // ---- post pipelines
         let post_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("post.wgsl").into()),
         });
-        let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        };
-        let samp_entry = wgpu::BindGroupLayoutEntry {
-            binding: 1,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            count: None,
-        };
         let chain_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("chain"),
-            entries: &[tex_entry(0), samp_entry],
+            entries: &[tex_entry(0), samp_entry(1)],
         });
         let tonemap_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tonemap"),
             entries: &[
                 tex_entry(0),
-                samp_entry,
+                samp_entry(1),
                 tex_entry(2),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
@@ -788,10 +1015,14 @@ impl Renderer {
             static_buf: GrowBuf::new(&device, "static", 1024),
             text_buf: GrowBuf::new(&device, "lettering", 1024),
             dyn_buf: GrowBuf::new(&device, "dynamic", 16384),
+            dyn_books_buf: GrowBuf::new(&device, "dynamic books", 1024),
             trans_buf: GrowBuf::new(&device, "trans", 16384),
             beam_buf: GrowBuf::new(&device, "beams", 64),
             split: Default::default(),
             held_buf: GrowBuf::new(&device, "held", 256),
+            models: Default::default(),
+            model_verts: GrowBuf::new(&device, "held models", 4096),
+            model_idx: GrowBuf::index(&device, "held model indices", 16384),
             chunks: Vec::new(),
             timer,
             window,
@@ -800,6 +1031,9 @@ impl Renderer {
             queue,
             config,
             scene_pipe,
+            book_pipe,
+            model_pipe,
+            book_data,
             trans_pipe,
             beam_pipe,
             text_pipe,
@@ -999,8 +1233,13 @@ impl Renderer {
         self.text_buf.upload(&self.device, &self.queue, glyphs);
     }
 
-    /// Upload the scene chunks that have changed (and forget any beyond them).
-    pub fn sync_chunks(&mut self, chunks: &mut [crate::scene::Chunk]) {
+    /// Upload the scene chunks that have changed (and forget any beyond them), and the
+    /// library's book table when it is new.
+    pub fn sync_chunks(&mut self, chunks: &mut crate::scene::Chunks) {
+        if chunks.books_new {
+            self.book_data.upload(&self.device, &self.queue, &chunks.books);
+            chunks.books_new = false;
+        }
         self.chunks.truncate(chunks.len());
         while self.chunks.len() < chunks.len() {
             self.chunks.push(ChunkGpu {
@@ -1011,7 +1250,7 @@ impl Renderer {
             });
         }
         self.uploaded_chunks = 0;
-        for (g, c) in self.chunks.iter_mut().zip(chunks) {
+        for (g, c) in self.chunks.iter_mut().zip(chunks.iter_mut()) {
             if c.upload {
                 self.uploaded_chunks += 1;
                 g.opaque.upload(&self.device, &self.queue, &c.opaque);
@@ -1044,20 +1283,41 @@ impl Renderer {
         self.queue
             .write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(f.globals));
         self.queue.write_buffer(&self.post_buf, 0, bytemuck::bytes_of(&f.post));
-        self.dyn_buf.upload(&self.device, &self.queue, f.dynamic);
-        let [beams, rest] = &mut self.split;
-        beams.clear();
-        rest.clear();
-        for inst in f.trans {
-            if inst.kind == kind::SHAFT {
-                beams.push(*inst);
-            } else {
-                rest.push(*inst);
+        let [books, others, beams, rest] = &mut self.split;
+        let sort = |from: &[Inst], k: u32, yes: &mut Vec<Inst>, no: &mut Vec<Inst>| {
+            yes.clear();
+            no.clear();
+            for inst in from {
+                if inst.kind == k {
+                    yes.push(*inst);
+                } else {
+                    no.push(*inst);
+                }
             }
-        }
+        };
+        sort(f.dynamic, kind::BOOK, books, others);
+        sort(f.trans, kind::SHAFT, beams, rest);
+        self.dyn_books_buf.upload(&self.device, &self.queue, books);
+        self.dyn_buf.upload(&self.device, &self.queue, others);
         self.trans_buf.upload(&self.device, &self.queue, rest);
         self.beam_buf.upload(&self.device, &self.queue, beams);
         self.held_buf.upload(&self.device, &self.queue, f.held);
+        let m = &mut self.models;
+        m.verts.clear();
+        m.idx.clear();
+        m.runs.clear();
+        for inst in f.held {
+            let from = m.idx.len() as u32;
+            books::model(
+                Vec3::from(inst.scale),
+                self.book_data.bands(inst),
+                &mut m.verts,
+                &mut m.idx,
+            );
+            m.runs.push(from..m.idx.len() as u32);
+        }
+        self.model_verts.upload(&self.device, &self.queue, &m.verts);
+        self.model_idx.upload(&self.device, &self.queue, &m.idx);
 
         // Chunks in view, nearest first (so near books hide far ones early).
         let planes = frustum(Mat4::from_cols_array_2d(&f.globals.view_proj));
@@ -1111,15 +1371,18 @@ impl Renderer {
             rp.set_bind_group(0, &self.globals_bg, &[]);
             rp.set_vertex_buffer(0, self.box_vb.slice(..));
             rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
+            // Walls and floors first: they hide whole rooms of books behind them. The
+            // chunks hold only books.
             rp.set_pipeline(&self.scene_pipe);
-            // Walls and floors first: they hide whole rooms of books behind them.
-            let opaque = visible.iter().map(|&(_, i)| &self.chunks[i].opaque);
-            for b in std::iter::once(&self.static_buf).chain(opaque).chain([&self.dyn_buf]) {
-                if b.len > 0 {
-                    rp.set_vertex_buffer(1, b.buf.slice(..));
-                    rp.draw_indexed(0..36, 0, 0..b.len);
-                }
+            draw_boxes(&mut rp, &self.static_buf);
+            rp.set_pipeline(&self.book_pipe);
+            rp.set_bind_group(1, &self.book_data.bg, &[]);
+            for &(_, i) in &visible {
+                draw_boxes(&mut rp, &self.chunks[i].opaque);
             }
+            draw_boxes(&mut rp, &self.dyn_books_buf);
+            rp.set_pipeline(&self.scene_pipe);
+            draw_boxes(&mut rp, &self.dyn_buf);
             if self.text_buf.len > 0 {
                 rp.set_pipeline(&self.text_pipe);
                 rp.set_bind_group(1, &self.text_bg, &[]);
@@ -1155,17 +1418,13 @@ impl Renderer {
             rp.set_vertex_buffer(0, self.box_vb.slice(..));
             rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
             rp.set_pipeline(&self.trans_pipe);
-            let ghosts = visible.iter().rev().map(|&(_, i)| &self.chunks[i].trans);
-            for b in ghosts.chain([&self.trans_buf]) {
-                if b.len > 0 {
-                    rp.set_vertex_buffer(1, b.buf.slice(..));
-                    rp.draw_indexed(0..36, 0, 0..b.len);
-                }
+            for &(_, i) in visible.iter().rev() {
+                draw_boxes(&mut rp, &self.chunks[i].trans);
             }
+            draw_boxes(&mut rp, &self.trans_buf);
             if self.beam_buf.len > 0 {
                 rp.set_pipeline(&self.beam_pipe);
-                rp.set_vertex_buffer(1, self.beam_buf.buf.slice(..));
-                rp.draw_indexed(0..36, 0, 0..self.beam_buf.len);
+                draw_boxes(&mut rp, &self.beam_buf);
             }
         }
         {
@@ -1195,11 +1454,14 @@ impl Renderer {
             });
             if self.held_buf.len > 0 {
                 rp.set_bind_group(0, &self.globals_bg, &[]);
-                rp.set_vertex_buffer(0, self.box_vb.slice(..));
-                rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
-                rp.set_pipeline(&self.scene_pipe);
+                rp.set_bind_group(1, &self.book_data.bg, &[]);
+                rp.set_pipeline(&self.model_pipe);
+                rp.set_vertex_buffer(0, self.model_verts.buf.slice(..));
                 rp.set_vertex_buffer(1, self.held_buf.buf.slice(..));
-                rp.draw_indexed(0..36, 0, 0..self.held_buf.len);
+                rp.set_index_buffer(self.model_idx.buf.slice(..), wgpu::IndexFormat::Uint32);
+                for (i, run) in self.models.runs.iter().enumerate() {
+                    rp.draw_indexed(run.clone(), 0, i as u32..i as u32 + 1);
+                }
             }
         }
         // Bloom: downsample chain then additive upsample back to level 0.
