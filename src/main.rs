@@ -329,7 +329,7 @@ impl Running {
         let cpu_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
         let render_start = Instant::now();
         self.renderer.sync_gpu = self.hud.show_stats;
-        self.renderer.render(FrameInput {
+        let shot = self.renderer.render(FrameInput {
             globals: &globals,
             post: PostParams {
                 exposure: 1.15,
@@ -345,6 +345,17 @@ impl Running {
             egui_textures: &out.textures_delta,
             pixels_per_point: out.pixels_per_point,
         });
+        // Say where an F12 screenshot went (not a scripted one's: the note would be in
+        // the next shot).
+        if let Some(shot) = shot
+            && self.script.is_none()
+        {
+            let msg = match shot {
+                Ok(path) => format!("Screenshot saved to {}", path.display()),
+                Err(e) => format!("No screenshot: {e}."),
+            };
+            self.game.hint = Some((msg, 3.0));
+        }
         let render_ms = render_start.elapsed().as_secs_f32() * 1000.0;
         self.hud.cpu_ms = self.hud.cpu_ms * 0.9 + cpu_ms * 0.1;
         self.hud.render_ms = self.hud.render_ms * 0.9 + render_ms * 0.1;

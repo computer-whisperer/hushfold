@@ -784,7 +784,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                          1–5 cast the spells you have learned\n\
                          G post a familiar where you aim, or take one back\n\
                          Scroll or Q/E cycle the active book · Tab Grimoire\n\
-                         M music · F11 fullscreen · Esc pause",
+                         M music · F11 fullscreen · F12 screenshot · Esc pause",
                     )
                     .font(serif(13.0))
                     .color(DIM),

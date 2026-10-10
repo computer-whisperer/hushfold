@@ -248,7 +248,8 @@ pub struct Renderer {
     timer: Option<Timer>,
     targets: Targets,
     pub egui: egui_wgpu::Renderer,
-    /// When set, the next frame is also written to this PNG path.
+    /// When set, the next frame is also written to this PNG path; `render` returns
+    /// how that went.
     pub capture: Option<std::path::PathBuf>,
     can_capture: bool,
     /// Diagnostics: time blocked acquiring the swapchain image, and when `sync_gpu`, GPU
@@ -735,7 +736,7 @@ impl Renderer {
         self.config.width as f32 / self.config.height.max(1) as f32
     }
 
-    fn save_capture(&self, path: &std::path::Path, buf: &wgpu::Buffer, row: u32) {
+    fn save_capture(&self, path: &std::path::Path, buf: &wgpu::Buffer, row: u32) -> Result<(), String> {
         let (w, h) = (self.config.width, self.config.height);
         buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
         let _ = self.device.poll(wgpu::PollType::Wait {
@@ -765,10 +766,11 @@ impl Renderer {
             let mut wr = enc.write_header().map_err(|e| e.to_string())?;
             wr.write_image_data(&pixels).map_err(|e| e.to_string())
         });
-        match result {
+        match &result {
             Ok(()) => eprintln!("hushfold: saved {}", path.display()),
             Err(e) => eprintln!("hushfold: screenshot failed: {e}"),
         }
+        result
     }
 
     pub fn set_static(&mut self, insts: &[Inst]) {
@@ -803,15 +805,16 @@ impl Renderer {
         self.chunks.clear();
     }
 
-    pub fn render(&mut self, f: FrameInput) {
+    /// Draw a frame; if it was captured (see `capture`), where to, or why not.
+    pub fn render(&mut self, f: FrameInput) -> Option<Result<std::path::PathBuf, String>> {
         let t_acquire = std::time::Instant::now();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
-                return;
+                return None;
             }
-            _ => return,
+            _ => return None,
         };
         self.acquire_ms = t_acquire.elapsed().as_secs_f32() * 1000.0;
         let view = frame.texture.create_view(&Default::default());
@@ -1007,7 +1010,14 @@ impl Renderer {
         for id in &f.egui_textures.free {
             self.egui.free_texture(id);
         }
-        let capture = self.capture.take().filter(|_| self.can_capture);
+        let mut captured = None;
+        let capture = self.capture.take().filter(|_| {
+            if !self.can_capture {
+                eprintln!("hushfold: screenshot failed: the surface can't be copied from");
+                captured = Some(Err("this display doesn't allow it".to_string()));
+            }
+            self.can_capture
+        });
         let readback = capture.as_ref().map(|_| {
             let (w, h) = (self.config.width, self.config.height);
             let row = (w * 4).div_ceil(256) * 256;
@@ -1063,9 +1073,10 @@ impl Renderer {
             }
         }
         if let (Some(path), Some((buf, row))) = (capture, readback) {
-            self.save_capture(&path, &buf, row);
+            captured = Some(self.save_capture(&path, &buf, row).map(|()| path));
         }
         self.window.pre_present_notify();
         frame.present();
+        captured
     }
 }
