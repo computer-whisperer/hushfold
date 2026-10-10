@@ -1,7 +1,8 @@
-//! Familiars: paper cranes that work round a post you choose. A shelver files loose
-//! books lying near its post whose shelves are a short walk from it; a courier
-//! carries books lying near its post to where they are wanted: a shelver that can
-//! file them, or else their room. Unposted, a familiar rides on your shoulder.
+//! Familiars: folded-paper birds that work round a post you choose. A shelver (a
+//! crane) files loose books lying near its post whose shelves are a short walk from
+//! it; a courier (a swift) carries books lying near its post to where they are
+//! wanted: a shelver that can file them, or else their room. Unposted, a familiar
+//! rides on your shoulder.
 //!
 //! A familiar that finds nothing to do for two minutes folds up and comes back to
 //! the shoulder.

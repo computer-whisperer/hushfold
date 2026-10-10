@@ -3,7 +3,7 @@
 A cozy first-person "tidy the magical library" game in Rust: books lie in piles
 across a moonlit library. Gather armfuls, find each book's category, series and
 volume slot, and file it. Lumens earned from filing buy abilities that make the
-work progressively smoother, up to paper-crane familiars that carry and shelve
+work progressively smoother, up to folded-paper familiars that carry and shelve
 books wherever you post them.
 
 Two libraries, each with its own save (switch on the pause screen):
@@ -100,10 +100,10 @@ that fit it.
   (self-sorting armful, nearest home first), Series Bundle (file a whole series
   at once), Shelving Aura (books drift home as you pass in front of their
   shelves).
-- **Familiars**: paper cranes that ride with you until you post them. A shelver
-  files the books lying near its post whose shelves are close by; a courier
-  carries books lying near its post to a shelver that can file them, or to
-  their room. Familiar Wings makes them faster and stronger.
+- **Familiars**: folded-paper birds that ride with you until you post them. A
+  shelver (a crane) files the books lying near its post whose shelves are close
+  by; a courier (a swift) carries books lying near its post to a shelver that can
+  file them, or to their room. Familiar Wings makes them faster and stronger.
 - **Spells**, each on its own recharge: Glimpse (for a few seconds every series
   you carry glows, and a marker shows each through the walls), the Gathering
   Charm (Great Library: a heap you aim at streams to the great heap in the

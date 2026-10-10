@@ -247,7 +247,7 @@ pub fn upg_def(u: Upg) -> UpgDef {
         ),
         Upg::Courier => (
             "Courier",
-            "A paper crane that carries loose books lying near its post (G) to a shelver that can file them, or else to their room.",
+            "A paper swift that carries loose books lying near its post (G) to a shelver that can file them, or else to their room.",
             Tier::Familiars,
         ),
         Upg::Wings => (
