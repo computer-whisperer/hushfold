@@ -28,8 +28,8 @@ pub mod kind {
     /// Seeker's Lens). Bit 31 is the shader's own: set for books modelled in the round.
     pub const BOOK: u32 = 2;
     pub const FLOOR: u32 = 3;
-    /// Dressed stone, its courses laid in world space (so neighbouring pieces line up);
-    /// the colour is the stone's. param: 0 ashlar in dark mortar, 1 polished marble in
+    /// Dressed stone, its courses laid in world space (so neighbouring pieces line up),
+    /// wrapping round a round mesh (a column, a drum); the colour is the stone's. param: 0 ashlar in dark mortar, 1 polished marble in
     /// big slabs, clouded and veined, the room dimly in it, 2 brick in pale mortar (a
     /// brick red, each brick its own fired tone).
     pub const STONE: u32 = 4;

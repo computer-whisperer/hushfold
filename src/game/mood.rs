@@ -47,7 +47,7 @@ impl Mood {
             // The athanor's amber, a green tinge off the glassware.
             "Alchemical Wing" => m(
                 [0.045, 0.038, 0.022, 0.026],
-                [0.17, 0.21, 0.15],
+                [0.18, 0.2, 0.16],
                 [0.13, 0.08, 0.04],
                 [1.06, 1.02, 0.86],
             ),

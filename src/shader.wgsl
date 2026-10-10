@@ -299,7 +299,9 @@ fn wood(i: VOut, fw: f32) -> vec3<f32> {
     }
     let off = (vec2<f32>(seed, fract(seed * 7.13)) - 0.5) * 1.4 + vec2<f32>(0.3, -0.25);
     let warp = fbm2(vec3<f32>(along * 0.7, a1 * 5.0, a2 * 5.0) + seed * 13.0);
-    let ring = fract((length(vec2<f32>(a1, a2) - off) + warp * 0.05) * 22.0);
+    // Closer rings on a thin turning, or it would show none.
+    let rings = 22.0 * mix(1.0, clamp(0.12 / lo, 1.0, 3.0), f32(i.mesh != 0u));
+    let ring = fract((length(vec2<f32>(a1, a2) - off) + warp * 0.05) * rings);
     let late = smoothstep(0.5, 0.85, ring) * (1.0 - smoothstep(0.85, 1.0, ring));
     var pores = 0.0;
     if (fw < 0.006) {
@@ -349,13 +351,18 @@ struct Stone {
 // ashlar (`look` 0) chipped, in dark mortar; polished marble (1) in big slabs with
 // hairline joints, clouded and veined; brick (2) in small fired courses, each brick
 // its own, now and then a darker one, in pale lime mortar. Branch-free but for the
-// chips: the three share every step.
-fn stone(base: vec3<f32>, w: vec3<f32>, n: vec3<f32>, fw: f32, look: u32) -> Stone {
+// chips: the three share every step. Courses lie in world space (neighbours line up),
+// wrapping round a round mesh (`curved`, `mid` its middle).
+fn stone(base: vec3<f32>, w: vec3<f32>, n: vec3<f32>, fw: f32, look: u32, mid: vec3<f32>, curved: bool) -> Stone {
     var a: f32;
     var b: f32;
     var ta = vec3<f32>(1.0, 0.0, 0.0);
     var tb = vec3<f32>(0.0, 1.0, 0.0);
-    if (abs(n.x) > 0.5) {
+    let out = w.xz - mid.xz;
+    if (curved && abs(n.y) < 0.7 && dot(n.xz, out) > 0.7 * length(n.xz) * length(out)) {
+        // Round a column or a drum, where it faces out from its middle.
+        a = atan2(out.y, out.x) * length(out); b = w.y; ta = normalize(vec3<f32>(-out.y, 0.0, out.x));
+    } else if (abs(n.x) > 0.5) {
         a = w.z; b = w.y; ta = vec3<f32>(0.0, 0.0, 1.0);
     } else if (abs(n.z) > 0.5) {
         a = w.x; b = w.y;
@@ -911,15 +918,17 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
             ao = 1.0;
         }
         case K_STONE: {
-            let st = stone(i.color.rgb, i.world, s.n, fw, i.param);
+            let st = stone(i.color.rgb, i.world, s.n, fw, i.param, i.centre, i.mesh != 0u);
             s.albedo = st.albedo;
             s.n = st.n;
-            // Marble is polished: a sharp highlight, and the room dimly in it.
-            let polish = f32(i.param == 1u);
-            s.spec = vec3<f32>(0.04 + 0.4 * polish);
-            s.gloss = 16.0 + 74.0 * polish;
-            let view = normalize(g.cam_pos.xyz - i.world);
-            s.emit = env(reflect(-view, s.n), 0.3) * (0.06 + 0.5 * fresnel(dot(s.n, view))) * polish;
+            // Marble is polished: a sharp highlight, and the room dimly in it (only
+            // marble pays for the reflection: stone fills whole walls).
+            if (i.param == 1u) {
+                let view = normalize(g.cam_pos.xyz - i.world);
+                s.spec = vec3<f32>(0.44);
+                s.gloss = 90.0;
+                s.emit = env(reflect(-view, s.n), 0.3) * (0.06 + 0.5 * fresnel(dot(s.n, view)));
+            }
         }
         case K_EMISSIVE: {
             var flick = 1.0;
@@ -1981,7 +1990,7 @@ fn candle(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, len: f32) -> vec4<
     let d = x / max(w, 1e-3);
     let body = 1.0 - smoothstep(0.45, 1.0, d);
     let heart = (1.0 - smoothstep(0.0, 0.75, d)) * smoothstep(0.03, 0.18, y) * (1.0 - smoothstep(0.2, 0.75, y));
-    var col = mix(i.color.rgb * vec3<f32>(1.0, 0.75, 0.55), i.color.rgb, smoothstep(1.0, 0.4, y));
+    var col = mix(i.color.rgb, i.color.rgb * vec3<f32>(1.0, 0.75, 0.55), smoothstep(0.4, 1.0, y));
     col = mix(col, vec3<f32>(1.0, 0.86, 0.6), heart);
     col = mix(col, vec3<f32>(0.25, 0.4, 1.0) * 0.6, (1.0 - smoothstep(0.04, 0.2, y)) * smoothstep(0.2, 0.7, d));
     // Hidden where the wick or anything else stands before it.
@@ -2018,8 +2027,9 @@ fn hearth(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, len: f32) -> vec4<
     return vec4<f32>(col * fog_keep(i.world), 0.0);
 }
 
-// Rain (gfx::kind::MIST param 2): streaks falling through the box, read in a few
-// sheets across the eye's ray, each its own drops.
+// Rain (gfx::kind::MIST param 2): streaks falling through the box, in four sheets
+// across its broader upright side, fixed in it (so they stay put as the eye moves),
+// each sheet its own drops.
 fn rain(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, fw: f32) -> vec4<f32> {
     let span = through_box(cam, ray, seen);
     if (span.y <= span.x) {
@@ -2027,18 +2037,21 @@ fn rain(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, fw: f32) -> vec4<f32
     }
     let t = g.cam_pos.w;
     let seed = hash3(i.centre * 7.31) * 17.0;
-    let rm = ray * i.scale;
-    let across = normalize(vec2<f32>(-rm.z, rm.x) + vec2<f32>(1e-5, 0.0));
+    let wide = i.scale.x >= i.scale.z;
+    // The eye's depth across the sheets, and how fast the ray goes through them.
+    let deep0 = select(cam.x, cam.z, wide);
+    let rate = select(ray.x, ray.z, wide);
     var cover = 0.0;
     for (var k = 0; k < 4; k = k + 1) {
-        let u = mix(span.x, span.y, (f32(k) + 0.5) / 4.0);
+        let u = ((f32(k) + 0.5) / 4.0 - 0.5 - deep0) / select(rate, 1e-6, abs(rate) < 1e-6);
         let p = (cam + ray * u) * i.scale;
-        let h = dot(p.xz, across) / 0.035 + f32(k) * 0.37;
+        let h = select(p.z, p.x, wide) / 0.035 + f32(k) * 0.37;
         let h1 = hash1(floor(h) * 7.1 + f32(k) * 13.3 + seed);
         let x = (fract(h) - 0.5 - (h1 - 0.5) * 0.6) * 0.035;
         let ph = fract((p.y + t * (3.2 + h1) + h1 * 7.0) / 0.7);
         let streak = smoothstep(0.0, 0.03, ph) * (1.0 - smoothstep(0.1, 0.25, ph));
-        cover += line_aa(abs(x), 0.0005, fw * u) * streak;
+        let within = step(span.x, u) * step(u, span.y);
+        cover += line_aa(abs(x), 0.0005, fw * u) * streak * within;
     }
     let a = min(cover, 1.0) * i.color.w * 0.6;
     let col = i.color.rgb * (g.ambient_top.rgb * 2.5 + vec3<f32>(0.04));
@@ -2075,7 +2088,7 @@ fn puff(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, len: f32) -> vec4<f3
     let mid = cam + ray * (0.5 * (u0 + u1));
     let smoke = i.param == 0u;
     // Noise a few features across the piece: rising through smoke, drifting in cloud.
-    let f = mid * i.scale * (2.5 / r * 0.5);
+    let f = mid * i.scale * (1.25 / r);
     let flow = select(vec3<f32>(t * 0.06, t * 0.03, t * 0.05), vec3<f32>(0.0, -t * 0.7, 0.0), smoke);
     let n = fbm(f + flow + seed);
     // Smoke thins as it rises, in wisps; cloud is thick, billowing at its edges.
