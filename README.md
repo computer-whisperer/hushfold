@@ -28,6 +28,7 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | | |
 |---|---|
 | WASD / Shift | walk / hurry |
+| Space | jump |
 | Mouse | look |
 | Left click | tap a book to take it · hold on a pile to scoop what is inside the ring · click a series run to file |
 | Right mouse (hold) | charge a toss, with an arc showing where it lands; release to throw every book you carry of the group you seek, or else of the active book's group |

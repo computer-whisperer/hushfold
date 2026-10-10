@@ -214,6 +214,7 @@ impl Running {
             KeyCode::Digit5 => self.input.cast = Some(4),
             KeyCode::KeyQ => self.input.cycle -= 1,
             KeyCode::KeyE => self.input.cycle += 1,
+            KeyCode::Space => self.input.jump = true,
             KeyCode::F12 => {
                 let dir = platform::screenshot_dir();
                 let _ = std::fs::create_dir_all(&dir);
@@ -280,6 +281,7 @@ impl Running {
         self.input.regroup = false;
         self.input.post = false;
         self.input.cast = None;
+        self.input.jump = false;
 
         self.save_timer += dt;
         if self.save_timer > AUTOSAVE_SECS && self.game.dirty_save {

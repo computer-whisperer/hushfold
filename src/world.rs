@@ -279,29 +279,52 @@ impl World {
             .map_or(0, |g| self.level_below(g))
     }
 
-    /// True if something at `p` rises in the way of a body standing at `feet`: the
-    /// edge of a floor higher than a step but below the head, or a flight of stairs
-    /// whose stone (from its own floor up to its treads) fills the body's height above
-    /// a step. A flight on the floor above is overhead, not in the way.
-    pub fn rises_at(&self, p: Vec2, feet: f32) -> bool {
+    /// True if something at `p` rises in the way of a body with its feet at `feet`,
+    /// in the air over ground at `low` (or standing, `low == feet`): the edge of a
+    /// floor higher than a step from the ground but below the head, or a flight of
+    /// stairs whose stone (from its own floor up to its treads) rises there. A flight
+    /// on the floor above is overhead, not in the way.
+    pub fn rises_at(&self, p: Vec2, low: f32, feet: f32) -> bool {
         let slab = (self.slabs.iter())
             .filter(|s| p.cmpge(s.min).all() && p.cmple(s.max).all())
-            .any(|s| (feet + STEP_UP..feet + BODY_H).contains(&self.levels[s.level].y));
+            .any(|s| (low + STEP_UP..feet + BODY_H).contains(&self.levels[s.level].y));
         let stairs = (self.stairs.iter())
-            .any(|f| f.contains(p) && f.height(p) > feet + STEP_UP && self.levels[f.level].y < feet + BODY_H);
+            .any(|f| f.contains(p) && f.height(p) > low + STEP_UP && self.levels[f.level].y < feet + BODY_H);
         slab || stairs
     }
 
-    /// Boxes in the way of a body standing at `feet` (see `in_body`): solids that stop
-    /// bodies, and closed gates (with the gate's index).
-    pub fn in_way(&self, feet: f32) -> impl Iterator<Item = (Vec3, Vec3, Option<usize>)> + '_ {
+    /// Boxes in the way of a body with its feet at `feet`, in the air over ground at
+    /// `low` (or standing, `low == feet`): solids that stop bodies, and closed gates
+    /// (with the gate's index), between what can be stepped onto from the ground and
+    /// the head. So a body in the air never comes down inside something.
+    pub fn in_way(&self, low: f32, feet: f32) -> impl Iterator<Item = (Vec3, Vec3, Option<usize>)> + '_ {
+        let hits = move |mn: Vec3, mx: Vec3| mx.y > low + STEP_UP && mn.y < feet + BODY_H;
         let solids = (self.solids.iter())
-            .filter(move |s| s.stops.has(Stops::BODIES) && in_body(s.min, s.max, feet))
+            .filter(move |s| s.stops.has(Stops::BODIES) && hits(s.min, s.max))
             .map(|s| (s.min, s.max, None));
         let gates = (self.closed_gates())
-            .filter(move |(_, g)| in_body(g.min, g.max, feet))
+            .filter(move |(_, g)| hits(g.min, g.max))
             .map(|(i, g)| (g.min, g.max, Some(i)));
         solids.chain(gates)
+    }
+
+    /// The lowest of what overhangs a body at `p` with its feet at `feet`: the
+    /// underside of a floor or of a flight's stone above its waist, or of a solid that
+    /// stops bodies within its reach.
+    pub fn ceiling(&self, p: Vec2, feet: f32) -> f32 {
+        let over = |mn: Vec2, mx: Vec2| p.cmpge(mn - BODY_R).all() && p.cmple(mx + BODY_R).all();
+        let slabs = (self.slabs.iter())
+            .filter(|s| over(s.min, s.max))
+            .map(|s| self.levels[s.level].y - SLAB);
+        let stairs = (self.stairs.iter())
+            .filter(|f| over(f.min, f.max))
+            .map(|f| self.levels[f.level].y);
+        let solids = (self.solids.iter())
+            .filter(|s| s.stops.has(Stops::BODIES) && over(Vec2::new(s.min.x, s.min.z), Vec2::new(s.max.x, s.max.z)))
+            .map(|s| s.min.y);
+        (slabs.chain(stairs).chain(solids))
+            .filter(|&y| y > feet + BODY_H / 2.0)
+            .fold(f32::MAX, f32::min)
     }
 
     /// How far a ray from `o` along unit `d` goes (up to `max_t`) before something

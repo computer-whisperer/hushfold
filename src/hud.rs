@@ -777,7 +777,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new(
-                        "WASD walk · Shift hurry · Mouse look\n\
+                        "WASD walk · Shift hurry · Space jump · Mouse look\n\
                          Tap a book to take it · Hold on a pile to scoop · Click a run to file\n\
                          Hold right mouse to toss a group, release to throw · X the whole armful\n\
                          F seek a book's kind · R sort by department, category or series\n\

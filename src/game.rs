@@ -20,7 +20,7 @@ use crate::library::*;
 use crate::loose::{Loose, Rest};
 use crate::nav::{Field, Nav, Route};
 use crate::scene::Scene;
-use crate::world::{BODY_R, STEP_UP, Stops};
+use crate::world::{BODY_H, BODY_R, STEP_UP, Stops};
 use glam::{Mat4, Quat, Vec2, Vec3};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -29,6 +29,8 @@ use std::f32::consts::PI;
 
 pub const SEED: u64 = 0x4855_5348_464f_4c44;
 const EYE: f32 = 1.62;
+/// How fast a jump leaves the floor: half a metre high under `loose::GRAVITY`.
+const JUMP_SPEED: f32 = 3.0;
 const SHELF_REACH: f32 = 4.2;
 const HAND_VISIBLE: usize = 8;
 /// Shelving Aura by level: (radius in metres, books per second).
@@ -471,6 +473,8 @@ pub struct Input {
     pub post: bool,
     /// 1–5: cast the spell in that hotbar slot.
     pub cast: Option<usize>,
+    /// Space: jump.
+    pub jump: bool,
 }
 
 pub struct Player {
@@ -481,6 +485,8 @@ pub struct Player {
     pub yaw: f32,
     pub pitch: f32,
     pub bob: f32,
+    /// Standing on a floor or stair (not in the air).
+    pub grounded: bool,
 }
 
 impl Player {
@@ -714,6 +720,7 @@ impl Game {
                 yaw: lib.spawn.1,
                 pitch: -0.05,
                 bob: 0.0,
+                grounded: true,
             },
             lumens: 0,
             earned: 0,
@@ -897,11 +904,18 @@ impl Game {
             self.play_time += dt as f64;
         }
         let bob_before = self.player.bob;
-        self.update_player(dt, input);
+        let grounded = self.player.grounded;
+        let landed = self.update_player(dt, input);
         // A soft footfall each time the walking bob touches down.
         let footfall = |bob: f32| (bob * 2.0 / PI).floor();
         if can_play && footfall(self.player.bob) != footfall(bob_before) {
             audio.play(Sfx::Step, if input.sprint { 0.16 } else { 0.12 });
+        }
+        if can_play && grounded && !self.player.grounded && self.player.vel.y > 0.0 {
+            audio.play(Sfx::Step, 0.1);
+        }
+        if can_play && let Some(speed) = landed {
+            audio.play(Sfx::Step, (0.12 + speed * 0.04).min(0.35));
         }
         self.aim = if can_play { self.compute_aim() } else { Aim::None };
 
@@ -1002,7 +1016,8 @@ impl Game {
         }
     }
 
-    fn update_player(&mut self, dt: f32, input: &Input) {
+    /// Walk, jump and fall; the speed of a landing, if one came this frame.
+    fn update_player(&mut self, dt: f32, input: &Input) -> Option<f32> {
         let (yaw, pitch) = (self.player.yaw + input.look.x, self.player.pitch - input.look.y);
         self.player.yaw = yaw;
         self.player.pitch = pitch.clamp(-1.45, 1.45);
@@ -1026,14 +1041,22 @@ impl Game {
         let sub = dt / steps as f32;
         let mut np = pos;
         let mut vy = self.player.vel.y;
+        let mut grounded = self.player.grounded;
+        if grounded && input.jump {
+            vy = JUMP_SPEED;
+            grounded = false;
+        }
+        let mut landed = None;
         let mut pressed_gate = None;
         for _ in 0..steps {
             let (from, feet) = (np, np.y);
+            // In the air, what is in the way reaches down to the ground underneath.
+            let low = (world.ground(Vec2::new(np.x, np.z), feet)).map_or(feet, |g| g.min(feet));
             np.x += total.x / steps as f32;
             np.z += total.y / steps as f32;
             // Collide with what stands in the way (circle vs box in xz).
             for _ in 0..2 {
-                for (mn, mx, gate) in world.in_way(feet) {
+                for (mn, mx, gate) in world.in_way(low, feet) {
                     let q = Vec2::new(np.x.clamp(mn.x, mx.x), np.z.clamp(mn.z, mx.z));
                     let d = Vec2::new(np.x, np.z) - q;
                     let l = d.length();
@@ -1057,7 +1080,7 @@ impl Game {
             np.z = np.z.clamp(lo.y, hi.y);
             // A rise too high to step onto is a wall: slide along it if one axis is
             // clear, else stay.
-            let walled = |x: f32, z: f32| world.rises_at(Vec2::new(x, z), feet);
+            let walled = |x: f32, z: f32| world.rises_at(Vec2::new(x, z), low, feet);
             if walled(np.x, np.z) {
                 if !walled(np.x, from.z) {
                     np.z = from.z;
@@ -1067,28 +1090,37 @@ impl Game {
                     (np.x, np.z) = (from.x, from.z);
                 }
             }
-            // Stand on the floor or stair underfoot; step down stairs, fall off edges.
-            match world.ground(Vec2::new(np.x, np.z), feet + STEP_UP) {
-                Some(g) if g >= feet - 0.6 && vy <= 0.0 => {
-                    np.y = g;
-                    vy = 0.0;
-                }
+            // Stand on the floor or stair underfoot; step down stairs, fall off edges,
+            // come down from a jump, and stop rising under whatever overhangs.
+            let xz = Vec2::new(np.x, np.z);
+            match world.ground(xz, feet + STEP_UP) {
+                Some(g) if grounded && g >= feet - 0.6 => np.y = g,
                 ground => {
                     vy -= crate::loose::GRAVITY * sub;
                     np.y = feet + vy * sub;
+                    let top = world.ceiling(xz, feet) - BODY_H;
+                    if vy > 0.0 && np.y > top {
+                        np.y = top.max(feet);
+                        vy = 0.0;
+                    }
+                    grounded = false;
                     if let Some(g) = ground
                         && np.y <= g
                     {
+                        landed = Some(-vy);
                         np.y = g;
                         vy = 0.0;
+                        grounded = true;
                     }
                 }
             }
         }
         let p = &mut self.player;
         p.vel = Vec3::new(walk.x, vy, walk.z);
-        let moved = Vec2::new(np.x - p.pos.x, np.z - p.pos.z).length();
-        p.bob += moved * 1.4;
+        p.grounded = grounded;
+        if grounded {
+            p.bob += Vec2::new(np.x - p.pos.x, np.z - p.pos.z).length() * 1.4;
+        }
         p.pos = np;
         if let Some(g) = pressed_gate
             && self.hint.is_none()
@@ -1100,6 +1132,7 @@ impl Game {
                 2.5,
             ));
         }
+        landed
     }
 
     fn compute_aim(&self) -> Aim {
@@ -3113,6 +3146,110 @@ mod tests {
             let p = g.player.pos;
             assert!(p.z.abs() > 15.0 && p.y == 0.0, "from {start}: stopped at {p}");
         }
+    }
+
+    /// A jump rises about half a metre and comes back down to the floor it left,
+    /// with no footfalls in the air.
+    #[test]
+    fn jumping_goes_up_and_comes_down() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = crate::audio::Audio::silent();
+        let start = g.player.pos;
+        let jump = Input {
+            jump: true,
+            ..Input::default()
+        };
+        g.update(1.0 / 60.0, &jump, &mut audio, true);
+        assert!(!g.player.grounded);
+        let mut top = start.y;
+        for _ in 0..60 * 2 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
+            top = top.max(g.player.pos.y);
+        }
+        assert!((0.45..0.55).contains(&(top - start.y)), "rose {}", top - start.y);
+        assert!(
+            g.player.grounded && g.player.pos == start,
+            "came down at {}",
+            g.player.pos
+        );
+        assert_eq!(g.player.bob, 0.0);
+    }
+
+    /// Jumping at what stands in the way (tables, cases, rails) never carries the
+    /// player over or into it: each solid low enough to clear with a jump is hopped
+    /// at from in front.
+    #[test]
+    fn jumps_do_not_clear_what_is_in_the_way() {
+        let mut g = Game::new(Layout::Great);
+        g.open_all_gates();
+        let mut audio = crate::audio::Audio::silent();
+        let world = &g.lib.world;
+        let low: Vec<_> = (world.solids().iter())
+            .filter(|s| {
+                let floor = world.levels[world.level_below(s.min.y)].y;
+                s.stops.has(Stops::BODIES)
+                    && s.min.y < floor + 0.1
+                    && (STEP_UP + 0.01..1.0).contains(&(s.max.y - floor))
+            })
+            .map(|s| (s.min, s.max))
+            .collect();
+        assert!(low.len() > 20, "{} low solids", low.len());
+        let overlaps = |p: Vec3, (mn, mx): (Vec3, Vec3)| {
+            let q = Vec2::new(p.x.clamp(mn.x, mx.x), p.z.clamp(mn.z, mx.z));
+            q.distance(Vec2::new(p.x, p.z)) < BODY_R - 0.01
+        };
+        for &(mn, mx) in low.iter().step_by(low.len() / 20) {
+            let c = (mn + mx) / 2.0;
+            let size = mx - mn;
+            // From the middle of one long side, a little way off.
+            let off = if size.x > size.z {
+                Vec3::Z * (size.z / 2.0 + 0.6)
+            } else {
+                Vec3::X * (size.x / 2.0 + 0.6)
+            };
+            let start = g.nav.standable_near(Vec3::new(c.x, mn.y, c.z) + off);
+            g.player.pos = start;
+            g.player.vel = Vec3::ZERO;
+            g.player.grounded = true;
+            let to = c - start;
+            g.player.yaw = to.x.atan2(-to.z);
+            let hop = Input {
+                forward: 1.0,
+                jump: true,
+                ..Input::default()
+            };
+            for _ in 0..60 * 3 {
+                g.update(1.0 / 60.0, &hop, &mut audio, true);
+                let p = g.player.pos;
+                assert!(!overlaps(p, (mn, mx)), "from {start} into {mn}..{mx}: at {p}");
+            }
+        }
+    }
+
+    /// A jump under something low stops at it.
+    #[test]
+    fn jumps_stop_under_what_overhangs() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = crate::audio::Audio::silent();
+        let p = g.player.pos;
+        let beam = p.y + BODY_H + 0.2;
+        (g.lib.world).add_solid(
+            p + Vec3::new(-0.5, beam, -0.5),
+            p + Vec3::new(0.5, beam + 0.2, 0.5),
+            Stops::BODIES,
+        );
+        let jump = Input {
+            jump: true,
+            ..Input::default()
+        };
+        g.update(1.0 / 60.0, &jump, &mut audio, true);
+        let mut top = p.y;
+        for _ in 0..60 * 2 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
+            top = top.max(g.player.pos.y);
+        }
+        assert!((top + BODY_H - beam).abs() < 1e-4, "head rose to {}", top + BODY_H);
+        assert!(g.player.grounded && g.player.pos == p);
     }
 
     /// The stairs are solid stone: walking into a flight from its high end on the
