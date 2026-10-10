@@ -274,6 +274,7 @@ impl Running {
             self.input.look = glam::Vec2::ZERO;
         }
         self.game.update(dt, &self.input, &mut self.audio, playing);
+        self.game.update_sound(&mut self.audio);
         self.input.look = glam::Vec2::ZERO;
         self.input.primary_pressed = false;
         self.input.toss_pressed = false;

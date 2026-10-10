@@ -5,6 +5,7 @@ mod cheats;
 mod familiar;
 #[cfg(test)]
 mod pacing;
+mod sound;
 
 pub use cheats::Cheat;
 use familiar::Familiar;
@@ -882,7 +883,7 @@ impl Game {
         for g in 0..self.lib.world.gates().len() {
             if !self.lib.world.gates_open()[g] && self.gate_books_left(g) == 0 {
                 self.open_gate(g);
-                audio.play(Sfx::Fanfare, 0.8);
+                audio.play(Sfx::Veil, 0.8);
                 let name = &self.lib.catalog.departments[self.lib.world.gates()[g].opens].name;
                 self.toast(format!("The veil over the {name} lifts…"), [0.75, 0.6, 1.0], true);
             }
@@ -983,7 +984,7 @@ impl Game {
             let near = (1.0 - l.at.distance(eye) / 25.0).max(0.0f32);
             let v = (0.15 + l.speed * 0.04).min(0.45f32) * near;
             if v > 0.01 {
-                audio.play(Sfx::Land, v);
+                audio.play_at(Sfx::Land, v, l.at);
             }
         }
         self.home_tossed(&landings);
@@ -1476,7 +1477,7 @@ impl Game {
             let rot = self.hand_xform(0).1;
             self.loose.throw(b, from, vel + scatter, rot, spin, i as f32 * gap);
         }
-        audio.play_pitched(Sfx::Whoosh, 0.45, 2);
+        audio.play(Sfx::Toss, 0.45);
         self.toss_charge = 0.0;
         self.dirty_save = true;
     }
@@ -1688,7 +1689,7 @@ impl Game {
         let s = self.lib.books[bi].series as usize;
         let cat = self.lib.series[s].category;
         if *thunks < 3 {
-            audio.play(Sfx::Thunk, 0.5);
+            audio.play_at(Sfx::Thunk, 0.5, self.lib.books[bi].slot_pos);
             *thunks += 1;
         }
         let col = self.lib.series[s].color;

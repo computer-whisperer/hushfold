@@ -130,8 +130,14 @@ that fit it.
 - Signs and shelf labels are lettered in the world (`src/text.rs`): glyph quads
   from a signed-distance atlas of the serif face the HUD uses, lit like the
   boards they're on.
-- All audio is synthesized at startup (`src/audio.rs`): book thunks, page
-  rustles, pentatonic chimes, fire crackle and a generative music-box loop.
+- All audio is synthesized, nothing loaded (`src/audio.rs`, `src/audio/`): the
+  effects' clips on a thread at startup, the rest as it plays. Effects that
+  happen somewhere (books filed, books landing, fires, familiars' wings) are
+  heard from there; each place has its own ambience, crossfaded as you walk
+  (`src/game/sound.rs` tells the mixer where you are); the music is composed
+  afresh piece by piece, with quiet between pieces, and chimes are played in its
+  key. `HUSHFOLD_SOUND_DIR=dir cargo test --release export_sounds -- --ignored`
+  writes every sound to WAV files.
 - Loose books use semi-physics (`src/loose.rs`): ballistic flight with spin,
   bounces off furniture, and a 4 cm heightfield per floor that landing books
   settle onto, sliding downhill while the support is steeper than they rest on.

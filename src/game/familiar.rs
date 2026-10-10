@@ -142,7 +142,7 @@ impl Game {
     pub(super) fn post_or_recall(&mut self, audio: &mut Audio) {
         if let Aim::Familiar(i) = self.aim {
             self.recall(i);
-            audio.play(Sfx::Rustle, 0.4);
+            audio.play(Sfx::Fold, 0.4);
             return;
         }
         let riding = (0..self.familiars.len())
@@ -167,7 +167,7 @@ impl Game {
             return;
         };
         self.post_familiar(i, at);
-        audio.play(Sfx::Chime, 0.3);
+        audio.play(Sfx::Unfold, 0.3);
     }
 
     /// Post familiar `i` at `at` (a free spot on a floor).
