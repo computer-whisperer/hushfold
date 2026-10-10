@@ -132,8 +132,11 @@ that fit it.
   the visual pass, which added 8–19% GPU time and no CPU time).
   `HUSHFOLD_UNPACED=1` renders without compositor pacing for benchmarking.
 - Signs and shelf labels are lettered in the world (`src/text.rs`): glyph quads
-  from a signed-distance atlas of the serif face the HUD uses (Noto Serif, built
-  in), lit like the boards they're on.
+  from a signed-distance atlas of the faces built into the game (Cinzel for the
+  library's own lettering), lit like the boards they're on. The same atlas letters
+  the books, each series in a typeface of its binding's day, from Garamond and
+  Caslon on calf to Victorian faces on cloth and textura or fraktur on vellum. The
+  HUD is set in Libre Caslon Text.
 - All audio is synthesized, nothing loaded (`src/audio.rs`, `src/audio/`): the
   effects' clips on a thread at startup, the rest as it plays. Effects that
   happen somewhere (books filed, books landing, fires, familiars' wings) are
@@ -179,5 +182,15 @@ that fit it.
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
 [MIT license](LICENSE-MIT) at your option.
 
-The built-in Noto Serif font is under the
-[SIL Open Font License 1.1](assets/fonts/OFL.txt).
+The fonts built into the game are each under the SIL Open Font License 1.1; each
+family's licence and where it came from are in `assets/fonts/<Family>/` (and in
+`fonts/` in the release archives). Most are subsets made by
+`assets/fonts/subset.py`; IM Fell English, UnifrakturMaguntia and Uncial Antiqua
+reserve their names and are built in unmodified.
+
+- Book titles: EB Garamond, Cardo, IM Fell English, Libre Caslon Text, Ibarra Real
+  Nova, Castoro Titling, Baskervville, Bodoni Moda, Old Standard TT, Coustard,
+  Goudy Bookletter 1911, Sorts Mill Goudy, Texturina, UnifrakturMaguntia, Uncial
+  Antiqua.
+- Signs and shelf labels: Cinzel.
+- The HUD: Libre Caslon Text, and Noto Sans Symbols 2 for its symbols.

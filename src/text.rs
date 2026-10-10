@@ -1,10 +1,11 @@
-//! Lettering set into the world: sign boards and shelf labels. Glyphs come from the
-//! serif face the HUD uses, kept as a signed-distance atlas so letters stay crisp up
+//! Lettering set into the world: sign boards and shelf labels, and (through the book
+//! table, `gfx::books`) the titles on books. Glyphs come from typefaces built into the
+//! game (`Face`), kept together as one signed-distance atlas so letters stay crisp up
 //! close and smooth far off. Laying text out needs only the map of where each glyph
 //! sits in the atlas (cheap, and all the library needs); the atlas's pixels are drawn
 //! once, for the renderer (`atlas`).
 
-use ab_glyph::{Font, FontArc, GlyphId, OutlineCurve};
+use ab_glyph::{Font, FontRef, GlyphId, OutlineCurve};
 use bytemuck::{Pod, Zeroable};
 use glam::{Vec2, Vec3};
 use std::sync::OnceLock;
@@ -14,12 +15,105 @@ pub const EM_PX: f32 = 64.0;
 /// How far, in atlas pixels, the distance field reaches either side of an outline
 /// (`GLYPH_PAD` in the shader).
 pub const PAD: f32 = 8.0;
-const ATLAS_W: u32 = 1024;
+const ATLAS_W: u32 = 2048;
 /// Mip levels of the atlas: down to 8 pixels to the em, below which text has faded.
 pub const LEVELS: u32 = 4;
-/// The characters the atlas holds; any other is set as '?'.
+/// The characters the atlas holds of every face; any other is set as '?'. The fonts
+/// are subsets holding these (assets/fonts/subset.py, which has its own copy).
 const CHARS: &str =
     " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~–—‘’“”…·";
+
+/// A typeface lettering is set in, built into the game (assets/fonts/<Family>: each
+/// font's licence and where it came from). A series' look chooses its spine's
+/// (`catalog::Look`); signs and shelf labels are set in `SIGNS`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Face {
+    /// EB Garamond: Garamond's roman, Paris, the 1540s.
+    Garamond,
+    /// Cardo: the Aldine roman, Venice, 1495.
+    Cardo,
+    /// IM Fell English: the Fell types, Oxford, the 1670s.
+    Fell,
+    /// Libre Caslon Text: Caslon, London, the 1730s (and the HUD's face).
+    Caslon,
+    /// Ibarra Real Nova: Ibarra's Don Quixote, Madrid, 1780.
+    Ibarra,
+    /// Castoro Titling: inscriptional capitals (and capitals only).
+    Castoro,
+    /// Baskervville: Baskerville, Birmingham, 1757.
+    Baskerville,
+    /// Bodoni Moda: Bodoni, Parma, the 1790s.
+    Bodoni,
+    /// Old Standard: the "modern" roman of Victorian books.
+    OldStandard,
+    /// Coustard: a Clarendon of Victorian cloth.
+    Coustard,
+    /// Goudy Bookletter 1911: Kennerley Old Style, New York, 1911.
+    Kennerley,
+    /// Sorts Mill Goudy: Goudy Oldstyle, New York, 1915.
+    Goudy,
+    /// Texturina: textura, the hand Gutenberg cut.
+    Texturina,
+    /// UnifrakturMaguntia: fraktur.
+    Fraktur,
+    /// Uncial Antiqua: uncial.
+    Uncial,
+    /// Cinzel: Roman inscriptional capitals, with small capitals for lower case.
+    Cinzel,
+}
+
+/// The library's own lettering: signs and shelf labels.
+pub const SIGNS: Face = Face::Cinzel;
+
+/// Caslon's font, which the HUD sets its text in too.
+pub static CASLON: &[u8] = include_bytes!("../assets/fonts/LibreCaslonText/LibreCaslonText-Subset.ttf");
+
+impl Face {
+    pub const ALL: [Face; 16] = [
+        Face::Garamond,
+        Face::Cardo,
+        Face::Fell,
+        Face::Caslon,
+        Face::Ibarra,
+        Face::Castoro,
+        Face::Baskerville,
+        Face::Bodoni,
+        Face::OldStandard,
+        Face::Coustard,
+        Face::Kennerley,
+        Face::Goudy,
+        Face::Texturina,
+        Face::Fraktur,
+        Face::Uncial,
+        Face::Cinzel,
+    ];
+
+    fn data(self) -> &'static [u8] {
+        match self {
+            Face::Garamond => include_bytes!("../assets/fonts/EBGaramond/EBGaramond-Subset.ttf"),
+            Face::Cardo => include_bytes!("../assets/fonts/Cardo/Cardo-Subset.ttf"),
+            Face::Fell => include_bytes!("../assets/fonts/IMFellEnglish/IMFeENrm28P.ttf"),
+            Face::Caslon => CASLON,
+            Face::Ibarra => include_bytes!("../assets/fonts/IbarraRealNova/IbarraRealNova-Subset.ttf"),
+            Face::Castoro => include_bytes!("../assets/fonts/CastoroTitling/CastoroTitling-Subset.ttf"),
+            Face::Baskerville => include_bytes!("../assets/fonts/Baskervville/Baskervville-Subset.ttf"),
+            Face::Bodoni => include_bytes!("../assets/fonts/BodoniModa/BodoniModa-Subset.ttf"),
+            Face::OldStandard => include_bytes!("../assets/fonts/OldStandardTT/OldStandard-Subset.ttf"),
+            Face::Coustard => include_bytes!("../assets/fonts/Coustard/Coustard-Subset.ttf"),
+            Face::Kennerley => include_bytes!("../assets/fonts/GoudyBookletter1911/GoudyBookletter1911-Subset.ttf"),
+            Face::Goudy => include_bytes!("../assets/fonts/SortsMillGoudy/SortsMillGoudy-Subset.ttf"),
+            Face::Texturina => include_bytes!("../assets/fonts/Texturina/Texturina-Subset.ttf"),
+            Face::Fraktur => include_bytes!("../assets/fonts/UnifrakturMaguntia/UnifrakturMaguntia-Book.ttf"),
+            Face::Uncial => include_bytes!("../assets/fonts/UncialAntiqua/UncialAntiqua-Regular.ttf"),
+            Face::Cinzel => include_bytes!("../assets/fonts/Cinzel/Cinzel-Subset.ttf"),
+        }
+    }
+
+    /// Whether a title may be set in its capitals: fraktur's run together.
+    pub fn caps(self) -> bool {
+        self != Face::Fraktur
+    }
+}
 
 /// What letters are made of: gold leaf (the colour is the gold's), ink (the ink's),
 /// or light (the light's, w its strength).
@@ -44,8 +138,8 @@ pub struct Glyph {
     pub color: [f32; 4],
 }
 
-/// How a line is lettered: its size in metres to the em, extra space between letters
-/// in ems, and what the letters are made of, in which colour.
+/// How a line is lettered (in `SIGNS`): its size in metres to the em, extra space
+/// between letters in ems, and what the letters are made of, in which colour.
 #[derive(Clone, Copy, Debug)]
 pub struct Style {
     pub em: f32,
@@ -65,39 +159,45 @@ struct Cell {
     atlas: [u32; 2],
 }
 
-struct Cells {
-    font: FontArc,
+/// A face's font and measures.
+struct Typeface {
+    font: FontRef<'static>,
     upem: f32,
     /// Height of a capital, in ems.
     cap: f32,
-    cells: Vec<Cell>,
-    /// Kerning from each character to the next, by slot (`kern[a * n + b]`), in ems.
+    /// Kerning from each character to the next, by character (`kern[a * n + b]`), in ems.
     kern: Vec<f32>,
+}
+
+/// Every face's cells, face after face in `Face::ALL`'s order, each face's in `CHARS`'
+/// order: a character's slot is its face's index times `CHARS`' length, plus its own.
+struct Cells {
+    faces: Vec<Typeface>,
+    cells: Vec<Cell>,
     height: u32,
 }
 
-/// The serif face, for lettering and the HUD alike: Noto Serif, built in so that
-/// both read the same everywhere (SIL Open Font License, `assets/fonts/OFL.txt`).
-pub const SERIF: &[u8] = include_bytes!("../assets/fonts/NotoSerif-Regular.ttf");
-
-fn font() -> FontArc {
-    FontArc::try_from_slice(SERIF).expect("the built-in serif font")
+/// Characters in `CHARS`.
+fn chars() -> usize {
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| CHARS.chars().count())
 }
 
 fn cells() -> &'static Cells {
     static CELLS: OnceLock<Cells> = OnceLock::new();
     CELLS.get_or_init(|| {
-        let font = font();
-        let upem = font.units_per_em().unwrap_or(1000.0);
-        let bounds = |id: GlyphId| {
-            let pts: Vec<Vec2> = outline(&font, id, upem).into_iter().flat_map(|(a, b)| [a, b]).collect();
-            (!pts.is_empty()).then(|| pts.iter().fold((pts[0], pts[0]), |(lo, hi), &p| (lo.min(p), hi.max(p))))
-        };
-        let cap = bounds(font.glyph_id('H')).map_or(0.7, |(_, hi)| hi.y);
-        let mut cells: Vec<Cell> = (CHARS.chars())
-            .map(|c| {
-                let id = font.glyph_id(c);
-                let advance = font.h_advance_unscaled(id) / upem;
+        let mut faces = Vec::new();
+        let mut cells = Vec::new();
+        for face in Face::ALL {
+            let font = FontRef::try_from_slice(face.data()).expect("a built-in font");
+            let upem = font.units_per_em().unwrap_or(1000.0);
+            let bounds = |id: GlyphId| {
+                let pts: Vec<Vec2> = outline(&font, id, upem).into_iter().flat_map(|(a, b)| [a, b]).collect();
+                (!pts.is_empty()).then(|| pts.iter().fold((pts[0], pts[0]), |(lo, hi), &p| (lo.min(p), hi.max(p))))
+            };
+            let cap = bounds(font.glyph_id('H')).map_or(0.7, |(_, hi)| hi.y);
+            let ids: Vec<GlyphId> = CHARS.chars().map(|c| font.glyph_id(c)).collect();
+            for &id in &ids {
                 let (min, size) = match bounds(id) {
                     Some((lo, hi)) => {
                         let lo = (lo * EM_PX).floor() - PAD;
@@ -106,15 +206,20 @@ fn cells() -> &'static Cells {
                     }
                     None => ([0, 0], [0, 0]),
                 };
-                Cell {
+                cells.push(Cell {
                     id,
-                    advance,
+                    advance: font.h_advance_unscaled(id) / upem,
                     min,
                     size,
                     atlas: [0, 0],
-                }
-            })
-            .collect();
+                });
+            }
+            let kern = (ids.iter())
+                .flat_map(|&a| ids.iter().map(move |&b| (a, b)))
+                .map(|(a, b)| font.kern_unscaled(a, b) / upem)
+                .collect();
+            faces.push(Typeface { font, upem, cap, kern });
+        }
         // Shelf-pack, tallest first, a pixel apart.
         let mut order: Vec<usize> = (0..cells.len()).filter(|&i| cells[i].size[0] > 0).collect();
         order.sort_by_key(|&i| std::cmp::Reverse(cells[i].size[1]));
@@ -128,30 +233,25 @@ fn cells() -> &'static Cells {
             x += w + 1;
             row = row.max(h);
         }
-        let kern = (cells.iter())
-            .flat_map(|a| cells.iter().map(|b| font.kern_unscaled(a.id, b.id) / upem))
-            .collect();
         Cells {
-            font,
-            upem,
-            cap,
+            faces,
             cells,
-            kern,
             height: (y + row).next_power_of_two(),
         }
     })
 }
 
-fn slot(c: char) -> usize {
+/// A character's place in `CHARS` ('?''s if it has none).
+fn index(c: char) -> usize {
     // CHARS opens with printable ASCII in order.
     if (' '..='~').contains(&c) {
         return c as usize - ' ' as usize;
     }
-    CHARS.chars().position(|k| k == c).unwrap_or_else(|| slot('?'))
+    CHARS.chars().position(|k| k == c).unwrap_or_else(|| index('?'))
 }
 
 /// A glyph's outline as line segments, in ems (y up).
-fn outline(font: &FontArc, id: GlyphId, upem: f32) -> Vec<(Vec2, Vec2)> {
+fn outline(font: &FontRef, id: GlyphId, upem: f32) -> Vec<(Vec2, Vec2)> {
     let Some(o) = font.outline(id) else { return Vec::new() };
     let p = |q: ab_glyph::Point| Vec2::new(q.x, q.y) / upem;
     let mut segs = Vec::new();
@@ -180,38 +280,41 @@ fn outline(font: &FontArc, id: GlyphId, upem: f32) -> Vec<(Vec2, Vec2)> {
     segs
 }
 
-/// Lay `text` out on one line: each character's slot in the atlas with where its pen
-/// stands, in ems from the start, and the line's width in ems.
-pub fn run(text: &str, tracking: f32) -> (Vec<(usize, f32)>, f32) {
+/// Lay `text` out on one line in `face`: each character's slot in the atlas with where
+/// its pen stands, in ems from the start, and the line's width in ems.
+pub fn run(face: Face, text: &str, tracking: f32) -> (Vec<(usize, f32)>, f32) {
     let c = cells();
-    let n = c.cells.len();
+    let f = face as usize;
+    let tf = &c.faces[f];
+    let n = chars();
     let mut pen = 0.0;
     let mut prev = None;
     let mut placed = Vec::new();
     for ch in text.chars() {
-        let i = slot(ch);
+        let i = index(ch);
         if let Some(p) = prev {
-            pen += c.kern[p * n + i];
+            pen += tf.kern[p * n + i];
         }
-        placed.push((i, pen));
-        pen += c.cells[i].advance + tracking;
+        let slot = f * n + i;
+        placed.push((slot, pen));
+        pen += c.cells[slot].advance + tracking;
         prev = Some(i);
     }
     let w = pen - if placed.is_empty() { 0.0 } else { tracking };
     (placed, w)
 }
 
-/// Height of a capital, in ems.
-pub fn cap_height() -> f32 {
-    cells().cap
+/// Height of a capital in `face`, in ems.
+pub fn cap_height(face: Face) -> f32 {
+    cells().faces[face as usize].cap
 }
 
-/// Whether a character's glyph shows anything (a space does not).
+/// Whether a slot's glyph shows anything (a space does not).
 pub fn inked(slot: usize) -> bool {
     cells().cells[slot].size[0] > 0
 }
 
-/// Where each character's glyph sits in the atlas, for shaders that cut glyphs out
+/// Where each slot's glyph sits in the atlas, for shaders that cut glyphs out
 /// themselves: two words per slot, its top left (x | y << 16) and its size and offset
 /// from the pen on the baseline (w | h << 8 | (min x + 128) << 16 | (min y + 128) << 24),
 /// in atlas pixels.
@@ -228,15 +331,15 @@ pub fn cell_words() -> Vec<u32> {
         .collect()
 }
 
-/// Set `text` on one line centred on `centre` (the middle of its capitals), reading
-/// along `right` with `up` up (both unit), shrunk to fit `width` if it is wider; its
-/// glyphs go to `out`.
+/// Set `text` in `SIGNS` on one line centred on `centre` (the middle of its capitals),
+/// reading along `right` with `up` up (both unit), shrunk to fit `width` if it is
+/// wider; its glyphs go to `out`.
 pub fn set_line(out: &mut Vec<Glyph>, text: &str, style: Style, centre: Vec3, right: Vec3, up: Vec3, width: f32) {
     let c = cells();
-    let (placed, w) = run(text, style.tracking);
+    let (placed, w) = run(SIGNS, text, style.tracking);
     let em = style.em.min(width / w.max(1e-6));
     let px = em / EM_PX;
-    let origin = centre - right * (w * em * 0.5) - up * (c.cap * em * 0.5);
+    let origin = centre - right * (w * em * 0.5) - up * (cap_height(SIGNS) * em * 0.5);
     let (aw, ah) = (ATLAS_W as f32, c.height as f32);
     for (i, x) in placed {
         let cell = &c.cells[i];
@@ -266,9 +369,17 @@ pub fn atlas() -> (u32, u32, Vec<Vec<u8>>) {
     let mut full = vec![0u8; (w * h) as usize];
     let jobs: Vec<usize> = (0..c.cells.len()).filter(|&i| c.cells[i].size[0] > 0).collect();
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    // Dealt round, so each thread gets some of every face (some outlines are far busier).
     let fields: Vec<(usize, Vec<u8>)> = std::thread::scope(|s| {
-        let handles: Vec<_> = (jobs.chunks(jobs.len().div_ceil(threads).max(1)))
-            .map(|chunk| s.spawn(move || chunk.iter().map(|&i| (i, field(c, &c.cells[i]))).collect::<Vec<_>>()))
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let jobs = &jobs;
+                s.spawn(move || {
+                    (jobs.iter().skip(t).step_by(threads))
+                        .map(|&i| (i, field(c, i)))
+                        .collect::<Vec<_>>()
+                })
+            })
             .collect();
         handles
             .into_iter()
@@ -299,9 +410,11 @@ pub fn atlas() -> (u32, u32, Vec<Vec<u8>>) {
     (w, h, levels)
 }
 
-/// One glyph's cell of the distance field, rows top down.
-fn field(c: &Cells, cell: &Cell) -> Vec<u8> {
-    let segs = outline(&c.font, cell.id, c.upem);
+/// Slot `slot`'s cell of the distance field, rows top down.
+fn field(c: &Cells, slot: usize) -> Vec<u8> {
+    let cell = &c.cells[slot];
+    let tf = &c.faces[slot / chars()];
+    let segs = outline(&tf.font, cell.id, tf.upem);
     let [sx, sy] = cell.size;
     let mut out = Vec::with_capacity((sx * sy) as usize);
     for row in 0..sy {
@@ -334,17 +447,40 @@ fn field(c: &Cells, cell: &Cell) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    /// Every face has a glyph for every character, and its measures are sane.
     #[test]
-    fn every_character_has_a_glyph() {
+    fn every_face_has_every_glyph() {
         assert!((' '..='~').zip(CHARS.chars()).all(|(a, b)| a == b));
-        assert_eq!(slot('–'), 95);
+        assert_eq!(index('–'), 95);
         let c = cells();
-        for (ch, cell) in CHARS.chars().zip(&c.cells) {
-            assert!(cell.advance > 0.0, "{ch:?} has no advance");
-            assert_eq!(cell.size[0] == 0, ch == ' ', "{ch:?} cell {:?}", cell.size);
+        let n = chars();
+        for face in Face::ALL {
+            let f = face as usize;
+            for (ch, cell) in CHARS.chars().zip(&c.cells[f * n..(f + 1) * n]) {
+                assert!(cell.id.0 != 0, "{face:?} has no {ch:?} (rerun assets/fonts/subset.py)");
+                assert!(cell.advance > 0.0, "{face:?} {ch:?} has no advance");
+                assert_eq!(cell.size[0] == 0, ch == ' ', "{face:?} {ch:?} cell {:?}", cell.size);
+                assert!(
+                    cell.size[0] <= 255 && cell.size[1] <= 255,
+                    "{face:?} {ch:?} cell {:?}",
+                    cell.size
+                );
+                assert!(
+                    cell.min.iter().all(|m| (-128..128).contains(m)),
+                    "{face:?} {ch:?} at {:?}",
+                    cell.min
+                );
+            }
+            // Uncial's capitals stand tallest, nine tenths of its em.
+            assert!(
+                (0.55..0.95).contains(&cap_height(face)),
+                "{face:?} cap height {}",
+                cap_height(face)
+            );
         }
-        assert!((0.6..0.8).contains(&c.cap), "cap height {}", c.cap);
-        assert!(c.height <= 1024, "atlas {}x{}", ATLAS_W, c.height);
+        // The book table's glyph words keep 14 bits of slot.
+        assert!(c.cells.len() < 1 << 14);
+        assert!(c.height <= 4096, "atlas {}x{}", ATLAS_W, c.height);
     }
 
     #[test]
@@ -392,13 +528,24 @@ mod tests {
     #[test]
     fn fields_are_signed() {
         let c = cells();
-        let cell = &c.cells[slot('o')];
-        let f = field(c, cell);
-        let [sx, sy] = cell.size;
-        let at = |x: u32, y: u32| f[(y * sx + x) as usize];
-        // The middle row, from the left edge in.
-        let row: Vec<u8> = (0..sx).map(|x| at(x, sy / 2)).collect();
-        assert!(row[0] < 20 && at(sx / 2, sy / 2) < 128, "{row:?}");
-        assert!(row.iter().any(|&v| v > 150), "{row:?}");
+        for face in Face::ALL {
+            let slot = face as usize * chars() + index('o');
+            let f = field(c, slot);
+            let [sx, sy] = c.cells[slot].size;
+            let at = |x: u32, y: u32| f[(y * sx + x) as usize];
+            // The middle row, from the left edge in.
+            let row: Vec<u8> = (0..sx).map(|x| at(x, sy / 2)).collect();
+            assert!(row[0] < 20 && at(sx / 2, sy / 2) < 128, "{face:?} {row:?}");
+            assert!(row.iter().any(|&v| v > 150), "{face:?} {row:?}");
+        }
+    }
+
+    /// Kerning pairs are read: capitals that nest close up in faces that kern them.
+    #[test]
+    fn faces_kern() {
+        for face in [Face::Garamond, Face::Caslon, Face::Fell, Face::Cinzel] {
+            let apart = run(face, "A", 0.0).1 + run(face, "V", 0.0).1;
+            assert!(run(face, "AV", 0.0).1 < apart - 0.02, "{face:?}");
+        }
     }
 }

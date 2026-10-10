@@ -44,22 +44,21 @@ fn serif(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("serif".into()))
 }
 
+/// The symbols the HUD's face lacks (✦, ▼), from Noto Sans Symbols 2.
+const SYMBOLS: &[u8] = include_bytes!("../assets/fonts/NotoSansSymbols2/NotoSansSymbols2-Subset.ttf");
+
+/// The HUD is set in Libre Caslon Text, the Caslon of the books' spines, with
+/// `SYMBOLS` for what it lacks: both built in (assets/fonts/<Family>: their licences
+/// and sources), so the HUD reads the same on every system.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-    let mut family: Vec<String> = vec!["serif".into()];
-    fonts.font_data.insert(
-        "serif".into(),
-        std::sync::Arc::new(egui::FontData::from_static(crate::text::SERIF)),
-    );
-    for &path in crate::platform::SYMBOL_FONTS {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts
-                .font_data
-                .insert(path.into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
-            family.push(path.into());
-        }
+    let mut family: Vec<String> = Vec::new();
+    for (name, data) in [("serif", crate::text::CASLON), ("symbols", SYMBOLS)] {
+        let data = std::sync::Arc::new(egui::FontData::from_static(data));
+        fonts.font_data.insert(name.into(), data);
+        family.push(name.into());
     }
-    // Fall back to egui's proportional stack.
+    // Then egui's own proportional stack, for anything else.
     family.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(FontFamily::Name("serif".into()), family);
     ctx.set_fonts(fonts);

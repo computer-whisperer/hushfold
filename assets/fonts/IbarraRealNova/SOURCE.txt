@@ -1,0 +1,6 @@
+Ibarra Real Nova, by Jose Maria Ribagorda & Octavio Pardo.
+Licence: SIL Open Font License 1.1 (OFL.txt).
+From: https://github.com/google/fonts/blob/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/ibarrarealnova/IbarraRealNova%5Bwght%5D.ttf
+Upstream: https://github.com/googlefonts/ibarrareal
+Changes: instanced at wght 400; subset to the characters the game letters (text::CHARS); hinting dropped; its GPOS kerning written as a kern table (1462 pairs).
+Made by assets/fonts/subset.py.

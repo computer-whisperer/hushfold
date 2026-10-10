@@ -1,0 +1,6 @@
+Libre Caslon Text, by Pablo Impallari, Rodrigo Fuenzalida, Katja Schimmel.
+Licence: SIL Open Font License 1.1 (OFL.txt).
+From: https://github.com/google/fonts/blob/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/librecaslontext/LibreCaslonText%5Bwght%5D.ttf
+Upstream: https://github.com/thundernixon/Libre-Caslon
+Changes: instanced at wght 400; subset to Latin-1 and common punctuation, for the HUD and lettering; its GPOS kerning written as a kern table (8234 pairs).
+Made by assets/fonts/subset.py.

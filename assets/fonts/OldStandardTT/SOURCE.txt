@@ -1,0 +1,6 @@
+Old Standard TT, by Alexey Kryukov.
+Licence: SIL Open Font License 1.1 (OFL.txt).
+From: https://github.com/google/fonts/blob/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/oldstandardtt/OldStandard-Regular.ttf
+Upstream: https://git.sr.ht/~ralessi/oldstandard
+Changes: subset to the characters the game letters (text::CHARS); hinting dropped; its GPOS kerning written as a kern table (190 pairs).
+Made by assets/fonts/subset.py.

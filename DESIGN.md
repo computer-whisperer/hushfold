@@ -28,10 +28,20 @@ so the hall gets visibly brighter and more colourful as you sort.
 - Titles are on the books: down the spine, or across it on a label (the leather
   label between bands, pattern 2's dark panel, a printed paper label on boards), in
   gold (gilt even where the trim is blind), inked on vellum and paper labels; and
-  stamped or printed on the front covers of cloth and boards. Down the spine half are
-  set 14 mm to the em or more and read from about 2.5 m; a label's from about a
+  stamped or printed on the front covers of cloth and boards. Down the spine half
+  have capitals 10 mm tall or more and read from about 2.5 m; a label's from about a
   metre (its title in capitals, or in the title's own case where capitals would
-  come out under 4 mm).
+  come out under 2.9 mm).
+- Each series' titles are set in a typeface of its binding's day (`Look::face`,
+  drawn last from the look's stream): Renaissance to eighteenth-century faces
+  (Garamond, the Aldine roman, Fell, Caslon, Ibarra) on calf, and inscriptional
+  capitals (Castoro Titling) across the bands of spines at least 38 mm thick, where
+  their width still leaves them a fair size; Baskerville and Bodoni joining them on
+  half bindings; the Victorian and Edwardian trade's faces on cloth (Old Standard's
+  modern, Coustard's Clarendon, Kennerley, Goudy Oldstyle); printers' faces on paper
+  labels; and hands on vellum, mostly a roman, now and then textura, fraktur or
+  uncial. Fraktur is never set in capitals, and numbers on it are arabic. Sizes go
+  by the capitals' height, faces' capitals standing differently tall in their ems.
 - Every book has exactly one slot. Category -> 3 cases on one face-row of a wing.
   Series alphabetical (ignoring leading articles), top shelf to bottom,
   left to right; a series never splits across shelves; shelves are justified.
@@ -404,18 +414,23 @@ window. 4x MSAA HDR -> bloom -> ACES tonemap (a touch of blue in the darkest
 tones) -> egui. Held books are drawn in a second pass with cleared depth. Static
 geometry is one draw in the order it was laid down, without culling.
 
-Lettering (`text.rs`: signs, shelf labels, the Verse Gallery's words) is laid out
-at generation from the serif face the HUD uses (Noto Serif, built in so that both
-read the same on every system) into glyph quads, one static draw
+Lettering (`text.rs`) is set in sixteen faces built into the game (`text::Face`,
+`assets/fonts`), so it reads the same on every system: the library's own (signs,
+shelf labels, the Verse Gallery's words) in Cinzel's Roman capitals, and the books'
+titles in theirs (see Book model). The HUD is set in Libre Caslon Text, the spines'
+Caslon, with ✦ and ▼ from Noto Sans Symbols 2, also built in. The fonts are subsets
+(`assets/fonts/subset.py`) but for three that reserve their names; their GPOS
+kerning is written as a `kern` table, the only kerning ab_glyph and egui read.
+Signs, labels and words are laid out at generation into glyph quads, one static draw
 after the opaque scene, depth-biased onto the surfaces under them (testing depth,
-not writing it). Glyphs are cut from a signed-distance atlas built at startup
-(64 px to the em, exact distances to the flattened outlines, threaded, ~12 ms;
-mipmapped), so they stay sharp up close. Each is lit like its surface (gold leaf,
-ink) or glows; small letters are set a little bolder, and those under about four
-pixels to the em fade out rather than shimmer. Names are therefore read in the
-world, at the distance their size allows (a category board from ~20 m at 1000
-pixels tall, a shelf's keys from ~3 m); only the Signposts' guides are drawn over
-the scene.
+not writing it). Every face's glyphs are cut from one signed-distance atlas built at
+startup (64 px to the em, 1632 glyphs; exact distances to the flattened outlines,
+threaded; mipmapped), so they stay sharp up close. Each is
+lit like its surface (gold leaf, ink) or glows; small letters are set a little
+bolder, and those under about four pixels to the em fade out rather than shimmer.
+Names are therefore read in the world, at the distance their size allows (a
+category board from ~20 m at 1000 pixels tall, a shelf's keys from ~3 m); only the
+Signposts' guides are drawn over the scene.
 
 Books have a pipeline and fragment shader of their own (`fs_book`): their material
 needs more than the rest of the scene's, whose shader sits at 64 registers on the
@@ -431,8 +446,8 @@ rounded spine with its bands standing out, grooved joints, all inside the box) a
 read by the same material as the points of the box they stand for. The material
 reads the library's book table (`gfx::books::table`; made once per library, ~40 ms
 for the Great Library, and handed to the renderer with the lettering): each
-series' look and where its lettering goes, glyphs cut from the signs' distance-field
-atlas inside the shader by bisection over each line. So a title follows its book
+series' look, face and where its lettering goes, glyphs cut from the lettering's
+distance-field atlas inside the shader by bisection over each line. So a title follows its book
 wherever it is drawn (shelved, piled, flying, held) with no work per book on the
 CPU, and fades below four pixels to the em as the signs' do. Binding materials
 (leather grain, cloth weave, marbling, mottle: a 64 mm tile, mipmapped) are drawn at

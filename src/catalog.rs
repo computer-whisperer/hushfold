@@ -1,5 +1,6 @@
 //! Procedural catalogue: categories, series and their visual identity.
 
+use crate::text::Face;
 use rand::prelude::*;
 use std::collections::HashSet;
 
@@ -152,7 +153,8 @@ pub enum Edges {
 
 /// A series' binding, beyond its colour, pattern and trim. Drawn from a random stream of
 /// its own (seeded from its title and category), never the generation's, so changing
-/// how books look never moves them.
+/// how books look never moves them; a field added later is drawn after the rest, so
+/// it never changes them either.
 #[derive(Clone, Copy, Debug)]
 pub struct Look {
     pub binding: Binding,
@@ -165,6 +167,9 @@ pub struct Look {
     pub accent: [f32; 3],
     /// How worn it is, 0 to 1.
     pub age: f32,
+    /// The typeface its titles are set in: a printer's of its binding's day, or for
+    /// vellum a hand's.
+    pub face: Face,
 }
 
 /// Leathers for spine labels, chosen to stand out from the binding.
@@ -187,8 +192,8 @@ const ACCENTS: &[[f32; 3]] = &[
 
 impl Look {
     /// `shared`: the category's books share a binding (and label), as they share a
-    /// spine pattern, but for the odd one.
-    fn new(title: &str, category: usize, color: [f32; 3], height: f32, shared: bool) -> Self {
+    /// spine pattern, but for the odd one. `thickness` is the thinnest volume's.
+    fn new(title: &str, category: usize, color: [f32; 3], height: f32, thickness: f32, shared: bool) -> Self {
         // FNV-1a of the title, then the category.
         let h = (title.bytes().chain((category as u32).to_le_bytes())).fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
             (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
@@ -231,13 +236,70 @@ impl Look {
         let mut labels: Vec<&[f32; 3]> = LABELS.iter().collect();
         labels.sort_by(|a, b| far(b).total_cmp(&far(a)));
         let label = if shared { category % 2 } else { rng.gen_range(0..3) };
+        let accent = *ACCENTS.choose(rng).expect("accents");
+        let age = 0.15 + 0.85 * libm::powf(rng.r#gen::<f32>(), 1.3);
+        use Face::*;
+        let faces: &[(Face, u32)] = match binding {
+            // Calf of the sixteenth to eighteenth centuries, titled across its bands,
+            // some in inscriptional capitals.
+            Binding::Leather => &[
+                (Garamond, 20),
+                (Cardo, 12),
+                (Fell, 16),
+                (Caslon, 20),
+                (Ibarra, 12),
+                (Castoro, 20),
+            ],
+            Binding::Half => &[
+                (Caslon, 20),
+                (Baskerville, 22),
+                (Ibarra, 14),
+                (Bodoni, 14),
+                (Garamond, 10),
+                (Castoro, 20),
+            ],
+            // Publishers' cloth, Victorian to Edwardian.
+            Binding::Cloth => &[
+                (OldStandard, 24),
+                (Bodoni, 14),
+                (Coustard, 16),
+                (Kennerley, 14),
+                (Goudy, 18),
+                (Baskerville, 14),
+            ],
+            // Lettered by hand: mostly in a roman, now and then in textura, fraktur or
+            // uncial.
+            Binding::Vellum => &[
+                (Fell, 26),
+                (Cardo, 22),
+                (Garamond, 14),
+                (Texturina, 14),
+                (Fraktur, 12),
+                (Uncial, 12),
+            ],
+            // Printed paper labels.
+            Binding::Boards => &[
+                (Caslon, 22),
+                (Baskerville, 18),
+                (OldStandard, 20),
+                (Fell, 14),
+                (Bodoni, 12),
+                (Kennerley, 8),
+                (Goudy, 10),
+            ],
+        };
+        // Inscriptional capitals set wide: only across spines with room for them.
+        let room = bands > 0 && thickness >= 0.038;
+        let faces: Vec<(Face, u32)> = (faces.iter().copied()).filter(|&(f, _)| f != Castoro || room).collect();
+        let face = faces.choose_weighted(rng, |f| f.1).expect("faces").0;
         Look {
             binding,
             bands,
             edges,
             label: *labels[label],
-            accent: *ACCENTS.choose(rng).expect("accents"),
-            age: 0.15 + 0.85 * libm::powf(rng.r#gen::<f32>(), 1.3),
+            accent,
+            age,
+            face,
         }
     }
 }
@@ -551,10 +613,11 @@ pub fn generate_series(
         let thickness = (0..volumes)
             .map(|_| base_t * rng.gen_range(0.88..1.12))
             .collect::<Vec<_>>();
+        let thinnest = thickness.iter().copied().fold(f32::MAX, f32::min);
         let s = Series {
             category,
             sort_key: sort_key(&title),
-            look: Look::new(&title, category, color, height, cat.pattern.is_some()),
+            look: Look::new(&title, category, color, height, thinnest, cat.pattern.is_some()),
             title,
             volumes,
             color,

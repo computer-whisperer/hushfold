@@ -1,0 +1,6 @@
+Uncial Antiqua, by Astigmatic (AOETI).
+Licence: SIL Open Font License 1.1 (OFL.txt).
+From: https://github.com/google/fonts/blob/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/uncialantiqua/UncialAntiqua-Regular.ttf
+Upstream: https://github.com/googlefonts/googlefontdirectory-hg
+Changes: none, as it reserves its name (its licence: "Copyright (c) 2011 by Brian J. Bonislawsky DBA Astigmatic (AOETI) (astigma@astigmatic.com), with Reserved Font Names "Uncial Antiqua"").
+Made by assets/fonts/subset.py.

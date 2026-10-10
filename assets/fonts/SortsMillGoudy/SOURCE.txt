@@ -1,0 +1,6 @@
+Sorts Mill Goudy.
+Licence: SIL Open Font License 1.1 (OFL.txt).
+From: https://github.com/google/fonts/blob/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/sortsmillgoudy/SortsMillGoudy-Regular.ttf
+Upstream: https://github.com/theleagueof/sorts-mill-goudy
+Changes: subset to the characters the game letters (text::CHARS); hinting dropped; its GPOS kerning written as a kern table (3453 pairs).
+Made by assets/fonts/subset.py.
