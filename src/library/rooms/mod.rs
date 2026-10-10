@@ -107,9 +107,20 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     f(lib, frame, rng, titles);
 }
 
-/// `rgb` with an alpha (or a glow) of `w`.
-pub(super) fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
-    [rgb[0], rgb[1], rgb[2], w]
+/// A flat band round `c` in the plane of `u` and `v` (unit, at right angles), `r` to
+/// its middle, `w` wide and `d` thick.
+pub(super) fn band(
+    lib: &mut Library,
+    c: Vec3,
+    (u, v): (Vec3, Vec3),
+    (r, w, d): (f32, f32, f32),
+    kind: u32,
+    rgba: [f32; 4],
+) -> Inst {
+    let segs = if r < 0.5 { 32 } else { 64 };
+    let ring = Mesh::ring(&circle(r + w * 0.5, segs), &circle(r - w * 0.5, segs), d);
+    let turn = Quat::from_mat3(&Mat3::from_cols(u, v, u.cross(v)));
+    lib.shape(ring).at(c, turn, kind, rgba)
 }
 
 /// A box over `a` across, `o` outward and `y` up from the floor.

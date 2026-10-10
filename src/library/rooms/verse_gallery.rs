@@ -457,23 +457,11 @@ fn moulding(path: &[Vec2], profile: &[Vec2]) -> Mesh {
                     normal: (across * pn.x).extend(pn.y).normalize().into(),
                 });
             }
-            facet(&mut mesh, [first, first + 1, first + 2]);
-            facet(&mut mesh, [first, first + 2, first + 3]);
+            mesh.tri(first, first + 1, first + 2);
+            mesh.tri(first, first + 2, first + 3);
         }
     }
     mesh
-}
-
-/// A triangle of `m`'s, wound to face the way its corners' normals do.
-fn facet(m: &mut Mesh, [a, b, c]: [u32; 3]) {
-    let p = |i: u32| Vec3::from(m.verts[i as usize].pos);
-    let n = |i: u32| Vec3::from(m.verts[i as usize].normal);
-    let face = (p(b) - p(a)).cross(p(c) - p(a));
-    if face.dot(n(a) + n(b) + n(c)) >= 0.0 {
-        m.idx.extend_from_slice(&[a, b, c]);
-    } else {
-        m.idx.extend_from_slice(&[a, c, b]);
-    }
 }
 
 /// The lounge: a reading group on a rug, two lecterns at the mouth of the middle

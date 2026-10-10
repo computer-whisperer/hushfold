@@ -57,46 +57,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     transmutation(lib, frame);
 }
 
-/// `n` points round a circle `r` across in xy, anticlockwise.
-fn circle(n: usize, r: f32) -> Vec<Vec2> {
-    (0..n)
-        .map(|k| {
-            let t = k as f32 / n as f32 * TAU;
-            Vec2::new(libm::cosf(t), libm::sinf(t)) * r
-        })
-        .collect()
-}
-
-/// A flat band round `c` in the plane of `u` and `v` (unit, at right angles), `r` to
-/// its middle, `w` wide and `d` thick.
-fn band(
-    lib: &mut Library,
-    c: Vec3,
-    (u, v): (Vec3, Vec3),
-    (r, w, d): (f32, f32, f32),
-    kind: u32,
-    rgba: [f32; 4],
-) -> Inst {
-    let ring = Mesh::ring(&circle(64, r + w * 0.5), &circle(64, r - w * 0.5), d);
-    let turn = Quat::from_mat3(&Mat3::from_cols(u, v, u.cross(v)));
-    lib.shape(ring).at(c, turn, kind, rgba)
-}
-
-/// A round rod (`stick`, a cylinder) from `p` to `q`, `w` across.
-fn bar(stick: Shape, p: Vec3, q: Vec3, w: f32, kind: u32, rgba: [f32; 4]) -> Inst {
-    let v = q - p;
-    let turn = Quat::from_rotation_arc(Vec3::Y, v.normalize());
-    stick
-        .sized(Vec3::new(w, v.length(), w))
-        .inst((p + q) * 0.5, turn, kind, rgba)
-}
-
-/// A turned piece from its profile, (radius, height) up its outside.
-fn turned(lib: &mut Library, profile: &[(f32, f32)], segs: usize) -> Shape {
-    let p: Vec<Vec2> = profile.iter().map(|&(r, h)| Vec2::new(r, h)).collect();
-    lib.shape(Mesh::lathe(&p, segs))
-}
-
 /// The path through `pts` with each corner rounded off, up to `r` either side of it.
 fn rounded(pts: &[Vec3], r: f32) -> Vec<Vec3> {
     let mut out = vec![pts[0]];
@@ -210,7 +170,7 @@ impl Glassware {
             })
             .collect();
         retort.add(
-            &Mesh::sweep(&neck, &[0.15, 0.05], &circle(12, 1.0), false),
+            &Mesh::sweep(&neck, &[0.15, 0.05], &circle(1.0, 12), false),
             Vec3::ZERO,
             Quat::IDENTITY,
             Vec3::ONE,
@@ -323,8 +283,7 @@ fn backboard(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let mut rng = StdRng::seed_from_u64(0xa1c4_e31a ^ (a * 10.0) as i64 as u64);
     // Squat jars, tall ones and bottles, a lid or a stopper on each.
     let jars = [
-        turned(
-            lib,
+        lib.turned(
             &[
                 (0.0, 0.0),
                 (0.44, 0.0),
@@ -336,8 +295,7 @@ fn backboard(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             ],
             20,
         ),
-        turned(
-            lib,
+        lib.turned(
             &[
                 (0.0, 0.0),
                 (0.46, 0.0),
@@ -350,8 +308,7 @@ fn backboard(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             ],
             20,
         ),
-        turned(
-            lib,
+        lib.turned(
             &[
                 (0.0, 0.0),
                 (0.42, 0.0),
@@ -365,8 +322,7 @@ fn backboard(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             20,
         ),
     ];
-    let lid = turned(
-        lib,
+    let lid = lib.turned(
         &[
             (0.0, 0.0),
             (0.5, 0.0),
@@ -637,8 +593,7 @@ fn furnace(lib: &mut Library, frame: &RoomFrame) {
     }
     // A round copper hood flaring over the tower, and the flue up from it, banded.
     let top = frame.at(0.0, mid, 2.6);
-    let hood = turned(
-        lib,
+    let hood = lib.turned(
         &[
             (0.0, 0.0),
             (1.05, 0.0),
@@ -717,8 +672,7 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
     // The alembic: an iron brazier with its fire, the copper gourd on it, the head
     // over that and its beak running down to a glass receiver.
     let brazier = at(0.0, o0 + 0.8, 0.0);
-    let bowl = turned(
-        lib,
+    let bowl = lib.turned(
         &[
             (0.0, 0.0),
             (0.09, 0.0),
@@ -749,8 +703,7 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
         1,
     ));
     let gourd = brazier + up * 0.135;
-    let still = turned(
-        lib,
+    let still = lib.turned(
         &[
             (0.0, 0.0),
             (0.08, 0.0),
@@ -766,8 +719,7 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
     );
     lib.decor(still.at(gourd, Quat::IDENTITY, kind::METAL, COPPER));
     let head = gourd + up * 0.4;
-    let cap = turned(
-        lib,
+    let cap = lib.turned(
         &[
             (0.0, 0.0),
             (0.075, 0.0),
@@ -796,12 +748,11 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
             spout * ((1.0 - t) * (1.0 - t)) + droop * (2.0 * t * (1.0 - t)) + mouth * (t * t) - spout
         })
         .collect();
-    let beak = lib.shape(Mesh::sweep(&beak, &[1.0, 0.6], &circle(10, 0.022), true));
+    let beak = lib.shape(Mesh::sweep(&beak, &[1.0, 0.6], &circle(0.022, 10), true));
     lib.decor(beak.at(spout, Quat::IDENTITY, kind::METAL, COPPER));
     // A flask bubbling on a tripod over a spirit lamp, its steam rising.
     let lamp = at(-0.22, o0 + 2.2, 0.0);
-    let burner = turned(
-        lib,
+    let burner = lib.turned(
         &[
             (0.0, 0.0),
             (0.05, 0.0),
@@ -831,7 +782,7 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
     for k in 0..3 {
         let t = k as f32 / 3.0 * TAU + 0.4;
         let d = Vec3::new(libm::cosf(t), 0.0, libm::sinf(t));
-        lib.decor(bar(stick, hoop + d * 0.055, lamp + d * 0.1, 0.008, kind::METAL, IRON));
+        lib.decor(stick.between(hoop + d * 0.055, lamp + d * 0.1, 0.008, kind::METAL, IRON));
     }
     let w = 0.13;
     let flask = lamp + up * 0.17;
@@ -875,8 +826,7 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
     }
     // A mortar and pestle.
     let mortar = at(0.2, o0 + 3.9, 0.0);
-    let bowl = turned(
-        lib,
+    let bowl = lib.turned(
         &[
             (0.0, 0.0),
             (0.07, 0.0),
@@ -890,8 +840,7 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
         24,
     );
     lib.decor(bowl.at(mortar, Quat::IDENTITY, kind::STONE, [0.5, 0.47, 0.42, 1.0]));
-    let pestle = turned(
-        lib,
+    let pestle = lib.turned(
         &[
             (0.0, 0.0),
             (0.022, 0.0),
@@ -938,8 +887,7 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
     }
     // A brass balance, its beam rocking a hair and the pans hanging level from it.
     let scale = at(-0.2, o0 + 5.2, 0.0);
-    let pillar = turned(
-        lib,
+    let pillar = lib.turned(
         &[
             (0.0, 0.0),
             (0.07, 0.0),
@@ -962,20 +910,15 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
         period: 9.0,
     };
     let m = lib.mover(pivot, rock(frame.across()), phase, None);
-    lib.moving(m, bar(stick, pivot - beam, pivot + beam, 0.014, kind::METAL, BRASS_LIT));
     lib.moving(
         m,
-        bar(
-            stick,
-            pivot - up * 0.01,
-            pivot + up * 0.09,
-            0.008,
-            kind::METAL,
-            BRASS_LIT,
-        ),
+        stick.between(pivot - beam, pivot + beam, 0.014, kind::METAL, BRASS_LIT),
     );
-    let dish = turned(
-        lib,
+    lib.moving(
+        m,
+        stick.between(pivot - up * 0.01, pivot + up * 0.09, 0.008, kind::METAL, BRASS_LIT),
+    );
+    let dish = lib.turned(
         &[
             (0.0, 0.0),
             (0.03, 0.0),
@@ -990,13 +933,12 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
         let hook = pivot + beam * e;
         let pan = lib.mover(hook, rock(-frame.across()), phase, Some(m));
         let low = hook - up * 0.18;
-        lib.moving(pan, bar(stick, low, hook, 0.005, kind::METAL, BRASS_LIT));
+        lib.moving(pan, stick.between(low, hook, 0.005, kind::METAL, BRASS_LIT));
         lib.moving(pan, dish.at(low, Quat::IDENTITY, kind::METAL, BRASS_LIT));
     }
     // A candle in its stick.
     let candle = at(0.3, o0 + 0.25, 0.0);
-    let holder = turned(
-        lib,
+    let holder = lib.turned(
         &[
             (0.0, 0.0),
             (0.045, 0.0),
@@ -1010,11 +952,7 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
         20,
     );
     lib.decor(holder.at(candle, Quat::IDENTITY, kind::METAL, BRASS_LIT));
-    let wax = turned(
-        lib,
-        &[(0.0, 0.0), (0.02, 0.0), (0.02, 0.15), (0.015, 0.16), (0.0, 0.16)],
-        16,
-    );
+    let wax = lib.turned(&[(0.0, 0.0), (0.02, 0.0), (0.02, 0.15), (0.015, 0.16), (0.0, 0.16)], 16);
     lib.decor(wax.at(candle + up * 0.045, Quat::IDENTITY, kind::PLAIN, [0.8, 0.75, 0.6, 1.0]));
     lib.translucent(Inst::new(
         candle + up * 0.235,
@@ -1050,8 +988,7 @@ fn pipes(lib: &mut Library, frame: &RoomFrame, glass: &Glassware) {
     let turn = BENCH_O.1 - 0.45;
     let (u, v, up) = (frame.across(), frame.out(), Vec3::Y);
     let stick = lib.shape(Mesh::cylinder(16));
-    let tub = turned(
-        lib,
+    let tub = lib.turned(
         &[
             (0.0, 0.0),
             (0.23, 0.0),
@@ -1085,19 +1022,12 @@ fn pipes(lib: &mut Library, frame: &RoomFrame, glass: &Glassware) {
         let spout = base - v * 0.37 + up * 0.2;
         pts.extend([base - v * 0.34 + up * 0.5, spout]);
         let path: Vec<Vec3> = rounded(&pts, 0.25).iter().map(|p| *p - base).collect();
-        let pipe = lib.shape(Mesh::sweep(&path, &[1.0], &circle(12, 0.045), true));
+        let pipe = lib.shape(Mesh::sweep(&path, &[1.0], &circle(0.045, 12), true));
         lib.decor(pipe.at(base, Quat::IDENTITY, kind::METAL, COPPER));
         // A coupling halfway along each straight run.
         for w in pts[..5].windows(2) {
             let (mid, d) = ((w[0] + w[1]) * 0.5, (w[1] - w[0]).normalize());
-            lib.decor(bar(
-                stick,
-                mid - d * 0.03,
-                mid + d * 0.03,
-                0.12,
-                kind::METAL,
-                [0.5, 0.25, 0.1, 1.0],
-            ));
+            lib.decor(stick.between(mid - d * 0.03, mid + d * 0.03, 0.12, kind::METAL, [0.5, 0.25, 0.1, 1.0]));
         }
         // The tub, hooped, its water dark.
         lib.decor(tub.at(base, Quat::IDENTITY, kind::WOOD, [0.26, 0.15, 0.07, 1.0]));

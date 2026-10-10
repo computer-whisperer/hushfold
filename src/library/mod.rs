@@ -14,7 +14,7 @@ mod rooms;
 pub use hall::{HALL_X, HALL_Z, VEIL_X};
 
 use crate::catalog::{self, Catalogue, Series};
-use crate::gfx::mesh::{self, Mesh, Shape};
+use crate::gfx::mesh::{self, Mesh, Shape, circle};
 use crate::gfx::{Inst, kind};
 use crate::text::{self, Glyph, Lettering, Style};
 use crate::world::{Gate, Level, NOSING, SLAB, Slab, Stairs, Stops, World};
@@ -60,6 +60,11 @@ const SHELF_LETTERS: Style = Style {
     lettering: Lettering::Ink,
     color: [0.05, 0.03, 0.015, 1.0],
 };
+
+/// `rgb` with an alpha (or a glow) of `w`.
+fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
+    [rgb[0], rgb[1], rgb[2], w]
+}
 
 /// Height of the shelf surface above the floor for reading-order row (0 = top).
 pub fn row_floor_y(row: usize) -> f32 {

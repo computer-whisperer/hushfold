@@ -7,7 +7,7 @@
 //! been played; the chimes stir, and a metronome on the harpsichord keeps a slow
 //! time.
 
-use super::hearth_library::{candle, circle, pole, pole_inst, turned, turned_leg, turned_open};
+use super::hearth_library::{candle, turned_leg};
 use super::*;
 use std::f32::consts::FRAC_PI_2;
 
@@ -322,7 +322,7 @@ fn lute(lib: &mut Library, h: &Hung) {
         (0.0, 0.46),
     ];
     // The bowl: the pear turned, flattened, wholly behind the soundboard.
-    let bowl = turned(lib, &pear, 24);
+    let bowl = lib.turned(&pear, 24);
     h.shaped(
         lib,
         bowl.sized(Vec3::new(0.32, 0.46, 0.17)),
@@ -395,8 +395,7 @@ fn horn(lib: &mut Library, h: &Hung) {
             brass,
         );
     }
-    let bell = turned_open(
-        lib,
+    let bell = lib.turned_open(
         &[
             (0.02, 0.0),
             (0.022, 0.08),
@@ -417,7 +416,7 @@ fn horn(lib: &mut Library, h: &Hung) {
         brass,
     );
     let (p, q) = (h.at([-0.1, 0.13, 0.02]), h.at([-0.2, 0.28, 0.04]));
-    pole(lib, p, q, 0.02 * h.k, kind::METAL, brass);
+    lib.pole(p, q, 0.02 * h.k, kind::METAL, brass);
 }
 
 /// The organ in the middle of the far wall: a case of pipes rising nearly to the
@@ -470,7 +469,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
     // Pipes in three flats: a middle one falling away from its tallest, and towers
     // either side rising outward. Each stands on a cone of a foot; its mouth is a dark
     // slot under a pointed lip.
-    let body = turned(lib, &[(0.0, 0.0), (0.12, 0.0), (0.5, 0.09), (0.5, 1.0), (0.0, 1.0)], 16);
+    let body = lib.turned(&[(0.0, 0.0), (0.12, 0.0), (0.5, 0.09), (0.5, 1.0), (0.0, 1.0)], 16);
     let lip = lib.shape(Mesh::prism(
         &[Vec2::new(-0.5, 0.0), Vec2::new(0.5, 0.0), Vec2::new(0.0, 1.0)],
         0.01,
@@ -571,8 +570,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
     }
     // The stop jambs either side of the keyboards, turned knobs in them, the middle
     // row red.
-    let knob = turned(
-        lib,
+    let knob = lib.turned(
         &[(0.0, 0.0), (0.2, 0.0), (0.2, 0.6), (0.5, 0.7), (0.5, 0.95), (0.0, 1.0)],
         12,
     );
@@ -609,8 +607,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
         rgba(WALNUT, 1.0),
         0,
     ));
-    let stick = turned(
-        lib,
+    let stick = lib.turned(
         &[
             (0.0, 0.0),
             (0.5, 0.0),
@@ -678,8 +675,7 @@ fn harp(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::WOOD,
         [0.3, 0.14, 0.05],
     ));
-    let column = turned(
-        lib,
+    let column = lib.turned(
         &[
             (0.0, 0.0),
             (0.5, 0.0),
@@ -704,7 +700,7 @@ fn harp(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     );
     // The soundbox, round-backed, broad at the foot and narrow at the top.
     let (s0, s1) = (p(0.08, 0.1), p(0.74, 1.52));
-    let sb = turned(lib, &[(0.0, 0.0), (0.5, 0.0), (0.2, 1.0), (0.0, 1.0)], 24);
+    let sb = lib.turned(&[(0.0, 0.0), (0.5, 0.0), (0.2, 1.0), (0.0, 1.0)], 24);
     lib.decor(
         sb.sized(Vec3::new(0.18, (s1 - s0).length(), 0.26))
             .at(s0, aim(s1 - s0, across), kind::WOOD, wood),
@@ -729,8 +725,7 @@ fn harp(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             .at(p(0.0, 0.0), plane, kind::WOOD, wood),
     );
     // A gilt crown on the column's head.
-    let crown = turned(
-        lib,
+    let crown = lib.turned(
         &[
             (0.0, 0.0),
             (0.5, 0.0),
@@ -757,7 +752,7 @@ fn harp(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         let u = 0.1 + k as f32 * 0.055;
         let (bottom, top) = (board(u), neck(u) - 0.035);
         if top - bottom > 0.05 {
-            let i = pole_inst(lib, p(u, bottom), p(u, top), 0.007, kind::CRYSTAL, rgba(GLOW, 0.9));
+            let i = lib.pole_inst(p(u, bottom), p(u, top), 0.007, kind::CRYSTAL, rgba(GLOW, 0.9));
             lib.decor(i);
         }
     }
@@ -806,7 +801,7 @@ fn harp(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
                 .inst(c, face * Quat::from_rotation_z(0.35), kind::CRYSTAL, glow),
         );
         let stem = (c + out * 0.038 + Vec3::Y * 0.01, c + out * 0.038 + Vec3::Y * 0.21);
-        let i = pole_inst(lib, stem.0, stem.1, 0.01, kind::CRYSTAL, glow);
+        let i = lib.pole_inst(stem.0, stem.1, 0.01, kind::CRYSTAL, glow);
         lib.moving(m, i);
         if k % 2 == 1 {
             lib.moving(m, flag.at(stem.1, face, kind::CRYSTAL, glow));
@@ -918,8 +913,7 @@ fn harpsichord(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         [0.62, 0.7, 0.55, 1.0],
     ));
     let under = hinge + lift * Vec3::new(-0.72, 1.05, -0.0125);
-    pole(
-        lib,
+    lib.pole(
         frame.at(a - wide + 0.22, o + 1.05, y1),
         under,
         0.02,
@@ -998,8 +992,7 @@ fn metronome(lib: &mut Library, frame: &RoomFrame, p: Vec3) {
         period: 2.4,
     };
     let m = lib.mover(pivot, beat, 0.0, None);
-    let i = pole_inst(
-        lib,
+    let i = lib.pole_inst(
         pivot,
         pivot + Vec3::Y * 0.17,
         0.005,
@@ -1029,16 +1022,9 @@ fn music_stand(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, turn_by: f3
     for k in 0..3 {
         let leg = frame.turn() * Quat::from_rotation_y(k as f32 * TAU / 3.0 + turn_by);
         let tip = base + leg * Vec3::new(0.0, 0.0, 0.22);
-        pole(lib, base + Vec3::Y * 0.3, tip, 0.018, kind::METAL, iron);
+        lib.pole(base + Vec3::Y * 0.3, tip, 0.018, kind::METAL, iron);
     }
-    pole(
-        lib,
-        base + Vec3::Y * 0.28,
-        base + Vec3::Y * 1.1,
-        0.022,
-        kind::METAL,
-        iron,
-    );
+    lib.pole(base + Vec3::Y * 0.28, base + Vec3::Y * 1.1, 0.022, kind::METAL, iron);
     let tilt = q * Quat::from_rotation_x(-0.35);
     let desk = base + Vec3::Y * 1.18;
     lib.decor(Inst::new(desk, tilt, Vec3::new(0.5, 0.36, 0.02), kind::METAL, iron, 0));
@@ -1098,14 +1084,7 @@ fn chimes(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             period,
         };
         let m = lib.mover(hang, stir, k as f32 * 0.37, None);
-        let cord = pole_inst(
-            lib,
-            hang,
-            hang - Vec3::Y * 0.06,
-            0.006,
-            kind::PLAIN,
-            [0.1, 0.08, 0.06, 1.0],
-        );
+        let cord = lib.pole_inst(hang, hang - Vec3::Y * 0.06, 0.006, kind::PLAIN, [0.1, 0.08, 0.06, 1.0]);
         lib.moving(m, cord);
         lib.moving(
             m,
@@ -1188,8 +1167,7 @@ fn double_bass(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         let (lo, hi) = (at(x * 1.6, 0.58, 0.122), at(x, 1.58, 0.128));
         rod(lib, lo, hi, 0.003, 0.003, kind::METAL, [0.7, 0.68, 0.6, 1.0]);
     }
-    pole(
-        lib,
+    lib.pole(
         at(0.0, 0.0, 0.0),
         at(0.0, 0.25, 0.0),
         0.02,
@@ -1224,16 +1202,8 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
     }
     let (ca, co) = (0.0, 24.0);
     let gilt = rgba(GILT, 1.0);
-    pole(
-        lib,
-        frame.at(ca, co, 3.75),
-        frame.at(ca, co, h),
-        0.04,
-        kind::METAL,
-        gilt,
-    );
-    let drop = turned(
-        lib,
+    lib.pole(frame.at(ca, co, 3.75), frame.at(ca, co, h), 0.04, kind::METAL, gilt);
+    let drop = lib.turned(
         &[
             (0.0, 0.0),
             (0.2, 0.1),
@@ -1250,8 +1220,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
             .at(frame.at(ca, co, 3.6), Quat::IDENTITY, kind::METAL, gilt),
     );
     let hoop = lib.shape(Mesh::torus(0.04, 64, 8));
-    let cup = turned(
-        lib,
+    let cup = lib.turned(
         &[(0.0, 0.0), (0.15, 0.0), (0.2, 0.4), (0.5, 0.75), (0.5, 1.0), (0.0, 1.0)],
         12,
     );
@@ -1274,7 +1243,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
         }
         for k in 0..4 {
             let th = 0.13 + k as f32 * TAU / 4.0;
-            pole(lib, frame.at(ca, co, y + 0.25), ring(th), 0.022, kind::METAL, gilt);
+            lib.pole(frame.at(ca, co, y + 0.25), ring(th), 0.022, kind::METAL, gilt);
         }
     }
     let c = frame.at(ca, co, 4.1);

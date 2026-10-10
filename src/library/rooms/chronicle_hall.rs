@@ -881,7 +881,7 @@ fn armour(lib: &mut Library, f: &RoomFrame, s: f32, o: f32) {
             Vec3::new(0.0, 1.85 + 0.12 * libm::sinf(t * 2.4), 0.02 - 0.24 * t)
         })
         .collect();
-    let plume = lib.shape(Mesh::sweep(&plume, &[0.02, 0.04, 0.035, 0.01], &circle(10), true));
+    let plume = lib.shape(Mesh::sweep(&plume, &[0.02, 0.04, 0.035, 0.01], &circle(1.0, 10), true));
     lib.decor(plume.at(at.at, at.q, kind::CLOTH, [0.5, 0.06, 0.06, 1.0]));
     // A heater shield on the left arm, turned toward the room, its arms painted on
     // parchment in a steel rim.
@@ -937,9 +937,4 @@ fn armour(lib: &mut Library, f: &RoomFrame, s: f32, o: f32) {
         fist.sized(Vec3::splat(0.045))
             .inst(at.at + at.q * Vec3::new(0.0, 1.545, 0.2), at.q, kind::METAL, GOLD),
     );
-}
-
-/// `n` points round the unit circle in xy, anticlockwise.
-fn circle(n: usize) -> Vec<Vec2> {
-    (0..n).map(|k| Vec2::from_angle(k as f32 / n as f32 * TAU)).collect()
 }

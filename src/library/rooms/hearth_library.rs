@@ -72,54 +72,6 @@ pub(super) fn lay(lib: &mut Library, i: Inst) {
     }
 }
 
-/// `n` points round a circle of radius `r` in xy, anticlockwise from +x.
-pub(super) fn circle(r: f32, n: usize) -> Vec<Vec2> {
-    (0..n)
-        .map(|k| {
-            let a = k as f32 / n as f32 * TAU;
-            Vec2::new(libm::cosf(a), libm::sinf(a)) * r
-        })
-        .collect()
-}
-
-/// A solid turned from `profile`, (radius, height) pairs up its outside (`Mesh::lathe`).
-pub(super) fn turned(lib: &mut Library, profile: &[(f32, f32)], segs: usize) -> Shape {
-    lib.shape(Mesh::lathe(&profile_of(profile), segs))
-}
-
-/// An open shell turned from `profile` (a glass, a bowl), seen from both sides.
-pub(super) fn turned_open(lib: &mut Library, profile: &[(f32, f32)], segs: usize) -> Shape {
-    lib.shape(Mesh::lathe(&profile_of(profile), segs).two_sided())
-}
-
-pub(super) fn profile_of(profile: &[(f32, f32)]) -> Vec<Vec2> {
-    profile.iter().map(|&(r, h)| Vec2::new(r, h)).collect()
-}
-
-/// A round rod from `p` to `q`, `d` across.
-pub(super) fn pole_inst(lib: &mut Library, p: Vec3, q: Vec3, d: f32, kind: u32, col: [f32; 4]) -> Inst {
-    let segs = if d < 0.03 {
-        8
-    } else if d < 0.1 {
-        12
-    } else {
-        24
-    };
-    let v = q - p;
-    let len = v.length();
-    lib.shape(Mesh::cylinder(segs)).sized(Vec3::new(d, len, d)).inst(
-        (p + q) * 0.5,
-        Quat::from_rotation_arc(Vec3::Y, v / len),
-        kind,
-        col,
-    )
-}
-
-pub(super) fn pole(lib: &mut Library, p: Vec3, q: Vec3, d: f32, kind: u32, col: [f32; 4]) {
-    let i = pole_inst(lib, p, q, d, kind, col);
-    lib.decor(i);
-}
-
 /// A turned leg 1 high and 1 across at its widest (the block at its top), to be sized.
 pub(super) fn turned_leg(lib: &mut Library) -> Shape {
     let profile = [
@@ -138,7 +90,7 @@ pub(super) fn turned_leg(lib: &mut Library) -> Shape {
         (0.5, 1.0),
         (0.0, 1.0),
     ];
-    turned(lib, &profile, 12)
+    lib.turned(&profile, 12)
 }
 
 /// A bun foot 1 high and 1 across, to be sized.
@@ -155,7 +107,7 @@ fn bun_foot(lib: &mut Library) -> Shape {
         (0.4, 1.0),
         (0.0, 1.0),
     ];
-    turned(lib, &profile, 12)
+    lib.turned(&profile, 12)
 }
 
 /// A candle's flame standing on `p`, `w` across and `h` tall.
@@ -173,7 +125,7 @@ pub(super) fn flame(p: Vec3, w: f32, h: f32) -> Inst {
 /// A candle standing at `p`, `h` tall: its wax and its flame, for laying down (`lay`)
 /// or for a mover to carry.
 pub(super) fn candle_parts(lib: &mut Library, p: Vec3, h: f32) -> [Inst; 2] {
-    let wax = turned(lib, &[(0.0, 0.0), (0.5, 0.0), (0.5, 0.95), (0.4, 1.0), (0.0, 0.97)], 12);
+    let wax = lib.turned(&[(0.0, 0.0), (0.5, 0.0), (0.5, 0.95), (0.4, 1.0), (0.0, 0.97)], 12);
     [
         wax.sized(Vec3::new(0.045, h, 0.045))
             .at(p, Quat::IDENTITY, kind::PLAIN, rgba(WAX, 1.0)),
@@ -190,8 +142,7 @@ pub(super) fn candle(lib: &mut Library, p: Vec3, h: f32) {
 
 /// A candle in a hurricane glass on a brass foot, standing at `p`.
 pub(super) fn hurricane_lamp(lib: &mut Library, p: Vec3) {
-    let foot = turned(
-        lib,
+    let foot = lib.turned(
         &[
             (0.0, 0.0),
             (0.075, 0.0),
@@ -204,8 +155,7 @@ pub(super) fn hurricane_lamp(lib: &mut Library, p: Vec3) {
     );
     lib.decor(foot.at(p, Quat::IDENTITY, kind::METAL, rgba(BRASS, 1.0)));
     candle(lib, p + Vec3::Y * 0.04, 0.16);
-    let glass = turned_open(
-        lib,
+    let glass = lib.turned_open(
         &[
             (0.046, 0.0),
             (0.06, 0.05),
@@ -484,17 +434,15 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
     // A kettle on a crane over the fire.
     let iron = rgba(IRON, 1.0);
     let pivot = frame.at(-open + 0.08, fire_o, 0.0);
-    pole(lib, pivot, pivot + Vec3::Y * 1.1, 0.04, kind::METAL, iron);
-    pole(
-        lib,
+    lib.pole(pivot, pivot + Vec3::Y * 1.1, 0.04, kind::METAL, iron);
+    lib.pole(
         pivot + Vec3::Y * 1.05,
         frame.at(-0.15, fire_o, 1.05),
         0.035,
         kind::METAL,
         iron,
     );
-    pole(
-        lib,
+    lib.pole(
         frame.at(-0.2, fire_o, 1.07),
         frame.at(-0.2, fire_o, 0.9),
         0.015,
@@ -513,8 +461,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::WOOD,
         WALNUT,
     ));
-    let stick = turned(
-        lib,
+    let stick = lib.turned(
         &[
             (0.0, 0.0),
             (0.5, 0.0),
@@ -550,8 +497,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         }
     }
     mantel_clock(lib, frame, frame.at(0.0, face - 0.1, my), -frame.out());
-    let jar = turned_open(
-        lib,
+    let jar = lib.turned_open(
         &[
             (0.0, 0.0),
             (0.47, 0.0),
@@ -628,7 +574,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
 /// body, a lid with a knob, a spout, and a bail over it to hang it by.
 fn kettle(lib: &mut Library, p: Vec3, rot: Quat) {
     let mut m = Mesh::lathe(
-        &profile_of(&[
+        &[
             (0.0, 0.0),
             (0.09, 0.0),
             (0.12, 0.03),
@@ -640,7 +586,7 @@ fn kettle(lib: &mut Library, p: Vec3, rot: Quat) {
             (0.03, 0.205),
             (0.025, 0.225),
             (0.0, 0.23),
-        ]),
+        ],
         24,
     );
     let spout: Vec<Vec3> = (0..6)
@@ -880,8 +826,7 @@ fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 /// on saucers, a candle.
 fn tea_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let top = 0.5;
-    let board = turned(
-        lib,
+    let board = lib.turned(
         &[
             (0.0, 0.0),
             (0.29, 0.0),
@@ -905,8 +850,7 @@ fn tea_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::WOOD,
         rgba(DARK_WOOD, 1.0),
     ));
-    let base = turned(
-        lib,
+    let base = lib.turned(
         &[
             (0.0, 0.0),
             (0.2, 0.0),
@@ -954,8 +898,7 @@ fn tea_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         );
         lib.shape(m)
     };
-    let saucer = turned(
-        lib,
+    let saucer = lib.turned(
         &[
             (0.0, 0.0),
             (0.045, 0.0),
@@ -989,7 +932,7 @@ fn tea_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 /// body, a lid and knob, a spout and a handle.
 fn teapot(lib: &mut Library, p: Vec3, rot: Quat) {
     let mut m = Mesh::lathe(
-        &profile_of(&[
+        &[
             (0.0, 0.0),
             (0.05, 0.0),
             (0.055, 0.006),
@@ -1002,7 +945,7 @@ fn teapot(lib: &mut Library, p: Vec3, rot: Quat) {
             (0.02, 0.125),
             (0.012, 0.14),
             (0.0, 0.145),
-        ]),
+        ],
         24,
     );
     let spout: Vec<Vec3> = (0..=6)
@@ -1063,11 +1006,7 @@ fn lamp_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 /// a scarf by themselves, floating: one of the room's two bits of magic.
 fn knitting(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let basket = {
-        let mut m = Mesh::lathe(
-            &profile_of(&[(0.0, 0.0), (0.16, 0.0), (0.19, 0.06), (0.205, 0.2), (0.21, 0.26)]),
-            24,
-        )
-        .two_sided();
+        let mut m = Mesh::lathe(&[(0.0, 0.0), (0.16, 0.0), (0.19, 0.06), (0.205, 0.2), (0.21, 0.26)], 24).two_sided();
         m.add(
             &Mesh::torus(0.1, 24, 6),
             Vec3::new(0.0, 0.26, 0.0),
@@ -1110,8 +1049,7 @@ fn knitting(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             0,
         ),
     );
-    let needle = turned(
-        lib,
+    let needle = lib.turned(
         &[
             (0.0, 0.0),
             (0.12, 0.05),
@@ -1143,8 +1081,7 @@ fn knitting(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         );
     }
     // The yarn, from the scarf down to the basket.
-    pole(
-        lib,
+    lib.pole(
         hold - Vec3::Y * 0.5,
         frame.at(a - 0.08, o - 0.04, 0.3),
         0.006,
@@ -1167,8 +1104,7 @@ fn spinning_wheel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         [0.35, 0.2, 0.08],
     ));
     for (da, d_o) in [(0.0, -0.45), (-0.13, 0.4), (0.13, 0.4)] {
-        pole(
-            lib,
+        lib.pole(
             frame.at(a + da, o + d_o, 0.0),
             frame.at(a + da * 0.6, o + d_o * 0.8, 0.3),
             0.04,
@@ -1208,8 +1144,7 @@ fn spinning_wheel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     );
     // Its axle between two uprights.
     for s in [-1.0f32, 1.0] {
-        pole(
-            lib,
+        lib.pole(
             frame.at(a + s * 0.07, o_hub, 0.3),
             frame.at(a + s * 0.07, o_hub, y_hub + 0.04),
             0.04,
@@ -1217,8 +1152,7 @@ fn spinning_wheel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             wood,
         );
     }
-    pole(
-        lib,
+    lib.pole(
         frame.at(a - 0.09, o_hub, y_hub),
         frame.at(a + 0.09, o_hub, y_hub),
         0.02,
@@ -1226,15 +1160,14 @@ fn spinning_wheel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         rgba(IRON, 1.0),
     );
     // The distaff, flax wound on it.
-    pole(
-        lib,
+    lib.pole(
         frame.at(a, o + 0.35, 0.33),
         frame.at(a, o + 0.4, 0.95),
         0.035,
         kind::WOOD,
         wood,
     );
-    let flax = turned(lib, &[(0.0, 0.0), (0.3, 0.05), (0.5, 0.4), (0.35, 0.8), (0.0, 1.0)], 12);
+    let flax = lib.turned(&[(0.0, 0.0), (0.3, 0.05), (0.5, 0.4), (0.35, 0.8), (0.0, 1.0)], 12);
     lib.decor(flax.sized(Vec3::new(0.1, 0.2, 0.1)).at(
         frame.at(a, o + 0.39, 0.82),
         Quat::IDENTITY,
@@ -1246,8 +1179,7 @@ fn spinning_wheel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 /// A barrel of ale by the door, iron-hooped, a tap in it.
 fn barrel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let r = 0.33;
-    let body = turned(
-        lib,
+    let body = lib.turned(
         &[
             (0.0, 0.0),
             (0.29, 0.0),
@@ -1272,7 +1204,7 @@ fn barrel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         ));
     }
     let tap = (frame.at(a, o + 0.3, 0.25), frame.at(a, o + 0.43, 0.25));
-    pole(lib, tap.0, tap.1, 0.035, kind::METAL, rgba(BRASS, 1.0));
+    lib.pole(tap.0, tap.1, 0.035, kind::METAL, rgba(BRASS, 1.0));
     lib.decor(Inst::aabox(
         tap.1 - frame.out() * 0.03 + Vec3::Y * 0.035,
         Vec3::new(0.025, 0.05, 0.025),
@@ -1366,8 +1298,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
             let a = -5.2 + k as f32 * 1.7 + rng.gen_range(-0.3..0.3);
             let len = rng.gen_range(0.3..0.55);
             let top = h - 0.36;
-            pole(
-                lib,
+            lib.pole(
                 frame.at(a, o, top),
                 frame.at(a, o, top - 0.15),
                 0.01,

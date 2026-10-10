@@ -2,7 +2,6 @@
 //! piers. Each draws itself and says what of it is in the way, so a layout only
 //! decides where things go.
 
-use super::rooms::rgba;
 use super::*;
 use std::ops::Range;
 
@@ -41,6 +40,35 @@ const LADDER_FOOT: f32 = 0.5;
 const LADDER_WOOD: [f32; 3] = [0.22, 0.12, 0.055];
 
 impl Library {
+    /// A turned piece: (radius, height) points up its outside (`Mesh::lathe`).
+    pub(super) fn turned(&mut self, profile: &[(f32, f32)], segs: usize) -> Shape {
+        self.shape(Mesh::lathe(profile, segs))
+    }
+
+    /// An open shell turned from `profile` (a shade, a bowl), seen from both sides. (Not
+    /// for clear glass, which is drawn from both sides as it is.)
+    pub(super) fn turned_open(&mut self, profile: &[(f32, f32)], segs: usize) -> Shape {
+        self.shape(Mesh::lathe(profile, segs).two_sided())
+    }
+
+    /// A round rod from `a` to `b`, `d` across (rounder the thicker it is).
+    pub(super) fn pole_inst(&mut self, a: Vec3, b: Vec3, d: f32, kind: u32, color: [f32; 4]) -> Inst {
+        let segs = if d < 0.03 {
+            8
+        } else if d < 0.1 {
+            12
+        } else {
+            24
+        };
+        self.shape(Mesh::cylinder(segs)).between(a, b, d, kind, color)
+    }
+
+    /// A round rod from `a` to `b`, `d` across, drawn only.
+    pub(super) fn pole(&mut self, a: Vec3, b: Vec3, d: f32, kind: u32, color: [f32; 4]) {
+        let i = self.pole_inst(a, b, d, kind, color);
+        self.decor(i);
+    }
+
     /// A brass wall sconce with a candle flame, lighting the room in front of it: a
     /// backplate on the wall 0.15 behind `p`, and a scrolled arm out and up to a drip
     /// pan and the cup a candle stands in.
@@ -62,7 +90,7 @@ impl Library {
             Quat::IDENTITY,
             Vec3::ONE,
         );
-        let boss = turned(
+        let boss = Mesh::lathe(
             &[(0.0, 0.0), (0.03, 0.0), (0.024, 0.012), (0.012, 0.02), (0.0, 0.022)],
             10,
         );
@@ -83,7 +111,7 @@ impl Library {
             10,
         );
         brass.add(
-            &Mesh::sweep(&arm, &[0.02, 0.014], &round_section(6), false),
+            &Mesh::sweep(&arm, &[0.02, 0.014], &circle(0.5, 6), false),
             Vec3::ZERO,
             Quat::IDENTITY,
             Vec3::ONE,
@@ -105,7 +133,7 @@ impl Library {
             (0.023, 0.072),
             (0.0, 0.072),
         ]);
-        brass.add(&turned(&stem, 10), Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+        brass.add(&Mesh::lathe(&stem, 10), Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
         let rot = facing(n);
         let brass = self.shape(brass);
         self.decor(brass.at(p, rot, kind::METAL, rgba(BRASS, 1.0)));
@@ -169,7 +197,7 @@ impl Library {
         let chair = [0.2, 0.09, 0.04];
         // The chairs' front legs, turned: a foot, a ring where the side stretchers meet
         // them, a taper, and a square block under the seat.
-        let mut front = turned(
+        let mut front = Mesh::lathe(
             &[
                 (0.0, 0.0),
                 (0.017, 0.0),
@@ -257,10 +285,10 @@ impl Library {
             (0.023, 0.166),
             (0.0, 0.166),
         ]);
-        let stick = self.shape(turned(&stick, 16));
+        let stick = self.shape(Mesh::lathe(&stick, 16));
         self.decor(stick.at(candle, Quat::IDENTITY, kind::METAL, rgba(BRASS, 1.0)));
         self.candle(candle + Vec3::Y * 0.14, 0.13, 0.034);
-        let chimney = turned(
+        let chimney = Mesh::lathe(
             &[
                 (0.036, 0.0),
                 (0.042, 0.025),
@@ -287,7 +315,7 @@ impl Library {
     /// its top cupped round the wick, and its flame over it.
     fn candle(&mut self, foot: Vec3, h: f32, d: f32) {
         let r = d * 0.5;
-        let wax = turned(
+        let wax = Mesh::lathe(
             &[(0.0, 0.0), (r, 0.0), (r, h - 0.008), (r * 0.8, h), (0.0, h - 0.004)],
             12,
         );
@@ -310,7 +338,7 @@ impl Library {
     pub(super) fn chandelier(&mut self, ch: Vec3, top_y: f32) {
         let brass = rgba(BRASS, 1.0);
         let iron = rgba([0.1, 0.08, 0.05], 1.0);
-        let cup = turned(
+        let cup = Mesh::lathe(
             &[
                 (0.0, 0.0),
                 (0.012, 0.0),
@@ -327,7 +355,7 @@ impl Library {
         );
         let cup = self.shape(cup);
         // A cut drop, widest low down: eight facets round.
-        let drop = turned(
+        let drop = Mesh::lathe(
             &[
                 (0.0, 0.0),
                 (0.014, 0.006),
@@ -356,7 +384,7 @@ impl Library {
                 (r - w, t),
                 (r - w, -t),
             ];
-            let hoop = self.shape(turned(&section, if r > 1.0 { 48 } else { 32 }));
+            let hoop = self.shape(Mesh::lathe(&section, if r > 1.0 { 48 } else { 32 }));
             self.decor(hoop.at(ch + Vec3::Y * y, Quat::IDENTITY, kind::METAL, brass));
             // Arms from the stem, dipping and curling up under every other candle.
             let path = bezier(
@@ -368,7 +396,7 @@ impl Library {
                 ],
                 14,
             );
-            let arm = Mesh::sweep(&path, &[0.026, 0.02], &round_section(8), false);
+            let arm = Mesh::sweep(&path, &[0.026, 0.02], &circle(0.5, 8), false);
             let mut arms = Mesh::default();
             for k in (0..n).step_by(2) {
                 let a = (k as f32 + 0.5) / n as f32 * TAU;
@@ -428,7 +456,7 @@ impl Library {
             (0.025, 1.5),
             (0.0, 1.5),
         ]);
-        let stem = self.shape(turned(&stem, 24));
+        let stem = self.shape(Mesh::lathe(&stem, 24));
         self.decor(stem.at(ch, Quat::IDENTITY, kind::METAL, brass));
         // The big drop under the stem.
         let hook = ch - Vec3::Y * 0.47;
@@ -455,10 +483,10 @@ impl Library {
             let a = k as f32 / 3.0 * TAU;
             let bottom = Vec3::new(libm::cosf(a), 0.0, libm::sinf(a)) * 1.27;
             let top = Vec3::new(libm::cosf(a), 0.0, libm::sinf(a)) * 0.1 + Vec3::Y * 1.4;
-            chains.add(&rod(bottom, top, 0.016, 6), Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+            chains.add(&Mesh::rod(bottom, top, 0.016, 6), Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
         }
         chains.add(
-            &rod(Vec3::Y * 1.48, Vec3::Y * (top_y - ch.y), 0.02, 6),
+            &Mesh::rod(Vec3::Y * 1.48, Vec3::Y * (top_y - ch.y), 0.02, 6),
             Vec3::ZERO,
             Quat::IDENTITY,
             Vec3::ONE,
@@ -549,13 +577,13 @@ impl Library {
         let rot = facing(n);
         // Every face has one, so few triangles: its rod eight round, each bracket (a
         // rose on the stile and a stem out to the rod) six.
-        let mut rail = rod(
+        let mut rail = Mesh::rod(
             Vec3::new(-UNIT_PITCH * 0.5, RAIL_Y, RAIL_OUT),
             Vec3::new(UNIT_PITCH * 0.5, RAIL_Y, RAIL_OUT),
             0.022,
             8,
         );
-        let bracket = turned(
+        let bracket = Mesh::lathe(
             &[
                 (0.0, 0.0),
                 (0.017, 0.0),
@@ -808,7 +836,7 @@ impl Library {
             (r * (0.42 + 0.46 * swell), top * (0.3 + 0.56 * t))
         }));
         leg.extend([(r * 0.75, top - 0.03), (r * 0.75, top - 0.012), (r * 0.6, top)]);
-        let mut m = turned(&leg, 16);
+        let mut m = Mesh::lathe(&leg, 16);
         m.add(
             &Mesh::cube(),
             Vec3::Y * (top + 0.065),
@@ -849,7 +877,7 @@ impl Library {
             (0.015, 0.74),
             (0.018, 0.89),
         ];
-        self.shape(turned(&profile, 8))
+        self.shape(Mesh::lathe(&profile, 8))
     }
 
     /// A newel post at `foot`, `h` tall to its cap, unless one already stands there: a
@@ -878,14 +906,14 @@ impl Library {
             (0.055, block - 0.02),
             (0.045, block),
         ];
-        let shaft = self.shape(turned(&shaft, 14));
+        let shaft = self.shape(Mesh::lathe(&shaft, 14));
         self.decor(shaft.at(foot, Quat::IDENTITY, kind::WOOD, rgba(WALNUT, 1.0)));
         self.post(foot + Vec3::Y * block, h - block, 0.15, WALNUT);
         self.post(foot + Vec3::Y * (h - 0.09), 0.05, 0.18, CASE_TRIM);
         self.post(foot + Vec3::Y * h, 0.06, 0.21, CASE_TRIM);
         let mut finial = vec![(0.0, 0.0), (0.06, 0.0), (0.06, 0.012), (0.034, 0.03), (0.024, 0.045)];
         finial.extend(ball(0.105, 0.055, (0.024, 0.0), 10));
-        let finial = self.shape(turned(&finial, 14));
+        let finial = self.shape(Mesh::lathe(&finial, 14));
         self.decor(finial.at(
             foot + Vec3::Y * (h + 0.06),
             Quat::IDENTITY,
@@ -1104,7 +1132,7 @@ fn ladder() -> (Mesh, Mesh) {
             Vec3::new(0.035, d.length(), 0.06),
         );
         brass.add(
-            &rod(foot + x - Vec3::X * 0.02, foot + x + Vec3::X * 0.02, 0.07, 12),
+            &Mesh::rod(foot + x - Vec3::X * 0.02, foot + x + Vec3::X * 0.02, 0.07, 12),
             Vec3::ZERO,
             Quat::IDENTITY,
             Vec3::ONE,
@@ -1118,7 +1146,7 @@ fn ladder() -> (Mesh, Mesh) {
             x + Vec3::new(0.0, RAIL_Y + r * libm::sinf(a), RAIL_OUT + r * libm::cosf(a))
         }));
         brass.add(
-            &Mesh::sweep(&hook, &[0.012], &round_section(8), true),
+            &Mesh::sweep(&hook, &[0.012], &circle(0.5, 8), true),
             Vec3::ZERO,
             Quat::IDENTITY,
             Vec3::ONE,
@@ -1128,7 +1156,7 @@ fn ladder() -> (Mesh, Mesh) {
     for k in 1..=rungs {
         let p = foot + d * (k as f32 / (rungs + 1) as f32);
         wood.add(
-            &rod(p - Vec3::X * half, p + Vec3::X * half, 0.03, 8),
+            &Mesh::rod(p - Vec3::X * half, p + Vec3::X * half, 0.03, 8),
             Vec3::ZERO,
             Quat::IDENTITY,
             Vec3::ONE,
@@ -1193,12 +1221,6 @@ fn facing(n: Vec3) -> Quat {
     Quat::from_rotation_y(libm::atan2f(n.x, n.z))
 }
 
-/// A piece turned on a lathe from (radius, height) points up its outside (`Mesh::lathe`).
-fn turned(profile: &[(f32, f32)], segs: usize) -> Mesh {
-    let p: Vec<Vec2> = profile.iter().map(|&(r, y)| Vec2::new(r, y)).collect();
-    Mesh::lathe(&p, segs)
-}
-
 /// A turned ball's outline: radius `r` about height `y` on the axis, from where it
 /// meets a neck of radius `below` under it round to one of `above` over it, in `n`
 /// steps (a neck of 0 is the ball's pole).
@@ -1210,15 +1232,6 @@ fn ball(y: f32, r: f32, (below, above): (f32, f32), n: usize) -> impl Iterator<I
     })
 }
 
-/// A cylinder `d` across from `a` to `b`, `segs` round.
-fn rod(a: Vec3, b: Vec3, d: f32, segs: usize) -> Mesh {
-    let mut m = Mesh::default();
-    let v = b - a;
-    let rot = Quat::from_rotation_arc(Vec3::Y, v.normalize());
-    m.add(&Mesh::cylinder(segs), (a + b) * 0.5, rot, Vec3::new(d, v.length(), d));
-    m
-}
-
 /// Points along a cubic Bézier curve from `p[0]` to `p[3]`, `n` steps.
 fn bezier(p: [Vec3; 4], n: usize) -> Vec<Vec3> {
     (0..=n)
@@ -1226,16 +1239,6 @@ fn bezier(p: [Vec3; 4], n: usize) -> Vec<Vec3> {
             let t = k as f32 / n as f32;
             let u = 1.0 - t;
             p[0] * (u * u * u) + p[1] * (3.0 * u * u * t) + p[2] * (3.0 * u * t * t) + p[3] * (t * t * t)
-        })
-        .collect()
-}
-
-/// A round section `segs` round, 1 across.
-fn round_section(segs: usize) -> Vec<Vec2> {
-    (0..segs)
-        .map(|k| {
-            let a = k as f32 / segs as f32 * TAU;
-            Vec2::new(libm::cosf(a), libm::sinf(a)) * 0.5
         })
         .collect()
 }

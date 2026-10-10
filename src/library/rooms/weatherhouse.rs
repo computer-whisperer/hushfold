@@ -7,7 +7,7 @@
 //! cloud glows, lit now and then from inside, and a snowflake that will not melt
 //! turns under a bell of glass.
 
-use super::hearth_library::{circle, hurricane_lamp, pole, pole_inst, turned, turned_leg, turned_open};
+use super::hearth_library::{hurricane_lamp, turned_leg};
 use super::*;
 use std::f32::consts::{FRAC_PI_2, PI};
 
@@ -336,8 +336,7 @@ fn barometer(lib: &mut Library, c: Vec3, n: Vec3, seed: f32) {
         [0.8, 0.1, 0.06, 0.6],
         0,
     ));
-    let finial = turned(
-        lib,
+    let finial = lib.turned(
         &[
             (0.0, 0.0),
             (0.5, 0.0),
@@ -631,14 +630,7 @@ fn weathervane(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     ));
     guard(lib, frame, (a - 0.32, a + 0.32), (o - 0.32, o + 0.32), 0.3);
     let top = 2.5;
-    pole(
-        lib,
-        frame.at(a, o, 0.3),
-        frame.at(a, o, top + 0.25),
-        0.05,
-        kind::METAL,
-        IRON,
-    );
+    lib.pole(frame.at(a, o, 0.3), frame.at(a, o, top + 0.25), 0.05, kind::METAL, IRON);
     let ball = lib.shape(Mesh::sphere(16));
     lib.decor(
         ball.sized(Vec3::splat(0.08))
@@ -650,7 +642,7 @@ fn weathervane(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             frame.at(a - da * 0.45, o - d_o * 0.45, arms),
             frame.at(a + da * 0.45, o + d_o * 0.45, arms),
         );
-        pole(lib, p, q, 0.025, kind::METAL, IRON);
+        lib.pole(p, q, 0.025, kind::METAL, IRON);
         for end in [p, q] {
             lib.decor(
                 ball.sized(Vec3::splat(0.07))
@@ -682,16 +674,9 @@ fn weathervane(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     // The arrow, pointing off to the window's side of the room at rest.
     let dir = (frame.out() * 0.8 - frame.across() * 0.6).normalize();
     let flat = Quat::from_mat3(&Mat3::from_cols(dir, Vec3::Y, dir.cross(Vec3::Y)));
-    let collar = pole_inst(
-        lib,
-        pivot - Vec3::Y * 0.05,
-        pivot + Vec3::Y * 0.05,
-        0.06,
-        kind::METAL,
-        gilt,
-    );
+    let collar = lib.pole_inst(pivot - Vec3::Y * 0.05, pivot + Vec3::Y * 0.05, 0.06, kind::METAL, gilt);
     lib.moving(m, collar);
-    let shaft = pole_inst(lib, pivot - dir * 0.5, pivot + dir * 0.42, 0.022, kind::METAL, gilt);
+    let shaft = lib.pole_inst(pivot - dir * 0.5, pivot + dir * 0.42, 0.022, kind::METAL, gilt);
     lib.moving(m, shaft);
     let head = lib.shape(Mesh::prism(
         &[Vec2::new(0.0, -0.06), Vec2::new(0.15, 0.0), Vec2::new(0.0, 0.06)],
@@ -741,8 +726,7 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     guard(lib, frame, (a - hw, a + hw), (o - hl, o + hl), top);
     let on = |da: f32, d_o: f32, dy: f32| frame.at(a + da, o + d_o, top + dy);
     let gilt = rgba(BRASS, 1.0);
-    let foot = turned(
-        lib,
+    let foot = lib.turned(
         &[(0.0, 0.0), (0.5, 0.0), (0.5, 0.3), (0.3, 0.6), (0.25, 1.0), (0.0, 1.0)],
         24,
     );
@@ -753,7 +737,7 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             .at(on(0.0, -0.75, 0.0), Quat::IDENTITY, kind::METAL, gilt),
     );
     let hub = on(0.0, -0.75, 0.55);
-    pole(lib, on(0.0, -0.75, 0.04), hub, 0.025, kind::METAL, gilt);
+    lib.pole(on(0.0, -0.75, 0.04), hub, 0.025, kind::METAL, gilt);
     let spin = lib.mover(
         hub,
         Motion::Spin {
@@ -769,16 +753,12 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         cap.sized(Vec3::new(0.05, 0.03, 0.05))
             .inst(hub + Vec3::Y * 0.01, Quat::IDENTITY, kind::METAL, gilt),
     );
-    let cup = turned_open(
-        lib,
-        &[(0.0, 0.0), (0.25, 0.03), (0.4, 0.12), (0.48, 0.28), (0.5, 0.45)],
-        16,
-    );
+    let cup = lib.turned_open(&[(0.0, 0.0), (0.25, 0.03), (0.4, 0.12), (0.48, 0.28), (0.5, 0.45)], 16);
     for k in 0..4 {
         let th = 0.3 + k as f32 * TAU / 4.0;
         let radial = frame.across() * libm::cosf(th) + frame.out() * libm::sinf(th);
         let tip = hub + radial * 0.22;
-        let arm = pole_inst(lib, hub, tip, 0.012, kind::METAL, gilt);
+        let arm = lib.pole_inst(hub, tip, 0.012, kind::METAL, gilt);
         lib.moving(spin, arm);
         let tangent = Vec3::Y.cross(radial);
         lib.moving(
@@ -793,7 +773,7 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     }
     // The rain gauge: a brass funnel on a glass tube, a little water in it.
     let tube = lib.shape(Mesh::cylinder(16));
-    let glass_tube = turned_open(lib, &[(0.5, 0.0), (0.5, 1.0)], 16);
+    let glass_tube = lib.turned_open(&[(0.5, 0.0), (0.5, 1.0)], 16);
     lib.translucent(glass_tube.sized(Vec3::new(0.09, 0.32, 0.09)).at(
         on(0.0, -0.05, 0.0),
         Quat::IDENTITY,
@@ -806,10 +786,10 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::CRYSTAL,
         [0.35, 0.5, 0.75, 0.05],
     ));
-    let funnel = turned_open(lib, &[(0.045, 0.0), (0.045, 0.04), (0.085, 0.09), (0.085, 0.11)], 24);
+    let funnel = lib.turned_open(&[(0.045, 0.0), (0.045, 0.04), (0.085, 0.09), (0.085, 0.11)], 24);
     lib.decor(funnel.at(on(0.0, -0.05, 0.31), Quat::IDENTITY, kind::METAL, gilt));
     // The storm glass: a tall stoppered tube, feathery crystals settled in it.
-    let storm = turned_open(lib, &[(0.5, 0.0), (0.5, 0.85), (0.4, 0.95), (0.25, 1.0)], 16);
+    let storm = lib.turned_open(&[(0.5, 0.0), (0.5, 0.85), (0.4, 0.95), (0.25, 1.0)], 16);
     lib.translucent(storm.sized(Vec3::new(0.06, 0.4, 0.06)).at(
         on(0.25, 0.3, 0.03),
         Quat::IDENTITY,
@@ -867,8 +847,7 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         foot.sized(Vec3::new(0.22, 0.03, 0.22))
             .at(on(-0.15, 0.55, 0.0), Quat::IDENTITY, kind::METAL, gilt),
     );
-    let bell = turned_open(
-        lib,
+    let bell = lib.turned_open(
         &[
             (0.5, 0.0),
             (0.5, 0.7),
@@ -913,7 +892,7 @@ fn wind_chime(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, k: f32) {
     };
     let whole = lib.mover(top, sway, k * 2.0, None);
     let cord = [0.2, 0.18, 0.15, 1.0];
-    let string = pole_inst(lib, frame.at(a, o, disc), top, 0.008, kind::PLAIN, cord);
+    let string = lib.pole_inst(frame.at(a, o, disc), top, 0.008, kind::PLAIN, cord);
     lib.moving(whole, string);
     let plate = lib.shape(Mesh::cylinder(24));
     lib.moving(
@@ -954,7 +933,7 @@ fn wind_chime(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, k: f32) {
     };
     let below = frame.at(a, o, disc - 0.015);
     let m = lib.mover(below, swing, k, Some(whole));
-    let thread = pole_inst(lib, below, below - Vec3::Y * 0.7, 0.005, kind::PLAIN, cord);
+    let thread = lib.pole_inst(below, below - Vec3::Y * 0.7, 0.005, kind::PLAIN, cord);
     lib.moving(m, thread);
     lib.moving(
         m,
@@ -980,8 +959,7 @@ fn wind_chime(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, k: f32) {
 
 /// A brass umbrella stand by the door, two umbrellas furled in it.
 fn umbrella_stand(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
-    let stand = turned_open(
-        lib,
+    let stand = lib.turned_open(
         &[
             (0.0, 0.0),
             (0.16, 0.0),
@@ -996,8 +974,7 @@ fn umbrella_stand(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     lib.decor(stand.at(frame.at(a, o, 0.0), Quat::IDENTITY, kind::METAL, rgba(BRASS, 1.0)));
     guard(lib, frame, (a - 0.17, a + 0.17), (o - 0.17, o + 0.17), 0.62);
     // A furled umbrella: its ferrule down, the cloth wound round its stick, a crook.
-    let furled = turned(
-        lib,
+    let furled = lib.turned(
         &[
             (0.0, 0.0),
             (0.08, 0.04),

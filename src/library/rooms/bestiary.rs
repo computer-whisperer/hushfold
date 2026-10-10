@@ -28,25 +28,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     egg(lib, frame);
 }
 
-/// `n` points round a circle `r` across in xy, anticlockwise.
-fn circle(n: usize, r: f32) -> Vec<Vec2> {
-    (0..n)
-        .map(|k| {
-            let t = k as f32 / n as f32 * TAU;
-            Vec2::new(libm::cosf(t), libm::sinf(t)) * r
-        })
-        .collect()
-}
-
-/// A round bar (`stick`, a cylinder) from `p` to `q`, `w` across.
-fn bar(stick: Shape, p: Vec3, q: Vec3, w: f32, kind: u32, rgba: [f32; 4]) -> Inst {
-    let v = q - p;
-    let turn = Quat::from_rotation_arc(Vec3::Y, v.normalize());
-    stick
-        .sized(Vec3::new(w, v.length(), w))
-        .inst((p + q) * 0.5, turn, kind, rgba)
-}
-
 /// A smooth path through `pts` (Catmull-Rom), `n` steps between each two.
 fn smooth(pts: &[Vec3], n: usize) -> Vec<Vec3> {
     let at = |k: isize| pts[k.clamp(0, pts.len() as isize - 1) as usize];
@@ -87,7 +68,7 @@ impl Bones {
     /// A bone along `path` (world), `radii` (a few, spread along it) round.
     fn limb(&mut self, path: &[Vec3], radii: &[f32]) {
         let path: Vec<Vec3> = path.iter().map(|p| *p - self.origin).collect();
-        let bone = Mesh::sweep(&path, radii, &circle(10, 1.0), true);
+        let bone = Mesh::sweep(&path, radii, &circle(1.0, 10), true);
         self.mesh.add(&bone, Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
     }
 
@@ -178,7 +159,7 @@ fn cage(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) -> Vec<(Vec3, Vec3
     // The mouth: iron posts at its corners and a bar over it.
     let edge = side_back + 0.03;
     let stick = lib.shape(Mesh::cylinder(10));
-    let iron = |lib: &mut Library, p: Vec3, q: Vec3, w: f32| lib.decor(bar(stick, p, q, w, kind::METAL, IRON));
+    let iron = |lib: &mut Library, p: Vec3, q: Vec3, w: f32| lib.decor(stick.between(p, q, w, kind::METAL, IRON));
     for e in [-1.0f32, 1.0] {
         let p = frame.at(s * (MOUTH - 0.05), o + e * edge, 0.0);
         iron(lib, p, p + Vec3::Y * 3.4, 0.09);
@@ -190,7 +171,7 @@ fn cage(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) -> Vec<(Vec3, Vec3
     let rib: Vec<Vec3> = (0..=24)
         .map(|j| arch(MOUTH, j as f32 / 24.0 * PI) - arch(MOUTH, 0.0))
         .collect();
-    let rib = lib.shape(Mesh::sweep(&rib, &[1.0], &circle(8, 0.0175), true));
+    let rib = lib.shape(Mesh::sweep(&rib, &[1.0], &circle(0.0175, 8), true));
     for k in 0..5 {
         let x = MOUTH + 0.1 + k as f32 * (back + 0.02 - MOUTH - 0.1) / 4.0;
         lib.decor(rib.at(arch(x, 0.0), Quat::IDENTITY, kind::METAL, IRON));
@@ -436,7 +417,7 @@ fn specimens(lib: &mut Library, frame: &RoomFrame, s: f32) {
             Vec3::new(libm::cosf(th) * r, t * 0.8, libm::sinf(th) * r)
         })
         .collect();
-    let snake = lib.shape(Mesh::sweep(&coil, &[0.06, 0.09, 0.02], &circle(8, 1.0), true));
+    let snake = lib.shape(Mesh::sweep(&coil, &[0.06, 0.09, 0.02], &circle(1.0, 8), true));
     let curl: Vec<Vec3> = (0..=24)
         .map(|k| {
             let t = k as f32 / 24.0;
@@ -444,7 +425,7 @@ fn specimens(lib: &mut Library, frame: &RoomFrame, s: f32) {
             Vec3::new(libm::cosf(th) * r, libm::sinf(th) * r, 0.0)
         })
         .collect();
-    let curled = lib.shape(Mesh::sweep(&curl, &[0.16, 0.1, 0.02], &circle(8, 1.0), true));
+    let curled = lib.shape(Mesh::sweep(&curl, &[0.16, 0.1, 0.02], &circle(1.0, 8), true));
     let mut x = 8.75;
     let mut k = 0;
     while x < 10.3 {
@@ -711,7 +692,7 @@ fn egg(lib: &mut Library, frame: &RoomFrame) {
         let twig = Mesh::sweep(
             &[p - half, p + out * 0.03, p + half],
             &[0.014, 0.009],
-            &circle(8, 1.0),
+            &circle(1.0, 8),
             true,
         );
         nest.add(&twig, Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);

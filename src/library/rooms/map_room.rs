@@ -729,11 +729,11 @@ fn patch(m: &mut Mesh, r: f32, rise: f32, centre: Vec3, reach: impl Fn(f32) -> f
     }
     for i in 0..spokes {
         let i1 = (i + 1) % spokes;
-        facet(m, [hub, rows[0][i], rows[0][i1]]);
+        m.tri(hub, rows[0][i], rows[0][i1]);
         for j in 1..rings {
             let (a, b) = (&rows[j - 1], &rows[j]);
-            facet(m, [a[i], b[i], b[i1]]);
-            facet(m, [a[i], b[i1], a[i1]]);
+            m.tri(a[i], b[i], b[i1]);
+            m.tri(a[i], b[i1], a[i1]);
         }
     }
     // The cliff: from the coast down under the sea's surface, facing outward.
@@ -747,28 +747,9 @@ fn patch(m: &mut Mesh, r: f32, rise: f32, centre: Vec3, reach: impl Fn(f32) -> f
         .collect();
     for i in 0..spokes {
         let ((a, b), (c, d)) = (coast[i], coast[(i + 1) % spokes]);
-        facet(m, [a, b, d]);
-        facet(m, [a, d, c]);
+        m.tri(a, b, d);
+        m.tri(a, d, c);
     }
-}
-
-/// A triangle of `m`'s, wound to face the way its corners' normals do.
-fn facet(m: &mut Mesh, [a, b, c]: [u32; 3]) {
-    let p = |i: u32| Vec3::from(m.verts[i as usize].pos);
-    let n = |i: u32| Vec3::from(m.verts[i as usize].normal);
-    let face = (p(b) - p(a)).cross(p(c) - p(a));
-    if face.dot(n(a) + n(b) + n(c)) >= 0.0 {
-        m.idx.extend_from_slice(&[a, b, c]);
-    } else {
-        m.idx.extend_from_slice(&[a, c, b]);
-    }
-}
-
-/// `n` points round a circle of radius `r` in xy, anticlockwise.
-fn circle(r: f32, n: usize) -> Vec<Vec2> {
-    (0..n)
-        .map(|k| Vec2::from_angle(k as f32 / n as f32 * TAU) * r)
-        .collect()
 }
 
 /// The long map table, with a chart spread on it, weights, dividers, rolled charts

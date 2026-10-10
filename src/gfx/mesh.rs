@@ -61,6 +61,14 @@ impl Shape {
         self.inst(origin + rot * (self.middle * self.size / self.made), rot, kind, color)
     }
 
+    /// It (made along y, as a cylinder is) stretched from `a` to `b`, `d` across.
+    pub fn between(self, a: Vec3, b: Vec3, d: f32, kind: u32, color: [f32; 4]) -> Inst {
+        let v = b - a;
+        let turn = Quat::from_rotation_arc(Vec3::Y, v.normalize());
+        self.sized(Vec3::new(d, v.length(), d))
+            .inst((a + b) * 0.5, turn, kind, color)
+    }
+
     /// It `k` times the size.
     pub fn scaled(self, k: f32) -> Shape {
         self.sized(self.size * k)
@@ -107,6 +115,16 @@ fn edges(pts: &[Vec2], closed: bool) -> Vec<Edge> {
         .collect()
 }
 
+/// `n` points round a circle of radius `r` in xy, anticlockwise from +x.
+pub fn circle(r: f32, n: usize) -> Vec<Vec2> {
+    (0..n)
+        .map(|k| {
+            let a = k as f32 / n as f32 * TAU;
+            Vec2::new(libm::cosf(a), libm::sinf(a)) * r
+        })
+        .collect()
+}
+
 /// Twice the signed area of an outline (positive anticlockwise).
 fn area2(pts: &[Vec2]) -> f32 {
     (0..pts.len()).map(|k| pts[k].perp_dot(pts[(k + 1) % pts.len()])).sum()
@@ -139,7 +157,8 @@ fn triangulate(pts: &[Vec2]) -> Vec<[usize; 3]> {
 }
 
 impl Mesh {
-    fn vert(&mut self, p: Vec3, n: Vec3) -> u32 {
+    /// A vertex, and its index.
+    pub fn vert(&mut self, p: Vec3, n: Vec3) -> u32 {
         self.verts.push(Vertex {
             pos: p.into(),
             normal: n.into(),
@@ -148,7 +167,7 @@ impl Mesh {
     }
 
     /// A triangle, wound to face the way its corners' normals do; none if it has no area.
-    fn tri(&mut self, a: u32, b: u32, c: u32) {
+    pub fn tri(&mut self, a: u32, b: u32, c: u32) {
         let p = |i: u32| Vec3::from(self.verts[i as usize].pos);
         let n = |i: u32| Vec3::from(self.verts[i as usize].normal);
         let face = (p(b) - p(a)).cross(p(c) - p(a));
@@ -188,10 +207,10 @@ impl Mesh {
     /// A solid turned about y from `profile`, (radius, height) points in order up its
     /// outside: from the axis at the bottom, out and up, back to the axis at the top. A
     /// profile that ends where it began, run anticlockwise, turns into a ring of that
-    /// section. `segs` round.
-    pub fn lathe(profile: &[Vec2], segs: usize) -> Mesh {
-        let closed = profile.len() > 2 && profile[0].distance(profile[profile.len() - 1]) < 1e-6;
-        let mut pts = profile.to_vec();
+    /// section. `segs` round. Points are `Vec2`s or `(radius, height)` pairs.
+    pub fn lathe<P: Into<Vec2> + Copy>(profile: &[P], segs: usize) -> Mesh {
+        let mut pts: Vec<Vec2> = profile.iter().map(|&p| p.into()).collect();
+        let closed = pts.len() > 2 && pts[0].distance(pts[pts.len() - 1]) < 1e-6;
         if closed {
             pts.pop();
             if area2(&pts) < 0.0 {
@@ -428,6 +447,15 @@ impl Mesh {
                 }
             }
         }
+        m
+    }
+
+    /// A cylinder `d` across from `a` to `b`, `segs` round (for merging).
+    pub fn rod(a: Vec3, b: Vec3, d: f32, segs: usize) -> Mesh {
+        let mut m = Mesh::default();
+        let v = b - a;
+        let rot = Quat::from_rotation_arc(Vec3::Y, v.normalize());
+        m.add(&Mesh::cylinder(segs), (a + b) * 0.5, rot, Vec3::new(d, v.length(), d));
         m
     }
 

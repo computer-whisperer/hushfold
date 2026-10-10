@@ -630,10 +630,6 @@ fn in_wall(side: Side, at: (f32, f32), o: Span, size: (f32, f32), angle: f32, lo
     Inst::new(c, rot, Vec3::new(size.0, size.1, (o.1 - o.0).abs()), look.0, look.1, 0)
 }
 
-fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
-    [rgb[0], rgb[1], rgb[2], w]
-}
-
 /// The turn laying a piece made in xy (x across, y up) flat on the wall on `side`, its
 /// z out from the wall's face toward the middle of the atrium.
 fn wall_rot(side: Side) -> Quat {
@@ -654,16 +650,6 @@ fn arc(r: f32, (a0, a1): Span, n: usize) -> impl Iterator<Item = Vec2> {
     })
 }
 
-/// A round of `n` points `r` from the origin in xy.
-fn round(r: f32, n: usize) -> Vec<Vec2> {
-    arc(r, (0.0, TAU), n).take(n).collect()
-}
-
-/// A lathe's profile, (radius, height) up its outside.
-fn profile(points: &[(f32, f32)]) -> Vec<Vec2> {
-    points.iter().map(|&p| Vec2::from(p)).collect()
-}
-
 /// A small flame, a teardrop on its foot (the origin), 1 tall.
 fn flame() -> Mesh {
     let p = [
@@ -674,7 +660,7 @@ fn flame() -> Mesh {
         (0.24, 0.7),
         (0.0, 1.0),
     ];
-    Mesh::lathe(&profile(&p), 12)
+    Mesh::lathe(&p, 12)
 }
 
 /// The atrium's dressing: what stands on its walls, under its ceilings, along its
@@ -898,7 +884,7 @@ impl Library {
             (0.008, 0.12),
             (0.0, 0.12),
         ];
-        let tassel = self.shape(Mesh::lathe(&profile(&tassel), 12));
+        let tassel = self.shape(Mesh::lathe(&tassel, 12));
         // The rod with a knob at each end, on brackets from the wall; it stays put.
         let mut rod = Mesh::default();
         let reach = w * 0.5 + 0.12;
@@ -1069,7 +1055,6 @@ impl Library {
             (0.04, 0.035),
             (0.04, 0.0),
         ];
-        let [column, font, chimney, crown] = [&column[..], &font, &chimney, &crown].map(profile);
         let column = self.shape(Mesh::lathe(&column, 24));
         let font = self.shape(Mesh::lathe(&font, 24));
         let chimney = self.shape(Mesh::lathe(&chimney, 24));
@@ -1121,7 +1106,7 @@ impl Library {
             (0.22, 0.31),
             (0.0, 0.31),
         ];
-        let gem = self.shape(Mesh::lathe(&profile(&gem), 8));
+        let gem = self.shape(Mesh::lathe(&gem, 8));
         let gem = gem.sized(Vec3::new(0.22, 0.07, 0.22));
         let collet = [
             (0.105, 0.0),
@@ -1131,7 +1116,7 @@ impl Library {
             (0.105, 0.04),
             (0.105, 0.0),
         ];
-        let collet = self.shape(Mesh::lathe(&profile(&collet), 24));
+        let collet = self.shape(Mesh::lathe(&collet, 24));
         // Turned so a facet lies level along its top.
         let rot = out_of_wall(side) * Quat::from_rotation_y(PI / 8.0);
         for s in [-1.0f32, 1.0] {
@@ -1314,7 +1299,7 @@ impl Library {
             (0.53, 0.68),
             (0.0, 0.68),
         ];
-        let boss = self.shape(Mesh::lathe(&profile(&boss), 32));
+        let boss = self.shape(Mesh::lathe(&boss, 32));
         let foot = Vec3::new(0.0, SKY - 1.13, 0.0);
         self.decor(boss.at(foot, Quat::IDENTITY, kind::METAL, rgba(GILT, 1.0)));
         // Two panes of clear glass, the night through them, the moon in one.
@@ -1383,7 +1368,7 @@ impl Library {
             (ri, 0.05),
             (ri, 0.0),
         ];
-        let ring = self.shape(Mesh::lathe(&profile(&ring), 64));
+        let ring = self.shape(Mesh::lathe(&ring, 64));
         self.decor(ring.at(at, out_of_wall(side), kind::STONE, rgba(PALE, 1.0)));
         let boss = [
             (0.0, 0.0),
@@ -1393,7 +1378,7 @@ impl Library {
             (0.03, 0.095),
             (0.0, 0.1),
         ];
-        let boss = self.shape(Mesh::lathe(&profile(&boss), 24));
+        let boss = self.shape(Mesh::lathe(&boss, 24));
         self.decor(boss.at(at, out_of_wall(side), kind::STONE, rgba(PALE, 1.0)));
         for k in 0..4 {
             let (proud, angle) = (0.05 + 0.004 * k as f32, k as f32 * FRAC_PI_4);
@@ -1407,7 +1392,7 @@ impl Library {
                 look,
             ));
         }
-        let glass = self.shape(Mesh::prism(&round(ri + 0.02, 48), 0.01));
+        let glass = self.shape(Mesh::prism(&circle(ri + 0.02, 48), 0.01));
         let at = side.at3(c, WELL - 0.007, y);
         self.decor(glass.at(at, wall_rot(side), kind::GLASS, [0.32, 0.42, 0.85, 1.1]));
     }
@@ -1456,8 +1441,7 @@ impl Library {
             (0.035, 0.33),
             (0.0, 0.35),
         ];
-        let [globe_p, drop, cap] = [&globe[..], &drop, &cap].map(profile);
-        let glass = self.shape(Mesh::lathe(&globe_p, 32));
+        let glass = self.shape(Mesh::lathe(&globe, 32));
         let drop = self.shape(Mesh::lathe(&drop, 16));
         let cap = self.shape(Mesh::lathe(&cap, 24));
         // A ring at the top, 9 cm across (the torus is made 2.25 across).
@@ -1468,7 +1452,7 @@ impl Library {
         let mut cage = Mesh::default();
         let collar = Vec3::splat(0.17 / 2.25);
         cage.add(&Mesh::torus(0.25, 24, 6), Vec3::Y * -0.19, Quat::IDENTITY, collar);
-        let rod = round(1.0, 8);
+        let rod = circle(1.0, 8);
         for q in 0..4 {
             let a = q as f32 * FRAC_PI_2;
             let dir = Vec3::new(libm::cosf(a), 0.0, libm::sinf(a));

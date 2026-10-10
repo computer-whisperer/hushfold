@@ -6,7 +6,7 @@
 //! under the ceiling, meshing in trains that keep their teeth together, and the
 //! clocks keep time.
 
-use super::hearth_library::{circle, flame, pole, turned, turned_leg, turned_open};
+use super::hearth_library::{flame, turned_leg};
 use super::*;
 use std::f32::consts::{FRAC_PI_2, PI};
 
@@ -207,8 +207,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
         kind::WOOD,
         WALNUT,
     ));
-    let column = turned(
-        lib,
+    let column = lib.turned(
         &[
             (0.0, 0.0),
             (0.5, 0.0),
@@ -262,7 +261,7 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
     let small = gear(lib, great.mesh(out * 1.4 - Vec3::Y * 0.35, 0.06, wheel(0.0, 10, 0.06)));
     for p in [great.c, small.c] {
         let foot = Vec3::new(p.x, frame.y + top, p.z);
-        pole(lib, foot, p, 0.06, kind::METAL, rgba(STEEL, 1.0));
+        lib.pole(foot, p, 0.06, kind::METAL, rgba(STEEL, 1.0));
     }
     // The open front: a plinth and posts round the works, a pendulum hanging in it.
     let face = o0 - 0.01;
@@ -753,13 +752,12 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
         STEEL,
     ));
     let screw = (on(a1 - 0.5, o0 + 0.175, 0.08), on(a1 - 0.3, o0 + 0.175, 0.08));
-    pole(lib, screw.0, screw.1, 0.025, kind::METAL, steel);
-    pole(lib, screw.0 - out * 0.1, screw.0 + out * 0.1, 0.012, kind::METAL, steel);
+    lib.pole(screw.0, screw.1, 0.025, kind::METAL, steel);
+    lib.pole(screw.0 - out * 0.1, screw.0 + out * 0.1, 0.012, kind::METAL, steel);
     let wood = rgba([0.4, 0.22, 0.09], 1.0);
     let edge = |a: f32| on(a, o0 + 0.2, 0.014);
     // A screwdriver: a turned handle and a steel blade.
-    let handle = turned(
-        lib,
+    let handle = lib.turned(
         &[
             (0.0, 0.0),
             (0.3, 0.0),
@@ -774,10 +772,10 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
     let (p, dir) = (edge(-6.3), (-out * 0.95 + across * 0.3).normalize());
     let along = Quat::from_rotation_arc(Vec3::Y, dir);
     lib.decor(handle.sized(Vec3::new(0.03, 0.11, 0.03)).at(p, along, kind::WOOD, wood));
-    pole(lib, p + dir * 0.11, p + dir * 0.27, 0.006, kind::METAL, steel);
+    lib.pole(p + dir * 0.11, p + dir * 0.27, 0.006, kind::METAL, steel);
     // A hammer: a handle and a head across its end.
     let (p, dir) = (edge(-6.05), (-out * 0.9 - across * 0.4).normalize());
-    pole(lib, p, p + dir * 0.28, 0.022, kind::WOOD, wood);
+    lib.pole(p, p + dir * 0.28, 0.022, kind::WOOD, wood);
     lib.decor(Inst::new(
         p + dir * 0.28,
         Quat::from_rotation_arc(Vec3::Y, dir.cross(Vec3::Y)),
@@ -790,7 +788,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
     let (p, dir) = (edge(-5.8), (-out * 0.95 + across * 0.3).normalize());
     for s in [-1.0f32, 1.0] {
         let leg = (dir + Vec3::Y.cross(dir) * (s * 0.12)).normalize();
-        pole(lib, p, p + leg * 0.2, 0.007, kind::METAL, brass);
+        lib.pole(p, p + leg * 0.2, 0.007, kind::METAL, brass);
     }
     let pin = lib.shape(Mesh::cylinder(12));
     lib.decor(
@@ -802,7 +800,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
     let m = (-5.2, (o0 + o1) * 0.5);
     for (da, d_o) in [(-0.22, -0.16), (0.22, -0.16), (-0.22, 0.16), (0.22, 0.16)] {
         let foot = on(m.0 + da, m.1 + d_o, 0.0);
-        pole(lib, foot, foot + Vec3::Y * 0.42, 0.025, kind::METAL, brass);
+        lib.pole(foot, foot + Vec3::Y * 0.42, 0.025, kind::METAL, brass);
     }
     lib.decor(piece(
         frame,
@@ -843,8 +841,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
     lib.light_riding(floating, hover, 2.5, GLOW, 0.5, LightKind::Static);
     // An oil lamp: a brass font, a glass chimney, its flame.
     let lamp = on(-6.35, o1 - 0.2, 0.0);
-    let font = turned(
-        lib,
+    let font = lib.turned(
         &[
             (0.0, 0.0),
             (0.07, 0.0),
@@ -859,8 +856,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
         24,
     );
     lib.decor(font.at(lamp, Quat::IDENTITY, kind::METAL, brass));
-    let chimney = turned_open(
-        lib,
+    let chimney = lib.turned_open(
         &[(0.032, 0.0), (0.045, 0.04), (0.045, 0.08), (0.025, 0.14), (0.025, 0.2)],
         24,
     );
@@ -922,8 +918,7 @@ fn owl(lib: &mut Library, frame: &RoomFrame, pa: f32, po: f32) {
     let face = -frame.out();
     let turn = frame.turn();
     let (old, lit, steel) = (rgba(BRASS_OLD, 1.0), rgba(BRASS_LIT, 1.0), rgba(STEEL, 1.0));
-    let perch = turned(
-        lib,
+    let perch = lib.turned(
         &[(0.0, 0.0), (0.5, 0.0), (0.5, 0.3), (0.4, 0.5), (0.42, 1.0), (0.0, 1.0)],
         24,
     );
@@ -934,8 +929,7 @@ fn owl(lib: &mut Library, frame: &RoomFrame, pa: f32, po: f32) {
     );
     // The body, an egg of old brass, a brighter breast on it, wings folded at its
     // sides, talons gripping the perch.
-    let body = turned(
-        lib,
+    let body = lib.turned(
         &[
             (0.0, 0.0),
             (0.3, 0.0),
@@ -968,7 +962,7 @@ fn owl(lib: &mut Library, frame: &RoomFrame, pa: f32, po: f32) {
         ));
         for k in 0..3 {
             let toe = foot + across * (s * 0.05 + (k as f32 - 1.0) * 0.022) + face * 0.11;
-            pole(lib, toe, toe + face * 0.05 - Vec3::Y * 0.04, 0.014, kind::METAL, steel);
+            lib.pole(toe, toe + face * 0.05 - Vec3::Y * 0.04, 0.014, kind::METAL, steel);
         }
     }
     // The head, looking about: a slow turn, and a glance on top of it.
@@ -1069,7 +1063,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
             }
             gear(lib, p);
             let arbor = Vec3::new(p.c.x, frame.y + h, p.c.z);
-            pole(lib, p.c, arbor, 0.06, kind::METAL, rgba(STEEL, 1.0));
+            lib.pole(p.c, arbor, 0.06, kind::METAL, rgba(STEEL, 1.0));
         }
     }
 }

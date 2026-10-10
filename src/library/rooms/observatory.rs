@@ -30,41 +30,6 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     telescope(lib, frame);
 }
 
-/// `n` points round a circle `r` across in xy, anticlockwise.
-fn circle(n: usize, r: f32) -> Vec<Vec2> {
-    (0..n)
-        .map(|k| {
-            let t = k as f32 / n as f32 * TAU;
-            Vec2::new(libm::cosf(t), libm::sinf(t)) * r
-        })
-        .collect()
-}
-
-/// A flat band round `c` in the plane of `u` and `v` (unit, at right angles), `r` to
-/// its middle, `w` wide and `d` thick.
-fn band(
-    lib: &mut Library,
-    c: Vec3,
-    (u, v): (Vec3, Vec3),
-    (r, w, d): (f32, f32, f32),
-    kind: u32,
-    rgba: [f32; 4],
-) -> Inst {
-    let segs = if r < 0.5 { 32 } else { 64 };
-    let ring = Mesh::ring(&circle(segs, r + w * 0.5), &circle(segs, r - w * 0.5), d);
-    let turn = Quat::from_mat3(&Mat3::from_cols(u, v, u.cross(v)));
-    lib.shape(ring).at(c, turn, kind, rgba)
-}
-
-/// A round rod (`stick`, a cylinder) from `p` to `q`, `w` across.
-fn bar(stick: Shape, p: Vec3, q: Vec3, w: f32, kind: u32, rgba: [f32; 4]) -> Inst {
-    let v = q - p;
-    let turn = Quat::from_rotation_arc(Vec3::Y, v.normalize());
-    stick
-        .sized(Vec3::new(w, v.length(), w))
-        .inst((p + q) * 0.5, turn, kind, rgba)
-}
-
 /// Shelve `cat` across `faces` (all facing one way), left to right as you face them.
 fn shelve(lib: &mut Library, rng: &mut StdRng, cat: usize, mut faces: Vec<(Vec3, Vec3)>, titles: &mut HashSet<String>) {
     let right = Vec3::Y.cross(faces[0].1);
@@ -283,9 +248,9 @@ fn sky(lib: &mut Library, frame: &RoomFrame) {
     let centre = frame.at(0.0, COURT, y);
     // The zodiac: two gilt bands with the twelve houses between them, each marked with
     // a boss, turning once in half an hour.
-    let mut zodiac = Mesh::ring(&circle(128, 6.46), &circle(128, 6.34), 0.05);
+    let mut zodiac = Mesh::ring(&circle(6.46, 128), &circle(6.34, 128), 0.05);
     zodiac.add(
-        &Mesh::ring(&circle(128, 5.93), &circle(128, 5.87), 0.035),
+        &Mesh::ring(&circle(5.93, 128), &circle(5.87, 128), 0.035),
         Vec3::ZERO,
         Quat::IDENTITY,
         Vec3::ONE,
@@ -524,8 +489,14 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
         let hub = base + up * h;
         let tip = hub + dir * r;
         lib.moving(arm, sleeve.inst(hub, Quat::IDENTITY, kind::METAL, BRASS_BRIGHT));
-        lib.moving(arm, bar(stick, hub, tip + dir * 0.01, 0.02, kind::METAL, BRASS_BRIGHT));
-        lib.moving(arm, bar(stick, tip, tip + up * 0.14, 0.016, kind::METAL, BRASS_BRIGHT));
+        lib.moving(
+            arm,
+            stick.between(hub, tip + dir * 0.01, 0.02, kind::METAL, BRASS_BRIGHT),
+        );
+        lib.moving(
+            arm,
+            stick.between(tip, tip + up * 0.14, 0.016, kind::METAL, BRASS_BRIGHT),
+        );
         let p = tip + up * (0.14 + s * 0.5);
         // Each world turned a little on its axis, so its shading isn't the same.
         let lean = Quat::from_rotation_z(0.2 + k as f32 * 0.3);
@@ -553,7 +524,7 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
             };
             let moon = lib.mover(p, month, 0.0, Some(arm));
             let m = p + Vec3::new(libm::sinf(t), 0.0, -libm::cosf(t)) * 0.16;
-            lib.moving(moon, bar(stick, p, m, 0.01, kind::METAL, BRASS_BRIGHT));
+            lib.moving(moon, stick.between(p, m, 0.01, kind::METAL, BRASS_BRIGHT));
             lib.moving(
                 moon,
                 ball.sized(Vec3::splat(0.035))
@@ -630,7 +601,7 @@ fn telescope(lib: &mut Library, frame: &RoomFrame) {
     }
     lib.moving(
         fork,
-        bar(stick, pivot - axle * 0.3, pivot + axle * 0.3, 0.05, kind::METAL, IRON),
+        stick.between(pivot - axle * 0.3, pivot + axle * 0.3, 0.05, kind::METAL, IRON),
     );
     let tip = Motion::Swing {
         axis: axle,
@@ -661,20 +632,12 @@ fn telescope(lib: &mut Library, frame: &RoomFrame) {
     let finder = pivot + above * 0.24;
     lib.moving(
         scope,
-        bar(
-            stick,
-            finder - d * 0.2,
-            finder + d * 0.7,
-            0.06,
-            kind::METAL,
-            SCOPE_BRASS,
-        ),
+        stick.between(finder - d * 0.2, finder + d * 0.7, 0.06, kind::METAL, SCOPE_BRASS),
     );
     for t in [-0.1f32, 0.55] {
         lib.moving(
             scope,
-            bar(
-                stick,
+            stick.between(
                 pivot + d * t + above * 0.13,
                 pivot + d * t + above * 0.21,
                 0.02,
