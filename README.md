@@ -127,6 +127,9 @@ that fit it.
   (~360 and ~185 fps unpaced at 1864×2088 on an RX 6900 XT, measured before
   the visual pass, which added 8–19% GPU time and no CPU time).
   `HUSHFOLD_UNPACED=1` renders without compositor pacing for benchmarking.
+- Signs and shelf labels are lettered in the world (`src/text.rs`): glyph quads
+  from a signed-distance atlas of the serif face the HUD uses, lit like the
+  boards they're on.
 - All audio is synthesized at startup (`src/audio.rs`): book thunks, page
   rustles, pentatonic chimes, fire crackle and a generative music-box loop.
 - Loose books use semi-physics (`src/loose.rs`): ballistic flight with spin,

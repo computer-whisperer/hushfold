@@ -31,8 +31,10 @@ flights of stairs, solids and gates. Each solid says what it stops (bodies, book
 sight): railings and chairs stop walking and throwing but are seen past, and a
 bookcase has a sight-only box above it so no one aims over its top. Bodies walk
 floors and stair slopes and are stopped by solids, floor edges, stair stone and
-closed gates;
-sight by solids that stop it, floors, stair stone and closed gates; books build
+closed gates. The player can jump half a metre, but solids are never floors: in
+the air, what is in the way reaches down to the ground underneath, so a jump
+clears nothing (no landing on or inside a table, case or rail), and it stops
+rising under whatever overhangs. Sight is stopped by solids that stop it, floors, stair stone and closed gates; books build
 their heightfields from the same world. Generation (`src/library/`) declares each
 piece once: `decor` (drawn only), `solid` (drawn, and in the way), or parts drawn
 with one `collide` box standing for them. Shared pieces (bookcases double-sided
@@ -54,7 +56,9 @@ touch or two a room, not everything glowing), still objects only.
 - **Furniture.** Bookcases are joined walnut pieces: proud fluted stiles with
   capitals, a frieze and a two-step cornice running unbroken along a row, raised
   panels on the ends, a plinth over a toe-kick, a brass ladder rail across each
-  face and a brass label holder under each shelf's label, glowing faintly. Reading
+  face and a brass label holder on each shelf's edge, glowing faintly, with the
+  shelf's range of filing keys inked on it. Signs carry their names in gold leaf
+  (category boards over the middle case, department boards over the doors). Reading
   tables have green leather tops on turned legs; sconces, chandeliers (with faint
   moon-blue crystal drops), balusters, newels, stair stringers, wainscot,
   doorways and piers all have their mouldings. Collision is as it was.
@@ -78,8 +82,8 @@ touch or two a room, not everything glowing), still objects only.
   (cages of cases off a hall under a hung dragon skeleton, a glowing egg). First
   floor: the Map Room (a globe over a compass rose, a floating model ship), the
   Chronicle Hall (a nave of busts and banners, a timeline writing itself round the
-  walls), the Verse Gallery (a lounge of armchairs and portraits, drifting words,
-  paper cranes), the Arcanum (a ward of cases round a glowing rune circle under
+  walls), the Verse Gallery (a lounge of armchairs and portraits, the words
+  of a verse drifting up from an open book, paper cranes), the Arcanum (a ward of cases round a glowing rune circle under
   hanging crystals). Top floor: the Clockworks (bays like a wheel's teeth, a great
   clock with glowing hours, gear trains), the Music Room (rows like pews before an
   organ, a harp with glowing strings), the Weatherhouse (a rain-streaked window, a
@@ -98,7 +102,9 @@ touch or two a room, not everything glowing), still objects only.
 - **Materials and textures:** see-through glass indoors (jars, bells, glazed case
   doors; the jar panes now borrow the slot ghosts' shader) and a skylight with a
   real sky; fire, cloud or smoke, water, brick, marble; decals or a small atlas for
-  map art, portraits, sheet music, clock numerals, heraldic sigils per department.
+  map art, portraits, sheet music, heraldic sigils per department. Lettering
+  (`text.rs`) now exists for words: clock numerals, the timeline's ages, names on
+  maps and the open books' pages could use it.
 - **Rendering:** culling for static geometry (it is drawn in the order it is laid
   down, so pieces in front are laid first; this is what kept the pass's GPU cost
   flat, and it is fragile); shadows for moonlight and the big fires; projected
@@ -319,6 +325,18 @@ closed form, stopping at the scene's depth and pooling on surfaces facing the
 window. 4x MSAA HDR -> bloom -> ACES tonemap (a touch of blue in the darkest
 tones) -> egui. Held books are drawn in a second pass with cleared depth. Static
 geometry is one draw in the order it was laid down, without culling.
+
+Lettering (`text.rs`: signs, shelf labels, the Verse Gallery's words) is laid out
+at generation from the serif face the HUD uses into glyph quads, one static draw
+after the opaque scene, depth-biased onto the surfaces under them (testing depth,
+not writing it). Glyphs are cut from a signed-distance atlas built at startup
+(64 px to the em, exact distances to the flattened outlines, threaded, ~12 ms;
+mipmapped), so they stay sharp up close. Each is lit like its surface (gold leaf,
+ink) or glows; small letters are set a little bolder, and those under about four
+pixels to the em fade out rather than shimmer. Names are therefore read in the
+world, at the distance their size allows (a category board from ~20 m at 1000
+pixels tall, a shelf's keys from ~3 m); only the Signposts' guides are drawn over
+the scene.
 
 `scene.rs` keeps books lying still (in piles or shelved) and the ghosts of empty
 slots in 8 × 6 × 8 m chunks with their own GPU buffers. Each frame every book's
