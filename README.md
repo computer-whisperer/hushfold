@@ -126,9 +126,11 @@ all back to use.
 - wgpu 29 + winit 0.30 + egui 0.34. Everything is instanced: unit boxes, and
   meshes fitted to the box (turned, extruded or swept, made by the library as it
   is generated: gears, dials, rings, jars), with procedural materials (wood grain,
-  spines with patterns and volume numerals, paper edges, planks, stone, brass,
-  glass) selected per instance in `src/shader.wgsl`. Gears turn, pendulums swing,
-  clocks keep time and lanterns float, posed each frame (`src/library/motion.rs`).
+  spines with patterns and volume numerals, paper edges, planks, stone, marble,
+  brass, glass, flames, mist, fretwork, a night sky) selected per instance in
+  `src/shader.wgsl`. Gears turn, pendulums swing, clocks keep time, lanterns and
+  candles float, banners and drapes stir and ladders slide, posed each frame
+  (`src/library/motion.rs`); each department's room has its own light and fog.
 - Up to 64 point lights in a forward pass (the nearest), 4× MSAA HDR, a 6-level
   bloom chain and ACES tonemapping. Held books are drawn in a second pass with
   cleared depth so they never clip into shelves.

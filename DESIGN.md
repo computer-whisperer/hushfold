@@ -92,71 +92,134 @@ starting heaps under 2 m.
 ## The look
 Built in one visual pass (2026-10-09) by seven agents, one per area, against a
 brief: each department its own flavour and layout, a middling amount of magic (a
-touch or two a room, not everything glowing), still objects only.
+touch or two a room, not everything glowing), still objects only. A second pass
+(2026-10-10), seven agents again, rebuilt what was faked round with boxes as real
+round shapes (`gfx/mesh.rs`), set moving what would move (`library/motion.rs`;
+slow and calm, a few things a room, nothing moving where anyone walks), and made
+flames, mist, fretwork, marble, brick, music, arms and a night sky real.
 - **Furniture.** Bookcases are joined walnut pieces: proud fluted stiles with
   capitals, a frieze and a two-step cornice running unbroken along a row, raised
-  panels on the ends, a plinth over a toe-kick, a brass ladder rail across each
-  face and a brass label holder on each shelf's edge, glowing faintly, with the
-  shelf's range of filing keys inked on it. Signs carry their names in gold leaf
-  (category boards over the middle case, department boards over the doors). Reading
-  tables have green leather tops on turned legs; sconces, chandeliers (with faint
-  moon-blue crystal drops), balusters, newels, stair stringers, wainscot,
-  doorways and piers all have their mouldings. Collision is as it was.
-- **The Hall.** A timber roof on girders; the reading room's ceiling coffered and
-  painted as the night sky, some constellations really shining; round-headed
-  north windows with violet heads and velvet drapes; an arcade over the veil;
-  tapestries of the library's emblem (a crescent over an open book) by the hearth;
-  a great map ends the West Wing and a clock at ten to midnight the East; banker's
-  lamps, an armillary sphere and a lectern whose book's script glows.
+  panels on the ends, a plinth over a toe-kick, a round brass ladder rail standing
+  off the stiles on brackets across each face, and a brass label holder on each
+  shelf's edge, glowing faintly, with the shelf's range of filing keys inked on it.
+  A few faces (about one in twelve, at most two to a room, never near a door, a
+  drop or the stairs) have a library ladder hooked on the rail, leaning on the case
+  with its foot half a metre out; now and then it slides slowly along the rail and
+  rests long at each end. Wall cases standing free of a wall have a panelled back
+  like their ends (the rooms' own boards hide all of them so far). Signs carry their
+  names in gold leaf (category boards over the middle case, department boards over
+  the doors). Reading tables have green leather tops on turned legs, chairs with
+  turned front legs, and a turned brass candlestick, its candle in a glass chimney.
+  Sconces are one piece of brass (a pointed backplate, a scrolled arm, a drip pan
+  and a cup) with a candle and its flame. Chandeliers hang two beaded hoops of
+  candles on scrolled arms from a knopped stem, and their crystal drops stir a
+  little. Balusters and newels are turned, the newels topped with ball finials.
+  Collision is as it was.
+- **The Hall.** A timber roof on girders, with turned gilt bosses where the ribs
+  cross. The reading room's ceiling is coffered and painted as the night sky, some
+  constellations really shining. Round-headed north windows have violet heads and
+  velvet drapes falling to the sill, which stir now and then below their tiebacks.
+  On the arch over the veil the wing beyond is lettered in gold: East Wing from the
+  reading room, West Wing from the East (lettering, not a sign the Signposts point
+  at). By the hearth hang tapestries of the library's emblem (a crescent over an
+  open book), stirring on their rods. A great map on turned rollers ends the West
+  Wing, and a clock keeping time from ten to midnight ends the East. A fire burns
+  on the hearth, its smoke going up the flue; candles burn under glass chimneys on
+  the mantel beside a clock under a domed glass that keeps the great clock's time.
+  Banker's lamps have half-round shades of green cased glass, white inside; an
+  armillary sphere on a turned stand turns its heavens; a lectern on a turned
+  column holds a great book whose script glows, a leaf of it turning over and back
+  now and then, motes of light bobbing over it.
 - **The Great Library's building.** The atrium walls are blind arches between
-  pilasters, with a banner in each department's colour on the wall outside its
-  room; each door has a stone frame with the sign between two glowing gems;
-  beamed walks under panelled gallery fronts with lamps on the railings; panelled
-  stairs; a ribbed leaded skylight with the moon in two clear panes; lanterns
-  floating in the well, each bobbing in its own time.
-- **The departments.** Ground floor: the Observatory (a painted night-sky ceiling
-  with twinkling constellations, an orrery with a glowing sun, a telescope at an
-  arched window), the Alchemical Wing (alcoves off a working nave, a brick athanor
-  alight, glassware, a transmutation circle), the Herbarium (stacks in one half, a
-  moonlit glasshouse garden in the other, glowing moonflowers), the Bestiary
-  (cages of cases off a hall under a hung dragon skeleton, a glowing egg). First
-  floor: the Map Room (a globe over a compass rose, a floating model ship), the
-  Chronicle Hall (a nave of busts and banners, a timeline writing itself round the
-  walls), the Verse Gallery (a lounge of armchairs and portraits, the words
-  of a verse drifting up from an open book, paper cranes), the Arcanum (a ward of cases round a glowing rune circle under
-  hanging crystals). Top floor: the Clockworks (bays like a wheel's teeth, a great
-  clock with glowing hours, gear trains), the Music Room (rows like pews before an
-  organ, a harp with glowing strings), the Weatherhouse (a rain-streaked window, a
-  wind rose, a cloud kept in a jar with its own lightning), the Hearth Library (an
-  inglenook fire, armchairs, floating candles, needles knitting by themselves).
+  pilasters, rings of wedge-cut voussoirs round darker recesses, with a banner in
+  each department's colour on the wall outside its room. The banners stir now and
+  then: each swings slowly about its gilt rod, its foot lifting a little off the
+  wall and settling back (two swings out of time, so they rest between). Each door
+  has a stone frame with the sign between two round-cut gems in gilt collets, which
+  brighten as the department nears done: dim and steady early, warming and
+  brightening toward the end, pulsing softly once it is complete
+  (`Library::door_gems`, drawn per frame). Beamed walks run under panelled gallery
+  fronts, with hurricane lamps on the railings (a turned column, a gilt font, a
+  flame in a glass chimney); panelled stairs; a ribbed leaded skylight with the
+  night sky through it, the moon up the moonbeams' line, and a turned gilt boss
+  where the ribs meet; round rose windows in the lantern's walls; and lanterns
+  floating in the well, clear glass globes in gilt cages with a flame in each,
+  bobbing in their own time.
+- **The departments.** Ground floor:
+  - The Observatory's orrery stands on a marble drum, its six planets going round
+    the glowing sun each in its year to a two-minute earth, the moon round the
+    earth. The gilt zodiac on the painted ceiling turns once in half an hour. The
+    brass telescope stands on an iron pillar under a round-headed window, its fork
+    sweeping a little and its tube tipping, slowly.
+  - The Alchemical Wing's benches carry clear glassware with coloured liquids. One
+    flask bubbles over a spirit lamp, steam rising, and a copper still's beak droops
+    into a glass receiver. A balance rocks a hair, its pans hanging level. The
+    athanor burns under a round copper hood; its pipes bend down into coils standing
+    in hooped tubs. A red stone floats turning over the transmutation circle.
+  - The Herbarium's pots and tubs are turned and its plants are sprays of cut-out
+    leaves; its small trees are round-crowned, an orange and a lemon in fruit. Its
+    moonflowers are glowing trumpets stirring on their stems, its drying herbs stir
+    on their strings under the beams, and a seedling sits under a bell glass.
+  - The Bestiary's dragon is swept bone, swaying a hair on chains from the beams.
+    Its egg rocks now and then in a nest of bent twigs. The cages' bars are round,
+    and specimen jars hold coiled snakes.
+
+  First floor: the Map Room (a great globe turning on its tilted axis in its
+  meridian ring, its lands and ice standing proud of glowing seas, over a brass
+  compass rose; a model ship riding a slow swell over the map table, sails bellied,
+  pennant stirring; rolled charts in the rack), the Chronicle Hall (a nave of
+  marble busts on turned pedestals and banners stirring now and then, a quill
+  writing on in the Great Chronicle, a timeline writing itself round the walls,
+  armour bearing arms), the Verse Gallery (a lounge of armchairs and portraits in
+  moulded gilt frames, some oval; the words of a verse drifting up from an open
+  book; paper cranes swaying and turning on their threads), the Arcanum (a ward of
+  cases round a glowing rune circle between round pillars, crystals floating and
+  turning over it, the lesser circling the great; chained grimoires by
+  candlelight).
+
+  Top floor: the Clockworks' wheels mesh in trains that keep their teeth together
+  (each wheel's size set by its teeth, its teeth set into its neighbour's gaps), its
+  great clock figured in Roman hours, a brass owl on a plinth turning its head to
+  look about the room; the Music Room's organ of turned pipes under fretted shades,
+  a harp with a swept neck and notes drifting over it, a harpsichord on turned legs
+  with a metronome ticking slowly, chimes stirring; the Weatherhouse's weathervane
+  turning to a wind that veers now and then, wind chimes swaying, rain running down
+  the window, an anemometer spinning, a snowflake turning under a bell jar and a
+  cloud drifting in a jar; the Hearth Library's fire and smoke, candles floating and
+  bobbing over the hearth, needles knitting in the air, a spinning wheel turning and
+  herbs stirring under the beams.
+
+  Each department's room has a mood of its own: its light and fog, eased in from
+  its doorway as its sound is (`game/mood.rs`).
 
 ### Wanted next (the agents' notes)
-- **Shapes:** cylinders, discs and spheres (gears, dials, globes, jars, pipes,
-  balusters: the Clockworks spends ~900 boxes faking round), wedges, bent or
-  spline pieces (ribs, arches, antlers), alpha cut-out planes (leaves, bars).
-- **Motion:** pendulums, clock hands, gear trains, orreries, armillary rings and
-  globes turning; floating lanterns, candles and the model ship bobbing; banners,
-  curtains, herbs and chandelier drops stirring; the weathervane, chimes, rain and
-  the jarred cloud; drifting words, motes and notes; library ladders sliding on
-  their rails.
-- **Materials and textures:** see-through glass indoors (jars, bells, glazed case
-  doors; the jar panes now borrow the slot ghosts' shader) and a skylight with a
-  real sky; fire, cloud or smoke, water, brick, marble; decals or a small atlas for
-  map art, portraits, sheet music, heraldic sigils per department. Lettering
-  (`text.rs`) now exists for words: clock numerals, the timeline's ages, names on
-  maps and the open books' pages could use it.
-- **Rendering:** culling for static geometry (it is drawn in the order it is laid
-  down, so pieces in front are laid first; this is what kept the pass's GPU cost
-  flat, and it is fragile); shadows for moonlight and the big fires; projected
-  window light; ambient occlusion in piles and shelf corners; per-room fog and
-  light colour; dust motes on the GPU.
+- **Motion:** a motion that acts and then rests, with a dwell (the Hall, the
+  atrium, the Bestiary and the Weatherhouse each fake one with swings that beat);
+  lettering that can ride a mover (the Verse Gallery's words rising from the book
+  and fading); looping motion that resets rather than returns (bubbles, rising
+  motes); cloth that bends rather than swinging stiffly; the ladders' rollers
+  turning as they slide; the owl's eyes following the player; harp strings
+  shimmering when someone comes near.
+- **Materials and textures:** water and a translucent liquid (things floating in a
+  jar); decals or a small atlas for map art and portraits; a coat of arms chosen by
+  department rather than by seed; map ink that holds up beyond a few metres; rug,
+  plaque frame and cloth border on round meshes (they still read the box). Lettering
+  (`text.rs`) exists for words: clock numerals, the timeline's ages, names on maps
+  and the open books' pages could use it.
+- **Rendering:** culling for static geometry. It is drawn in the order it is laid
+  down (pieces in front laid first), but every mesh after every box, so a mesh on a
+  wall shades the wall behind it as well (broad flat pieces on walls stay boxes for
+  that); and its round pieces cost vertex work every frame (the furniture's alone
+  ~0.1 ms everywhere). A depth pre-pass, or drawing meshes in laid order, would
+  answer both. Translucent volumes sorted by depth (they are drawn in mesh order);
+  shadows for moonlight and the big fires; projected window light; ambient
+  occlusion in piles and shelf corners; dust motes on the GPU.
 - **Books:** books near the eye in the world modelled in the round too, not only those
   in hand (a near set from the chunks round the eye, their boxes collapsed in the
   vertex shader); tooled centre and corner pieces on leather covers; spine labels
   standing proud; books lying open (endpapers, a page's text) on lecterns and tables.
-- **Play:** door gems brightening as a department nears done; a wing sign over the
-  Hall's veil (needs a thought about Signposts); a finished back for wall cases
-  standing free (the Bestiary's and others' are covered with boards).
+- **Lettering:** `Library::inscribe` taking an `up` direction, for lettering along an
+  arch (the Hall's wing names call `text::set_line` themselves).
 
 ## Loose books
 Every book not shelved or carried is loose (`src/loose.rs`), simulated with
@@ -413,16 +476,21 @@ coordinates; normals are smooth but at sharp creases, and the rounded edges and 
 lines materials draw on boxes are left off meshes (worked out branch-free: a branch
 there pushed the scene shader past its register budget). Each set of instances
 (fixed, per frame, translucent) is sorted by mesh and drawn a run per mesh from one
-pair of buffers. Each instance's
-`kind` picks a procedural material in WGSL: wood, book, floor, stone, rug,
-emissive, plaque, window glass, paper, metal, cloth, leaf, crystal, parchment and
-folded paper (a bird's sheet: its tint and print, lit flat per facet so the creases
-show), each documented in
+pair of buffers: static meshes after every static box, so a mesh on a wall shades
+the wall behind it too (broad flat pieces on walls stay boxes). Each instance's
+`kind` picks a procedural material in WGSL: wood, book, floor, stone (ashlar,
+marble or brick, one branch-free set of courses wrapping round round meshes), rug,
+emissive, plaque, window glass, paper, metal, cloth, leaf, crystal (faceted on
+meshes), parchment (writing, maps, star charts, sheet music, coats of arms), folded
+paper (a bird's sheet: its tint and print, lit flat per facet so the creases show),
+clear glass, flames, mist and fretwork, each documented in
 `gfx::kind` with what its colour and `param` mean. Materials work from the box's local coordinates, a
 per-instance seed and the pixel's footprint, so fine detail fades out rather
 than shimmers. The scene shader is register-bound: materials work out what they
 need inside their own branch rather than keeping values alive across the switch
-(a first version at 84 registers cost +25-30%). Forward lighting with up to 64
+(a first version at 84 registers cost +25-30%); it is at its 64 on the Radeon VII,
+so new heavy materials get pipelines of their own, as books, glass, flames and mist,
+fretwork and the sky have (RADV_DEBUG=shaderstats,nocache prints the counts). Forward lighting with up to 64
 point lights (the player's candle, familiars, then the library's lights nearest
 the eye), wrapped diffuse, light through leaves and crystal, Blinn-Phong
 highlights; a two-colour hemisphere ambient, shiny materials reflecting a simple
@@ -431,9 +499,21 @@ the veil) are drawn in a pass that can read the opaque depth; moonbeams there
 without a depth test, each the light along the eye's ray through a soft shaft in
 closed form, stopping at the scene's depth and pooling on surfaces facing the
 window; clear glass (`kind::CLEAR`, `fs_glass`) in a pipeline of its own there, the
-room and the lights reflected in it, more at a slant. 4x MSAA HDR -> bloom -> ACES tonemap (a touch of blue in the darkest
+room and the lights reflected in it, more at a slant, both sides of every surface
+drawn (so glass is never made two-sided). Flames and mist are volumes in that pass
+with a pipeline of their own (`fs_fx`), testing the scene's depth themselves as the
+moonbeams do: a candle's teardrop drawn where the eye's ray passes nearest its axis
+(a box the size of the flame: `library::flame`); a hearth's tongues read at four
+depths; smoke and cloud the box's ellipsoid, its density summed in closed form and
+stirred by noise; rain streaks in sheets fixed in its box. Fretwork is cut out in a
+pipeline of its own (discard, alpha to coverage) so the rest keeps its early depth
+test. A skylight (`kind::GLASS` param 1, `fs_sky`) shows the night sky along the
+eye's ray, the moon up the moonbeams' line. Each department's room has a mood
+(`game/mood.rs`): ambient light, fog and a tint on the library's lights, eased in
+from its doorway as its sound is. 4x MSAA HDR -> bloom -> ACES tonemap (a touch of blue in the darkest
 tones) -> egui. Held books are drawn in a second pass with cleared depth. Static
-geometry is one draw in the order it was laid down, without culling.
+geometry is drawn a run per mesh, the boxes in the order they were laid down,
+without culling.
 
 Things that move (`library/motion.rs`) are looks only: nothing moving is in anyone's
 way, and the world, books and saves never see them. A mover is a pivot and a motion
