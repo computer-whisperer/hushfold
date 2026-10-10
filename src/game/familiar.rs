@@ -666,7 +666,7 @@ impl Game {
             Some((_, post)) => (post, near(post, SETTLED)),
             // The Arcanum's ward keeps familiars out: its books wait at its door.
             None if self.quieted(Magic::Familiars, drop) => {
-                let door = self.threshold();
+                let door = self.threshold;
                 (door, near(door, 2.5))
             }
             None => (drop, self.lib.room_at(at) == Some(dept)),

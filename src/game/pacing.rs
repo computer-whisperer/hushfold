@@ -98,6 +98,11 @@ const SHORTLIST: usize = 10;
 const AIM: f32 = 12.0;
 /// Seconds per G.
 const POST: f32 = 1.0;
+/// A loose volume of a stopped clock's key counts as this many books when the bot
+/// weighs a pile (filing the key lets fall the ~250 books its clock holds, and a player
+/// reads the keys off the faces), and takes this long to tap out of a pile.
+const KEY_WORTH: usize = 25;
+const TAP_KEY: f32 = 1.0;
 
 /// What to seek: a group and which one of it (`None`: a plain scoop).
 type Sift = Option<(Group, usize)>;
@@ -220,18 +225,36 @@ impl Bot {
         self.by_familiars += self.g.total_shelved() - before;
     }
 
+    /// The loose volumes of the stopped clocks' keys, once the Clockworks is open: the
+    /// bot hunts them.
+    fn key_volumes(&self) -> std::collections::HashSet<u32> {
+        let g = &self.g;
+        let mut keys = std::collections::HashSet::new();
+        if g.lib.stopped.is_empty() || !g.dept_open(dept::CLOCKWORKS) {
+            return keys;
+        }
+        for (k, c) in g.lib.stopped.iter().enumerate() {
+            if g.started[k].is_none() {
+                keys.extend((g.lib.series_books[c.key as usize].iter()).filter(|&&b| g.loose.is_resting(b)));
+            }
+        }
+        keys
+    }
+
     /// Where to gather next, and which group to seek (`None`: a plain scoop).
     fn choose(&mut self) -> Option<(usize, Vec3, Sift)> {
         let fileable = self.fileable();
+        let keys = self.key_volumes();
         let (cap, speed, pos) = (self.g.capacity(), self.walk_speed(), self.pos);
         let g = &mut self.g;
         g.nav.fill(&mut g.walk, pos);
+        let worth = |books: &[u32]| KEY_WORTH * books.iter().filter(|b| keys.contains(b)).count();
         let mut cells: Vec<(f32, usize, Vec3)> = (g.loose.piles())
             .filter_map(|(lv, c, books)| {
                 let n = books.iter().filter(|&&b| fileable[b as usize]).count();
                 (n > 0 && g.nav.open_at(c)).then(|| {
                     let walk = g.nav.distance(&g.walk, pos, c);
-                    ((walk / speed + 1.0) / n.min(cap) as f32, lv, c)
+                    ((walk / speed + 1.0) / (n.min(cap) + worth(books)) as f32, lv, c)
                 })
             })
             .filter(|c| c.0.is_finite())
@@ -245,6 +268,7 @@ impl Bot {
         let mut best: Option<(f32, usize, Vec3, (Group, usize))> = None;
         for &(_, lv, c) in cells.iter().take(SHORTLIST) {
             let near = g.loose.near(lv, Vec2::new(c.x, c.z), sift, |b| fileable[b as usize]);
+            let keyed = worth(&near);
             let mut tally: HashMap<usize, usize> = HashMap::new();
             for b in near {
                 *tally.entry(group.of(&g.lib, b)).or_default() += 1;
@@ -254,7 +278,7 @@ impl Bot {
                 continue;
             };
             let walk = g.nav.distance(&g.walk, pos, c);
-            let score = (walk / speed + 1.0 + SCOOP) / n.min(cap) as f32;
+            let score = (walk / speed + 1.0 + SCOOP) / (n.min(cap) + keyed) as f32;
             if best.is_none_or(|b| score < b.0) {
                 best = Some((score, lv, c, (group, key)));
             }
@@ -282,6 +306,23 @@ impl Bot {
             self.t += SEEK;
             self.spent[1] += SEEK;
         }
+        // The stopped clocks' keys in reach first, tapped out of the piles.
+        let keys = self.key_volumes();
+        let mut tapped = 0;
+        if !keys.is_empty() {
+            let g = &mut self.g;
+            for b in g.loose.near(lv, Vec2::new(at.x, at.z), reach, |b| keys.contains(&b)) {
+                if g.weight(b) > g.room_in_arms() {
+                    break;
+                }
+                g.loose.take(&[b]);
+                g.state[b as usize] = BookState::Held;
+                g.held.push(b);
+                tapped += 1;
+            }
+        }
+        self.t += TAP_KEY * tapped as f32;
+        self.spent[1] += TAP_KEY * tapped as f32;
         let cap = self.g.capacity();
         let mut aside = Vec::new();
         let mut target = Some(c);

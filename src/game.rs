@@ -634,6 +634,9 @@ pub struct Game {
     started: Vec<Option<f64>>,
     /// The first folio taken this session has been explained.
     told_folio: bool,
+    /// Just outside the Arcanum's doorway, where couriers leave its books while its
+    /// ward keeps them out (`rooms`).
+    threshold: Vec3,
     /// Restless books' hops this session and when each may hop again (`rooms`), the
     /// first hop explained, the room the player is in, and the rooms whose ask has
     /// been said (by bit).
@@ -730,6 +733,7 @@ impl Game {
         }
         let loose = Loose::new(&lib);
         let nav = Nav::new(&lib.world, lib.spawn.0);
+        let threshold = Self::find_threshold(&lib, &nav);
         let hub_field = nav.field();
         let pos = (0..n as u32).map(|b| loose.pose(b).0).collect();
         let rot = (0..n as u32).map(|b| loose.pose(b).1).collect();
@@ -783,6 +787,7 @@ impl Game {
             poses: Vec::new(),
             started: vec![None; lib.stopped.len()],
             told_folio: false,
+            threshold,
             wary: Default::default(),
             told_restless: false,
             in_room: None,

@@ -74,9 +74,15 @@ pause screen replaces the current library's save with a fresh one (settings, in
 - The Hall's East Wing is veiled until 40% of the West Wing is home. In the
   Great Library the second room is veiled until a quarter of the Observatory's
   books are home, and each room after it until half the books of the rooms opened
-  before it are home; a department's books start in its own room, the atrium or
-  rooms that open earlier. Colour tells a book's department there, and the
-  spine pattern its category.
+  before it are home (the Map Room and the Chronicle Hall open together); a
+  department's books start in its own room, the atrium or rooms that open earlier.
+  Colour tells a book's department there, and the spine pattern its category.
+- Upstairs, and in the Bestiary, rooms ask something of their own: two open
+  together, each heaped with the other's books, some of them heavy folios; one
+  holds another's songs; a ward quiets magic until its room is put in order;
+  stopped clocks hold books in the air until the series on their faces are filed;
+  a draught bends what you toss; one room's books were left all over; and some
+  books won't sit still. Each room says what it asks when you first step in.
 - Books are loose: they lie where they fall, piles slump when you pull books
   out from underneath, and tossed books tumble, bounce off the furniture and
   land in a scatter. Toss a category's books toward its shelves to pre-sort a

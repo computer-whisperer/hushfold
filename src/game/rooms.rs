@@ -45,6 +45,10 @@ const HOP: (f32, f32) = (1.5, 2.5);
 const HOP_UP: f32 = 0.45;
 const HOP_REST: f32 = 1.5;
 const HOPS: u8 = 3;
+/// The turns off straight away a hop tries, in order, and how high off its floor it
+/// may land (on books, not on furniture).
+const HOP_TURNS: [f32; 5] = [0.0, 0.6, -0.6, 1.2, -1.2];
+const HOP_LANDS: f32 = 1.2;
 
 impl Game {
     // ---------------------------------------------------------------- the ward
@@ -64,18 +68,31 @@ impl Game {
         WARD.iter().filter(|&&w| share < w).count()
     }
 
-    /// Whether the Arcanum's ward quiets `magic` at `p` (anywhere in the room).
+    /// Whether the Arcanum's ward quiets `magic` at `p` (anywhere in the room). Asked
+    /// of many books at a time (familiars looking for work), so it is a box test.
     pub fn quieted(&self, magic: Magic, p: Vec3) -> bool {
         let lifted = WARD.len() - self.ward_strands();
-        (magic as usize) >= lifted && self.lib.room_at(p).is_some_and(|r| self.lib.is_dept(r, dept::ARCANUM))
+        (magic as usize) >= lifted && self.inside(dept::ARCANUM, p)
+    }
+
+    /// Whether `p` is in the Great Library's room `d`: a box test (its rectangle, from
+    /// its floor to its roof), cheaper than `Library::room_at`.
+    fn inside(&self, d: usize, p: Vec3) -> bool {
+        let room = &self.lib.rooms[d];
+        let level = &self.lib.world.levels[room.level];
+        let q = Vec2::new(p.x, p.z);
+        (level.y - 0.3..level.roof).contains(&p.y) && q.cmpge(room.min).all() && q.cmplt(room.max).all()
     }
 
     /// Just outside the Arcanum's doorway, on the gallery: where couriers leave its
-    /// books while the ward keeps them out.
-    pub(super) fn threshold(&self) -> Vec3 {
-        let door = self.lib.rooms[dept::ARCANUM].door;
+    /// books while the ward keeps them out. Worked out once (`threshold`).
+    pub(super) fn find_threshold(lib: &Library, nav: &Nav) -> Vec3 {
+        if lib.layout != Layout::Great {
+            return Vec3::ZERO;
+        }
+        let door = lib.rooms[dept::ARCANUM].door;
         let out = Vec3::new(door.x, 0.0, door.z).normalize();
-        self.nav.standable_near(door - out * 2.3)
+        nav.standable_near(door - out * 2.3)
     }
 
     /// The ward's strands across the Arcanum's doorway, while it is open and they hold.
@@ -183,12 +200,11 @@ impl Game {
     /// The share of its speed a familiar flying along `dir` at `p` keeps against the
     /// draught.
     pub(super) fn headwind(&self, p: Vec3, dir: Vec3) -> f32 {
-        let inside = self
-            .lib
-            .room_at(p)
-            .is_some_and(|r| self.lib.is_dept(r, dept::WEATHERHOUSE));
+        if self.lib.vane.is_none() || !self.inside(dept::WEATHERHOUSE, p) {
+            return 1.0;
+        }
         match self.draught() {
-            Some(push) if inside => {
+            Some(push) => {
                 let into = -Vec2::new(dir.x, dir.z)
                     .normalize_or_zero()
                     .dot(push.normalize_or_zero());
@@ -225,9 +241,23 @@ impl Game {
             let dist = self.rng.gen_range(HOP.0..HOP.1);
             let up = libm::sqrtf(2.0 * crate::loose::GRAVITY * HOP_UP);
             let flight = 2.0 * up / crate::loose::GRAVITY;
-            let vel = Vec3::new(away.x, 0.0, away.y) * (dist / flight) + Vec3::Y * up;
+            // Away, or as near away as lands on open floor of its own level (never on
+            // furniture or a wall's top); with nowhere to go, it is cornered and stays.
+            let start = from + Vec3::Y * 0.05;
+            let floor = self.lib.world.levels[lv].y;
+            let mut arc = Vec::new();
+            let hop = HOP_TURNS.iter().find_map(|&off| {
+                let dir = Vec2::from_angle(off).rotate(away);
+                let vel = Vec3::new(dir.x, 0.0, dir.y) * (dist / flight) + Vec3::Y * up;
+                let land = self.loose.predict(start, vel, &mut arc)?;
+                let open = self.lib.world.level_at(land) == lv
+                    && land.y - floor < HOP_LANDS
+                    && self.nav.open_at(Vec3::new(land.x, floor, land.z));
+                open.then_some(vel)
+            });
+            let Some(vel) = hop else { continue };
             self.loose.take(&[b]);
-            self.loose.throw(b, from + Vec3::Y * 0.05, vel, turn, spin, 0.0);
+            self.loose.throw(b, start, vel, turn, spin, 0.0);
             hopped = true;
         }
         if hopped && !self.told_restless {
@@ -339,7 +369,15 @@ mod tests {
         let (mut g, mut audio) = great();
         g.open_all_gates();
         let inside = g.lib.rooms[dept::ARCANUM].drop;
-        let outside = g.threshold();
+        let outside = g.threshold;
+        // Couriers leave its books on the gallery by its door.
+        let door = g.lib.rooms[dept::ARCANUM].door;
+        assert_eq!(g.lib.world.level_at(outside), g.lib.world.level_at(door), "{outside}");
+        assert!(
+            (outside.y - door.y).abs() < 0.05 && outside.distance(door) < 3.5,
+            "{outside}"
+        );
+        assert!(g.nav.open_at(outside));
         assert_eq!(g.ward_strands(), 3);
         for m in [Magic::Familiars, Magic::Spells, Magic::Aura] {
             assert!(g.quieted(m, inside), "{m:?}");

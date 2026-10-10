@@ -299,6 +299,8 @@ impl Game {
         if books.is_empty() {
             let msg = if self.at_hub(at) {
                 "Those books are at the hub already."
+            } else if self.quieted(Magic::Spells, at) {
+                "The Arcanum's ward holds those books until the room is half in order."
             } else {
                 "Nothing there to send."
             };

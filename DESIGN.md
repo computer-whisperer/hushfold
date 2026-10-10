@@ -85,7 +85,8 @@ walls, doorways and gates) and hands each room's inside to its department's file
 in `library/rooms/`, which lays out its own bookcases (`add_category` takes the
 faces, each with its own normal, in reading order) and furnishings, from shared
 helpers in `rooms/mod.rs`. Each room's books come from a generator of its own, so
-one room's layout leaves the others' books alone. A test fails if two visible
+one room's layout leaves the others' books alone; the upper floors' heaps are then
+relaid by `upstairs.rs` (What the rooms ask). A test fails if two visible
 faces share a plane (z-fighting); another holds every room to 40 faces and its
 starting heaps under 2 m.
 
@@ -221,6 +222,51 @@ flames, mist, fretwork, marble, brick, music, arms and a night sky real.
 - **Lettering:** `Library::inscribe` taking an `up` direction, for lettering along an
   arch (the Hall's wing names call `text::set_line` themselves).
 
+## What the rooms ask
+The ground floor teaches the game; upstairs, and in the Bestiary, a room asks
+something of its own besides finding and filing. Where books lie is generation's
+(`library/upstairs.rs`, generation 5, relaying each upstairs room's heaps from
+what generation 4 gave it, with numbers of its own); the rest are rules of play
+(`game/rooms.rs`). Each room says what it asks the first time you step into it in a
+session.
+- **The Map Room and the Chronicle Hall** open together, each heaped with nine
+  tenths of the other's own books: a swap round the corner of the gallery, and the
+  couriers' work (they carry a book to its own room). Their tallest series (34 cm
+  or more, about a tenth of their books) are **folios**: one takes three places in
+  the arms, flies half as far tossed (the arc shows it), and is too heavy for
+  familiars.
+- **The Verse Gallery** holds over half of the Music Room's books (songs), stacked
+  nearest its door, a floor below the Music Room: clutter to work round until the
+  Music Room opens, then a haul upstairs. The Music Room itself asks nothing.
+- **The Arcanum's ward** quiets magic in the room and gives it back a step at each
+  quarter of the room shelved: familiars first (none is posted there, takes a book
+  lying there or files one into its cases; couriers leave its books at its door),
+  then spells and Homing Toss (no casting there, no charm or summon reaching in, no
+  rush to its slots), then the Shelving Aura. Reading skills are not magic it
+  quiets. Three strands of violet light across its doorway go out one by one.
+- **The Clockworks' stopped clocks**: eight clocks float over its floor, stopped,
+  each holding about 250 of its books still in the air round it, mid-fall, in a
+  haze. A clock's face is lettered with one of the room's series, as a maker's name
+  is; filing that series whole starts the clock again and lets its books fall.
+  Aiming at a face names its key, how much of it is shelved, and whether a volume
+  hangs by another clock: the first three clocks' keys lie in heaps, each of the
+  next three has a volume held by one of those, and each of the last two by one of
+  the second three. Which clocks have started follows from what is shelved, so
+  saves don't store it; a started clock keeps time from when it started (from
+  loading, after a load).
+- **The Weatherhouse's draught** blows through the room the way its vane's arrow
+  points from, gusting: a thrown book is pushed ~2.6 m/s² downwind (the toss's arc
+  shows the push as it is at the throw), and familiars fly up to a third slower into
+  it.
+- **The Hearth Library's books** were left wherever they were read: most lie about
+  the other rooms upstairs, a few on each reading table and the rest in small piles
+  between the heaps. Its own room starts nearly empty.
+- **The Bestiary's restless books** (a quarter of its series, by a hash of the
+  series) wake when it opens: a loose one within 2.2 m of someone walking hops 1.5–
+  2.5 m away from them, rests a moment, and after three hops settles for the
+  session. Standing still takes them, as does reach (Sifting Touch, Lodestone
+  Grasp), and familiars, whom they don't mind.
+
 ## Loose books
 Every book not shelved or carried is loose (`src/loose.rs`), simulated with
 semi-physics rather than rigid bodies (see SCALING.md for why):
@@ -247,6 +293,10 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
   the aim point.
 - Generation picks drop points per pile; dropping them through the same code
   makes the starting piles.
+- Books a stopped clock holds (the Clockworks) hang in the air outside the
+  heightfields and the buckets, beyond any reach, until thawed: then they fall as
+  thrown books do. The Weatherhouse's draught pushes books flying through it
+  (`Loose::set_wind`), and the toss's arc with them.
 
 ## Verbs
 - Tap a loose book: take that book, from wherever it lies in its pile; whatever
@@ -400,7 +450,8 @@ veil) closes the way into a department until the departments it counts are
 shelved to a fraction: the East Wing opens at 40% of the West; in the Great
 Library the second room at a quarter of the Observatory, each after it at half of
 the rooms opened before it (the first veil lifted at half too, at ~1.6 h by the
-pacing bot, too late to show the library early). A closed gate is
+pacing bot, too late to show the library early), but for the Chronicle Hall, which
+opens with the Map Room. A closed gate is
 a solid to walking, throwing, gathering, aiming and routes; gate states follow
 from what is shelved, so saves don't store them.
 
@@ -571,7 +622,7 @@ edges) are antialiased over the pixel's footprint, and fine relief (bands, bevel
 fades with distance. Book-dense views cost within ±3% of the plain boxes on the GPU
 (the split paid for the material).
 
-`scene.rs` keeps books lying still (in piles or shelved) and the ghosts of empty
+`scene.rs` keeps books lying still (in piles, shelved, or held by a stopped clock) and the ghosts of empty
 slots in 8 × 6 × 8 m chunks with their own GPU buffers. Each frame every book's
 state and Loose's draw version (bumped when a book comes to rest, leaves its rest,
 or starts or ends a fall) are compared with what its chunk was built from; only
@@ -650,4 +701,10 @@ rewritten: 1 (kept when the maths moved to libm, which moved 176 loose books by
 at most 3 µm). The Great Library's was 2 after the visual pass, 3 after the
 titles, 4 after the move to libm (46 loose books moved more than a centimetre). Titles are drawn from the same random values as before, so every series
 keeps its volumes, colour and sizes; only the alphabetical order, and so the
-shelving, changed (the Great Library's shelves now fit one more series).
+shelving, changed (the Great Library's shelves now fit one more series). It
+was 5 when the upper floors were relaid (`library/upstairs.rs`): nothing below the
+first floor moved, so a save of generation 4 loads as long as the Map Room is still
+veiled in it (it could not have touched anything that moved); one with the Map
+Room open starts fresh as before. `great_library_below_the_first_floor_generates_as_before`
+pins what that relies on: every book's series, volume, size and slot, and where
+every book starts but those starting upstairs.

@@ -859,11 +859,29 @@ impl Loose {
     /// removed book must be lifted with it, not just what touches it, or a re-dropped
     /// book would see books over it as support.
     fn above(&self, y: u32, x: u32) -> bool {
-        let (ry, rx) = (self.rest[y as usize], self.rest[x as usize]);
         let ((ymn, ymx), (xmn, xmx)) = (self.footprint(y), self.footprint(x));
         if ymn.x > xmx.x || xmn.x > ymx.x || ymn.y > xmx.y || xmn.y > ymx.y {
             return false;
         }
+        self.may_be_above(y, x) && self.above_cells(y, x)
+    }
+
+    /// Whether `y` could rest on `x` at all: the highest `y`'s underside comes over its
+    /// footprint against the lowest `x`'s top sinks over its own. Most pairs in a deep
+    /// heap fall apart here (one well below the other), before `above_cells` looks
+    /// cell by cell; it never rules out a pair that `above_cells` would find.
+    fn may_be_above(&self, y: u32, x: u32) -> bool {
+        let (ry, rx) = (self.rest[y as usize], self.rest[x as usize]);
+        let (hy, hx) = (self.half(y), self.half(x));
+        let y_high = ry.c.y + hy.x * ry.su.abs() + hy.y * ry.sv.abs();
+        let x_low = rx.c.y - hx.x * rx.su.abs() - hx.y * rx.sv.abs();
+        y_high + 1e-4 >= x_low + rx.rise(self.size[x as usize].x) - 0.012
+    }
+
+    /// Whether `y` rests on `x` somewhere: at a cell under `y` inside `x`'s footprint,
+    /// `y`'s underside is at `x`'s top or above it.
+    fn above_cells(&self, y: u32, x: u32) -> bool {
+        let (ry, rx) = (self.rest[y as usize], self.rest[x as usize]);
         let rise = rx.rise(self.size[x as usize].x);
         let hx = self.half(x);
         let g = self.grid_of(y);
@@ -1827,6 +1845,28 @@ mod tests {
 
     /// Gathers and sifts keep the heightfield exactly what the resting books make
     /// (regression: the rim of each rebuilt area was left at floor height).
+    /// The bound `above` tries first never rules out a book that rests on another.
+    #[test]
+    fn the_quick_bound_keeps_every_book_resting_on_another() {
+        let lib = Library::generate(crate::library::Layout::Great, crate::game::SEED);
+        let loose = Loose::new(&lib);
+        let mut pairs = 0;
+        for lv in 0..loose.grids.len() {
+            let g = &loose.grids[lv];
+            for bucket in g.buckets.iter().step_by(7) {
+                for &y in bucket {
+                    for &x in bucket {
+                        if x != y && loose.above_cells(y, x) {
+                            pairs += 1;
+                            assert!(loose.may_be_above(y, x), "{y} on {x}");
+                        }
+                    }
+                }
+            }
+        }
+        assert!(pairs > 1000, "{pairs} pairs");
+    }
+
     #[test]
     fn heightfield_stays_exact() {
         let (lib, mut loose) = library();
