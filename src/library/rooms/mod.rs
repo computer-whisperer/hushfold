@@ -144,21 +144,6 @@ pub(super) fn rod(lib: &mut Library, p: Vec3, q: Vec3, w: f32, d: f32, kind: u32
     lib.decor(Inst::new((p + q) * 0.5, rot, Vec3::new(w, v.length(), d), kind, col, 0));
 }
 
-/// An eight-sided upright block centred on `c`, `w` across and `h` tall: two boxes,
-/// one turned an eighth of a turn.
-pub(super) fn octo(lib: &mut Library, c: Vec3, w: f32, h: f32, kind: u32, rgba: [f32; 4]) {
-    for t in [0.2f32, 0.985] {
-        lib.decor(Inst::new(
-            c,
-            Quat::from_rotation_y(t),
-            Vec3::new(w, h, w),
-            kind,
-            rgba,
-            0,
-        ));
-    }
-}
-
 /// `faces` (all facing one way) left to right as you face them, as `add_category`
 /// takes them.
 pub(super) fn left_to_right(mut faces: Vec<(Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
