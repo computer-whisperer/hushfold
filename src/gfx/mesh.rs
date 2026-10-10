@@ -482,7 +482,11 @@ impl Mesh {
             })
             .collect();
         self.verts.extend(back);
-        let flipped: Vec<u32> = (self.idx.chunks_exact(3))
+        let flipped: Vec<u32> = self
+            .idx
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|t| [t[0] + first, t[2] + first, t[1] + first])
             .collect();
         self.idx.extend(flipped);
@@ -657,7 +661,7 @@ mod tests {
     fn meshes_face_out() {
         for (name, m) in shapes() {
             assert!(!m.idx.is_empty(), "{name}: empty");
-            for t in m.idx.chunks_exact(3) {
+            for t in m.idx.as_chunks::<3>().0 {
                 let v: Vec<&Vertex> = t.iter().map(|&i| &m.verts[i as usize]).collect();
                 let p = |k: usize| Vec3::from(v[k].pos);
                 let face = (p(1) - p(0)).cross(p(2) - p(0)).normalize();
@@ -738,7 +742,7 @@ mod tests {
                 ]
             };
             let mut count = std::collections::HashMap::new();
-            for t in m.idx.chunks_exact(3) {
+            for t in m.idx.as_chunks::<3>().0 {
                 for e in 0..3 {
                     let (a, b) = (key(t[e]), key(t[(e + 1) % 3]));
                     *count.entry((a, b)).or_insert(0i32) += 1;

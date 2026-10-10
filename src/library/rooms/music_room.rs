@@ -1258,7 +1258,11 @@ mod tests {
     #[test]
     fn fiddle_outline_fills() {
         let m = Mesh::prism(&fiddle(1.0, 0.6), 0.1);
-        let area: f32 = (m.idx.chunks_exact(3))
+        let area: f32 = m
+            .idx
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|t| {
                 let p = |k: usize| Vec3::from(m.verts[t[k] as usize].pos);
                 (p(1) - p(0)).cross(p(2) - p(0)).z.abs() * 0.5
