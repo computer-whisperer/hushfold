@@ -4,6 +4,7 @@
 //! where words drift up out of an open book and paper cranes hang in the air.
 
 use super::*;
+use crate::gfx::Vertex;
 use crate::gfx::crane::{Crane, Fold, Paper, Print};
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
@@ -278,34 +279,59 @@ fn seat_window(lib: &mut Library, f: &RoomFrame, s: f32, wall: &Spot) {
     lib.light(moon, 6.0, [0.45, 0.55, 1.0], 0.5, LightKind::Static);
 }
 
-/// A poet's portrait `size` wide and high in a gilt frame, its middle `y` up the wall
-/// at `at` (on the wall's face, facing into the room); `k` picks the sitter.
+/// A poet's portrait `size` wide and high in a moulded gilt frame, its middle `y` up
+/// the wall at `at` (on the wall's face, facing into the room); `k` picks the sitter.
+/// The small ones are ovals.
 fn portrait(lib: &mut Library, at: &Spot, (w, h): (f32, f32), y: f32, k: usize) {
+    let oval = h < 1.0;
     let bar = 0.09;
-    for s in [-1.0f32, 1.0] {
-        at.block(
-            lib,
-            Vec3::new(0.0, y + s * (h * 0.5 + bar * 0.5), 0.045),
-            Vec3::new(w + 2.0 * bar, bar, 0.09),
-            kind::METAL,
-            GOLD,
-        );
-        at.block(
-            lib,
-            Vec3::new(s * (w * 0.5 + bar * 0.5), y, 0.045),
-            Vec3::new(bar, h, 0.09),
-            kind::METAL,
-            GOLD,
-        );
-    }
+    // The frame's section, from its outer edge inward (x) and out from the wall (y): a
+    // flat, a bead, a hollow, a raised inner lip, lapping the canvas.
+    let profile = [
+        (0.0, 0.0),
+        (0.0, 0.045),
+        (0.012, 0.06),
+        (0.026, 0.07),
+        (0.04, 0.062),
+        (0.058, 0.05),
+        (0.074, 0.058),
+        (0.086, 0.066),
+        (bar + 0.012, 0.05),
+        (bar + 0.012, 0.0),
+    ]
+    .map(Vec2::from);
+    let (ow, oh) = (w * 0.5 + bar, h * 0.5 + bar);
+    let path: Vec<Vec2> = if oval {
+        (0..48)
+            .map(|i| {
+                let t = i as f32 / 48.0 * TAU;
+                Vec2::new(libm::cosf(t) * ow, libm::sinf(t) * oh)
+            })
+            .collect()
+    } else {
+        vec![
+            Vec2::new(-ow, -oh),
+            Vec2::new(ow, -oh),
+            Vec2::new(ow, oh),
+            Vec2::new(-ow, oh),
+        ]
+    };
+    let frame = lib.shape(moulding(&path, &profile));
+    let middle = at.at + at.q * Vec3::Y * y;
+    lib.decor(frame.at(middle, at.q, kind::METAL, GOLD));
     let grounds = [[0.07, 0.08, 0.06], [0.12, 0.07, 0.05], [0.05, 0.06, 0.09]];
-    at.block(
-        lib,
-        Vec3::new(0.0, y, 0.03),
-        Vec3::new(w, h, 0.02),
-        kind::PLAIN,
-        rgba(grounds[k % 3], 1.0),
-    );
+    let ground = rgba(grounds[k % 3], 1.0);
+    if oval {
+        let canvas = lib.shape(Mesh::cylinder(48));
+        lib.decor(canvas.sized(Vec3::new(w + 0.03, 0.02, h + 0.03)).inst(
+            at.at + at.q * Vec3::new(0.0, y, 0.03),
+            at.q * Quat::from_rotation_x(FRAC_PI_2),
+            kind::PLAIN,
+            ground,
+        ));
+    } else {
+        at.block(lib, Vec3::new(0.0, y, 0.03), Vec3::new(w, h, 0.02), kind::PLAIN, ground);
+    }
     let coats = [
         [0.06, 0.05, 0.05],
         [0.32, 0.06, 0.07],
@@ -322,36 +348,58 @@ fn portrait(lib: &mut Library, at: &Spot, (w, h): (f32, f32), y: f32, k: usize) 
     let skin = [0.72, 0.55, 0.42, 1.0];
     let base = y - h * 0.5;
     let z = 0.045;
-    // Shoulders and coat, a white collar, the head with its hair.
-    at.block(
+    let round = lib.shape(Mesh::sphere(24));
+    let dome = lib.shape(Mesh::dome(24));
+    let paint = |lib: &mut Library, s: Shape, p: Vec3, size: Vec3, rot: f32, kind: u32, color: [f32; 4]| {
+        lib.decor(
+            s.sized(size)
+                .inst(at.at + at.q * p, at.q * Quat::from_rotation_z(rot), kind, color),
+        );
+    };
+    // Shoulders and coat (rounded, rising from the bottom of the canvas or from low in
+    // the oval), a white collar, the head with its hair behind it, the eyes.
+    let (from, broad) = if oval { (0.1, 0.56) } else { (0.0, 0.74) };
+    paint(
         lib,
-        Vec3::new(0.0, base + h * 0.2, z),
-        Vec3::new(w * 0.74, h * 0.4, 0.01),
+        dome,
+        Vec3::new(0.0, base + h * (from + 0.2), z),
+        Vec3::new(w * broad, h * 0.4, 0.012),
+        0.0,
         kind::CLOTH,
         rgba(coats[k % 5], 1.0),
     );
     at.part(
         lib,
-        Vec3::new(0.0, base + h * 0.4, z + 0.004),
-        Vec3::new(w * 0.2, w * 0.2, 0.008),
+        Vec3::new(0.0, base + h * (from + 0.38), z + 0.008),
+        Vec3::new(w * 0.18, w * 0.18, 0.008),
         Quat::from_rotation_z(FRAC_PI_4),
         kind::PLAIN,
         [0.85, 0.83, 0.78, 1.0],
     );
-    let head = Vec3::new(0.0, base + h * 0.57, z + 0.002);
+    let head = Vec3::new(0.0, base + h * (from + 0.55), z + 0.004);
     let hair = rgba(hairs[(k / 2) % 4], 1.0);
-    at.block(
+    paint(
         lib,
-        head + Vec3::new(0.0, h * 0.03, -0.004),
-        Vec3::new(w * 0.3, h * 0.3, 0.008),
+        round,
+        head + Vec3::new(0.0, h * 0.03, -0.006),
+        Vec3::new(w * 0.31, h * 0.3, 0.014),
+        0.0,
         kind::PLAIN,
         hair,
     );
-    at.block(lib, head, Vec3::new(w * 0.22, h * 0.25, 0.012), kind::PLAIN, skin);
+    paint(
+        lib,
+        round,
+        head,
+        Vec3::new(w * 0.22, h * 0.25, 0.02),
+        0.0,
+        kind::PLAIN,
+        skin,
+    );
     for x in [-1.0f32, 1.0] {
         at.block(
             lib,
-            head + Vec3::new(x * w * 0.045, h * 0.025, 0.007),
+            head + Vec3::new(x * w * 0.045, h * 0.025, 0.009),
             Vec3::new(w * 0.03, w * 0.018, 0.004),
             kind::PLAIN,
             [0.08, 0.05, 0.04, 1.0],
@@ -359,14 +407,72 @@ fn portrait(lib: &mut Library, at: &Spot, (w, h): (f32, f32), y: f32, k: usize) 
     }
     if k % 3 == 2 {
         // A beret.
-        at.part(
+        paint(
             lib,
-            head + Vec3::new(w * 0.03, h * 0.15, 0.008),
-            Vec3::new(w * 0.36, h * 0.07, 0.01),
-            Quat::from_rotation_z(-0.12),
+            round,
+            head + Vec3::new(w * 0.03, h * 0.15, 0.002),
+            Vec3::new(w * 0.36, h * 0.08, 0.018),
+            -0.12,
             kind::CLOTH,
             [0.08, 0.06, 0.06, 1.0],
         );
+    }
+}
+
+/// A moulding run round a closed outline in xy (`path`, anticlockwise), its section
+/// `profile` given as points (inward from the outline, out along z) round a closed
+/// outline of its own, mitred at the outline's corners (smooth round a curve): a
+/// picture's frame.
+fn moulding(path: &[Vec2], profile: &[Vec2]) -> Mesh {
+    let n = path.len();
+    // Each corner's mitre: the way inward along it, how far that runs per unit inward
+    // from the edges either side, and whether it is a corner or a bend in a curve.
+    let corners: Vec<(Vec2, f32, bool)> = (0..n)
+        .map(|k| {
+            let d0 = (path[k] - path[(k + n - 1) % n]).normalize();
+            let d1 = (path[(k + 1) % n] - path[k]).normalize();
+            let m = (d0.perp() + d1.perp()).normalize();
+            (m, 1.0 / m.dot(d1.perp()), d0.dot(d1) < 0.8)
+        })
+        .collect();
+    let sides = profile.len();
+    // Which hand of the section's outline is out of it.
+    let turning: f32 = (0..sides).map(|j| profile[j].perp_dot(profile[(j + 1) % sides])).sum();
+    let out = if turning > 0.0 { 1.0 } else { -1.0 };
+    let mut mesh = Mesh::default();
+    for k in 0..n {
+        let k1 = (k + 1) % n;
+        let inward = (path[k1] - path[k]).normalize().perp();
+        for j in 0..sides {
+            let (a, b) = (profile[j], profile[(j + 1) % sides]);
+            let d = (b - a).normalize();
+            let pn = Vec2::new(d.y, -d.x) * out;
+            let first = mesh.verts.len() as u32;
+            for (c, p) in [(k, a), (k, b), (k1, b), (k1, a)] {
+                let (m, stretch, sharp) = corners[c];
+                let across = if sharp { inward } else { m };
+                let at = path[c] + m * stretch * p.x;
+                mesh.verts.push(Vertex {
+                    pos: [at.x, at.y, p.y],
+                    normal: (across * pn.x).extend(pn.y).normalize().into(),
+                });
+            }
+            facet(&mut mesh, [first, first + 1, first + 2]);
+            facet(&mut mesh, [first, first + 2, first + 3]);
+        }
+    }
+    mesh
+}
+
+/// A triangle of `m`'s, wound to face the way its corners' normals do.
+fn facet(m: &mut Mesh, [a, b, c]: [u32; 3]) {
+    let p = |i: u32| Vec3::from(m.verts[i as usize].pos);
+    let n = |i: u32| Vec3::from(m.verts[i as usize].normal);
+    let face = (p(b) - p(a)).cross(p(c) - p(a));
+    if face.dot(n(a) + n(b) + n(c)) >= 0.0 {
+        m.idx.extend_from_slice(&[a, b, c]);
+    } else {
+        m.idx.extend_from_slice(&[a, c, b]);
     }
 }
 
@@ -407,14 +513,26 @@ fn low_table(lib: &mut Library, f: &RoomFrame, a: f32, o: f32) {
         kind::WOOD,
         rgba(WALNUT, 1.0),
     );
+    let leg = [
+        (0.0, 0.0),
+        (0.026, 0.0),
+        (0.03, 0.02),
+        (0.02, 0.05),
+        (0.018, 0.12),
+        (0.034, 0.2),
+        (0.022, 0.29),
+        (0.03, 0.34),
+        (0.032, h - 0.05),
+        (0.0, h - 0.05),
+    ];
+    let leg = lib.shape(Mesh::lathe(&leg.map(Vec2::from), 16));
     for (x, z) in [(-0.48f32, -0.28f32), (0.48, -0.28), (-0.48, 0.28), (0.48, 0.28)] {
-        at.block(
-            lib,
-            Vec3::new(x, (h - 0.05) * 0.5, z),
-            Vec3::new(0.06, h - 0.05, 0.06),
+        lib.decor(leg.at(
+            at.at + at.q * Vec3::new(x, 0.0, z),
+            at.q,
             kind::WOOD,
             rgba(DARK_WOOD, 1.0),
-        );
+        ));
     }
     at.part(
         lib,
@@ -424,23 +542,28 @@ fn low_table(lib: &mut Library, f: &RoomFrame, a: f32, o: f32) {
         kind::CLOTH,
         [0.3, 0.08, 0.2, 1.0],
     );
-    at.block(
-        lib,
-        Vec3::new(0.3, h + 0.08, -0.1),
-        Vec3::new(0.05, 0.16, 0.05),
+    // A candle in a brass dish.
+    let foot = at.at + at.q * Vec3::new(0.3, h, -0.1);
+    let dish = [
+        (0.0, 0.0),
+        (0.06, 0.0),
+        (0.065, 0.012),
+        (0.05, 0.015),
+        (0.03, 0.02),
+        (0.03, 0.03),
+        (0.0, 0.03),
+    ];
+    let dish = lib.shape(Mesh::lathe(&dish.map(Vec2::from), 24));
+    lib.decor(dish.at(foot, at.q, kind::METAL, [0.55, 0.38, 0.13, 1.0]));
+    let wax = lib.shape(Mesh::cylinder(16));
+    lib.decor(wax.sized(Vec3::new(0.042, 0.14, 0.042)).inst(
+        foot + Vec3::Y * 0.1,
+        at.q,
         kind::PLAIN,
         [0.85, 0.8, 0.65, 1.0],
-    );
-    let flame = [1.0, 0.58, 0.2, 12.0];
-    let tip = Vec3::new(0.3, h + 0.19, -0.1);
-    lib.decor(Inst::new(
-        at.at + at.q * tip,
-        at.q,
-        Vec3::new(0.025, 0.05, 0.025),
-        kind::EMISSIVE,
-        flame,
-        1,
     ));
+    flame(lib, foot + Vec3::Y * 0.172, 0.05);
+    let tip = Vec3::new(0.3, h + 0.19, -0.1);
     lib.light(
         at.at + at.q * tip + Vec3::Y * 0.2,
         4.5,
@@ -455,15 +578,8 @@ fn armchair(lib: &mut Library, f: &RoomFrame, (a, o): (f32, f32), yaw: f32, clot
     guard(lib, f, (a - 0.5, a + 0.5), (o - 0.5, o + 0.5), 1.0);
     let at = Spot::new(f, a, o, yaw);
     let c = rgba(cloth, 1.0);
-    let wood = rgba(DARK_WOOD, 1.0);
     for (x, z) in [(-0.3f32, -0.28f32), (0.3, -0.28), (-0.3, 0.28), (0.3, 0.28)] {
-        at.block(
-            lib,
-            Vec3::new(x, 0.06, z),
-            Vec3::new(0.06, 0.12, 0.06),
-            kind::WOOD,
-            wood,
-        );
+        bun_foot(lib, &at, Vec3::new(x, 0.0, z));
     }
     at.block(lib, Vec3::Y * 0.26, Vec3::new(0.78, 0.28, 0.72), kind::CLOTH, c);
     at.block(
@@ -489,6 +605,7 @@ fn armchair(lib: &mut Library, f: &RoomFrame, (a, o): (f32, f32), yaw: f32, clot
             kind::CLOTH,
             c,
         );
+        rolled_arm(lib, &at, Vec3::new(x * 0.335, 0.62, 0.02), 0.66, c);
     }
 }
 
@@ -497,15 +614,8 @@ fn settee(lib: &mut Library, f: &RoomFrame, (a, o): (f32, f32), cloth: [f32; 3])
     guard(lib, f, (a - 0.95, a + 0.95), (o - 0.45, o + 0.45), 1.0);
     let at = Spot::new(f, a, o, 0.0);
     let c = rgba(cloth, 1.0);
-    let wood = rgba(DARK_WOOD, 1.0);
     for (x, z) in [(-0.8f32, -0.3f32), (0.8, -0.3), (-0.8, 0.3), (0.8, 0.3)] {
-        at.block(
-            lib,
-            Vec3::new(x, 0.06, z),
-            Vec3::new(0.06, 0.12, 0.06),
-            kind::WOOD,
-            wood,
-        );
+        bun_foot(lib, &at, Vec3::new(x, 0.0, z));
     }
     at.block(lib, Vec3::Y * 0.26, Vec3::new(1.8, 0.28, 0.76), kind::CLOTH, c);
     for x in [-0.42f32, 0.42] {
@@ -533,7 +643,36 @@ fn settee(lib: &mut Library, f: &RoomFrame, (a, o): (f32, f32), cloth: [f32; 3])
             kind::CLOTH,
             c,
         );
+        rolled_arm(lib, &at, Vec3::new(x * 0.845, 0.66, -0.02), 0.7, c);
     }
+}
+
+/// A turned bun foot under a seat, standing on `p` in its frame.
+fn bun_foot(lib: &mut Library, at: &Spot, p: Vec3) {
+    let bun = [
+        (0.0, 0.0),
+        (0.022, 0.0),
+        (0.036, 0.025),
+        (0.04, 0.055),
+        (0.032, 0.085),
+        (0.024, 0.1),
+        (0.03, 0.12),
+        (0.0, 0.12),
+    ];
+    let bun = lib.shape(Mesh::lathe(&bun.map(Vec2::from), 16));
+    lib.decor(bun.at(at.at + at.q * p, at.q, kind::WOOD, rgba(DARK_WOOD, 1.0)));
+}
+
+/// A seat's arm rolled over along its top, centred on `p` (in its frame), `len` long
+/// front to back.
+fn rolled_arm(lib: &mut Library, at: &Spot, p: Vec3, len: f32, cloth: [f32; 4]) {
+    let roll = lib.shape(Mesh::cylinder(24));
+    lib.decor(roll.sized(Vec3::new(0.15, len, 0.15)).inst(
+        at.at + at.q * p,
+        at.q * Quat::from_rotation_x(FRAC_PI_2),
+        kind::CLOTH,
+        cloth,
+    ));
 }
 
 /// A standard lamp with a glowing shade.
@@ -541,22 +680,30 @@ fn floor_lamp(lib: &mut Library, f: &RoomFrame, a: f32, o: f32) {
     guard(lib, f, (a - 0.2, a + 0.2), (o - 0.2, o + 0.2), 1.7);
     let at = Spot::new(f, a, o, 0.0);
     let brass = [0.55, 0.38, 0.13, 1.0];
-    at.block(lib, Vec3::Y * 0.02, Vec3::new(0.34, 0.04, 0.34), kind::METAL, brass);
-    at.block(lib, Vec3::Y * 0.8, Vec3::new(0.035, 1.5, 0.035), kind::METAL, brass);
-    at.block(
-        lib,
-        Vec3::Y * 1.62,
-        Vec3::new(0.38, 0.26, 0.38),
-        kind::EMISSIVE,
-        [1.0, 0.55, 0.24, 0.7],
+    let foot = [
+        (0.0, 0.0),
+        (0.17, 0.0),
+        (0.17, 0.02),
+        (0.12, 0.04),
+        (0.05, 0.07),
+        (0.03, 0.1),
+        (0.0, 0.1),
+    ];
+    let foot = lib.shape(Mesh::lathe(&foot.map(Vec2::from), 32));
+    lib.decor(foot.at(at.at, at.q, kind::METAL, brass));
+    let stem = lib.shape(Mesh::cylinder(12));
+    lib.decor(
+        stem.sized(Vec3::new(0.03, 1.45, 0.03))
+            .inst(at.at + Vec3::Y * 0.82, at.q, kind::METAL, brass),
     );
-    at.part(
-        lib,
-        Vec3::Y * 1.62,
-        Vec3::new(0.3, 0.27, 0.3),
-        Quat::from_rotation_y(FRAC_PI_4),
-        kind::EMISSIVE,
-        [1.0, 0.55, 0.24, 0.7],
+    let shade = Mesh::lathe(&[Vec2::new(0.2, 0.0), Vec2::new(0.13, 0.27)], 32);
+    let shade = lib.shape(shade.two_sided());
+    lib.decor(shade.at(at.at + Vec3::Y * 1.49, at.q, kind::EMISSIVE, [1.0, 0.55, 0.24, 0.7]));
+    let finial = lib.shape(Mesh::sphere(12));
+    lib.decor(
+        finial
+            .sized(Vec3::splat(0.04))
+            .inst(at.at + Vec3::Y * 1.78, at.q, kind::METAL, brass),
     );
     lib.light(at.at + Vec3::Y * 1.45, 6.0, [1.0, 0.62, 0.32], 1.0, LightKind::Static);
 }
@@ -575,7 +722,21 @@ fn lectern(lib: &mut Library, f: &RoomFrame, a: f32, words: bool) {
         kind::WOOD,
         rgba(DARK_WOOD, 1.0),
     );
-    at.block(lib, Vec3::Y * 0.55, Vec3::new(0.12, 1.0, 0.12), kind::WOOD, wood);
+    let post = [
+        (0.0, 0.0),
+        (0.08, 0.0),
+        (0.08, 0.03),
+        (0.055, 0.06),
+        (0.045, 0.2),
+        (0.062, 0.45),
+        (0.042, 0.7),
+        (0.036, 0.85),
+        (0.05, 0.92),
+        (0.065, 0.97),
+        (0.0, 0.97),
+    ];
+    let post = lib.shape(Mesh::lathe(&post.map(Vec2::from), 24));
+    lib.decor(post.at(at.at + Vec3::Y * 0.08, at.q, kind::WOOD, wood));
     let slope = Quat::from_rotation_x(0.42);
     let desk = Vec3::Y * 1.1;
     at.part(lib, desk, Vec3::new(0.62, 0.04, 0.46), slope, kind::WOOD, wood);
@@ -637,8 +798,9 @@ fn lectern(lib: &mut Library, f: &RoomFrame, a: f32, words: bool) {
     lib.light(at.at + Vec3::Y * 1.6, 3.5, [1.0, 0.78, 0.45], 0.5, LightKind::Static);
 }
 
-/// Paper cranes hanging still in the air over the lounge, faintly aglow, each folded
-/// from a sheet of its own: pages of verse, one of a song, one of plain rose paper.
+/// Paper cranes hanging on threads from the ceiling over the lounge, faintly aglow,
+/// each folded from a sheet of its own (pages of verse, one of a song, one of plain
+/// rose paper), swaying a little in the air and turning slowly on their threads.
 fn cranes(lib: &mut Library, f: &RoomFrame) {
     let spots = [
         (-2.0f32, 18.0f32, 3.7f32, 0.4f32),
@@ -658,6 +820,7 @@ fn cranes(lib: &mut Library, f: &RoomFrame) {
         ([0.95, 0.9, 0.74], Print::Text),
         ([0.9, 0.84, 0.92], Print::Text),
     ];
+    let thread = lib.shape(Mesh::cylinder(6));
     for (k, ((a, o, y, yaw), (tint, print))) in spots.into_iter().zip(papers).enumerate() {
         let bird = Crane {
             fold: Fold::Crane,
@@ -669,8 +832,51 @@ fn cranes(lib: &mut Library, f: &RoomFrame) {
             paper: Paper { tint, print },
             glow: [1.0, 0.85, 0.6, 0.12],
         };
+        // Hung from the ceiling over its back; it sways from there, and turns about
+        // its thread.
+        let back = bird.at + bird.rot * Vec3::Y * 0.017;
+        let hook = Vec3::new(back.x, f.y + RoomFrame::HEIGHT, back.z);
+        let k = k as f32;
+        let sway = Motion::Swing {
+            axis: Quat::from_rotation_y(k * 1.3) * Vec3::X,
+            amp: 0.025,
+            period: 6.0 + 0.7 * k,
+        };
+        let air = lib.mover(hook, sway, k * 1.9, None);
+        let twist = Motion::Swing {
+            axis: Vec3::Y,
+            amp: 0.35,
+            period: 13.0 + 1.6 * k,
+        };
+        let m = lib.mover(hook, twist, k * 3.1, Some(air));
+        lib.moving(
+            m,
+            thread.sized(Vec3::new(0.003, hook.y - back.y, 0.003)).inst(
+                (hook + back) * 0.5,
+                Quat::IDENTITY,
+                kind::PLAIN,
+                [0.8, 0.76, 0.66, 1.0],
+            ),
+        );
         for part in bird.parts() {
-            lib.decor(part);
+            lib.moving(m, part);
         }
     }
+}
+
+/// A candle's flame standing `h` tall on `at`.
+fn flame(lib: &mut Library, at: Vec3, h: f32) {
+    let drop = [
+        (0.0, 0.0),
+        (0.22, 0.06),
+        (0.34, 0.2),
+        (0.3, 0.42),
+        (0.16, 0.72),
+        (0.0, 1.0),
+    ];
+    let drop = lib.shape(Mesh::lathe(&drop.map(Vec2::from), 12));
+    lib.translucent(
+        drop.scaled(h)
+            .at(at, Quat::IDENTITY, kind::FIRE, [1.0, 0.62, 0.25, 4.0]),
+    );
 }
