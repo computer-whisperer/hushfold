@@ -635,6 +635,16 @@ impl Library {
         self.decor(piece(side, a, o, y, kind, rgb));
     }
 
+    /// The foot of something standing on the floor against an atrium wall, out from
+    /// it by less than a body's radius: drawn, and in the way of books. Bodies, held
+    /// that far off the wall, never reach it, so it changes nothing about where piles
+    /// go (they keep clear of what is in bodies' way).
+    fn against_wall(&mut self, i: Inst) {
+        let (min, max) = i.axis_box().expect("an upright box");
+        self.decor(i);
+        self.collide(min, max, Stops::BOOKS);
+    }
+
     /// The atrium face of the wall on side `si` of `level`: pilasters on pedestals, a
     /// blind arch between each pair with a banner in the colour of the wall's
     /// department hung in it, panelling between the pedestals, sconces by the door and
@@ -695,7 +705,7 @@ impl Library {
     fn pilaster(&mut self, side: Side, a: f32, y: f32) {
         let o = |depth: f32| (FACE - depth, FACE);
         let pedestal = piece(side, (a - 0.33, a + 0.33), o(0.24), (y, y + 1.24), kind::STONE, DRESSED);
-        self.solid(pedestal, Stops::ALL);
+        self.against_wall(pedestal);
         for (w, depth, y0, y1, rgb) in [
             (0.37, 0.28, 1.24, 1.32, PALE),
             (0.25, 0.16, 1.32, CAPITAL - 0.25, DRESSED),
@@ -722,11 +732,15 @@ impl Library {
         {
             let (p, q) = (s * FACE, s * (FACE - w));
             let (lo, hi) = box3(p.min(q), p.max(q), y + y0, y + y1);
-            let i = Inst::minmax(lo, hi, kind::STONE, rgb);
+            self.decor(Inst::minmax(lo, hi, kind::STONE, rgb));
             if k == 0 {
-                self.solid(i, Stops::ALL);
-            } else {
-                self.decor(i);
+                // The pedestal is in the way of books; of bodies, only its core, small
+                // enough to change nothing about where piles go (they keep 1.4 m off
+                // both walls, so more than that from it).
+                self.collide(lo, hi, Stops::BOOKS);
+                let (p, q) = (s * FACE, s * (FACE - 0.4));
+                let (lo, hi) = box3(p.min(q), p.max(q), y + y0, y + y1);
+                self.collide(lo, hi, Stops::ALL);
             }
         }
     }
@@ -945,7 +959,7 @@ impl Library {
             let (a0, a1) = span(1.92, 2.48);
             let a = (d + a0, d + a1);
             let plinth = piece(side, a, (FACE - 0.26, FACE), (y, y + 0.42), kind::STONE, DRESSED);
-            self.solid(plinth, Stops::ALL);
+            self.against_wall(plinth);
             stone(self, span(1.92, 2.48), 0.25, (3.72, 3.98), PALE);
             stone(self, span(1.98, 2.42), 0.18, (0.42, 3.72), DRESSED);
         }
