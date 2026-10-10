@@ -226,6 +226,14 @@ fn frustum(view_proj: Mat4) -> [Vec4; 6] {
     [r(3) + r(0), r(3) - r(0), r(3) + r(1), r(3) - r(1), r(2), r(3) - r(2)]
 }
 
+/// Draw a buffer of box instances with the bound pipeline (the box mesh bound too).
+fn draw_boxes(rp: &mut wgpu::RenderPass, b: &GrowBuf) {
+    if b.len > 0 {
+        rp.set_vertex_buffer(1, b.buf.slice(..));
+        rp.draw_indexed(0..36, 0, 0..b.len);
+    }
+}
+
 fn box_visible(planes: &[Vec4; 6], min: Vec3, max: Vec3) -> bool {
     planes.iter().all(|p| {
         // The corner furthest along the plane's normal.
@@ -253,6 +261,8 @@ pub struct Renderer {
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     scene_pipe: wgpu::RenderPipeline,
+    /// Books, drawn with a fragment shader of their own (`fs_book`).
+    book_pipe: wgpu::RenderPipeline,
     trans_pipe: wgpu::RenderPipeline,
     beam_pipe: wgpu::RenderPipeline,
     /// Lettering on signs and labels, and the glyph atlas it is cut from.
@@ -274,11 +284,14 @@ pub struct Renderer {
     static_buf: GrowBuf,
     text_buf: GrowBuf<Glyph>,
     dyn_buf: GrowBuf,
+    /// Books on the move, drawn apart from the other dynamic things (see `book_pipe`).
+    dyn_books_buf: GrowBuf,
     trans_buf: GrowBuf,
-    /// Moonbeams, drawn apart from the other translucent things (see `beam_pipe`), and
-    /// the lists the frame's translucent instances are sorted into.
+    /// Moonbeams, drawn apart from the other translucent things (see `beam_pipe`).
     beam_buf: GrowBuf,
-    split: [Vec<Inst>; 2],
+    /// The lists the frame's instances are sorted into: dynamic books and the rest,
+    /// moonbeams and the other translucent things.
+    split: [Vec<Inst>; 4],
     held_buf: GrowBuf,
     chunks: Vec<ChunkGpu>,
     timer: Option<Timer>,
@@ -488,6 +501,7 @@ impl Renderer {
         };
         use wgpu::CompareFunction::{Always, Less};
         let scene_pipe = make_scene("scene", &scene_layout, "fs_main", None, (true, Less), true);
+        let book_pipe = make_scene("books", &scene_layout, "fs_book", None, (true, Less), true);
         let trans_pipe = make_scene(
             "trans",
             &trans_layout,
@@ -788,6 +802,7 @@ impl Renderer {
             static_buf: GrowBuf::new(&device, "static", 1024),
             text_buf: GrowBuf::new(&device, "lettering", 1024),
             dyn_buf: GrowBuf::new(&device, "dynamic", 16384),
+            dyn_books_buf: GrowBuf::new(&device, "dynamic books", 1024),
             trans_buf: GrowBuf::new(&device, "trans", 16384),
             beam_buf: GrowBuf::new(&device, "beams", 64),
             split: Default::default(),
@@ -800,6 +815,7 @@ impl Renderer {
             queue,
             config,
             scene_pipe,
+            book_pipe,
             trans_pipe,
             beam_pipe,
             text_pipe,
@@ -1044,17 +1060,22 @@ impl Renderer {
         self.queue
             .write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(f.globals));
         self.queue.write_buffer(&self.post_buf, 0, bytemuck::bytes_of(&f.post));
-        self.dyn_buf.upload(&self.device, &self.queue, f.dynamic);
-        let [beams, rest] = &mut self.split;
-        beams.clear();
-        rest.clear();
-        for inst in f.trans {
-            if inst.kind == kind::SHAFT {
-                beams.push(*inst);
-            } else {
-                rest.push(*inst);
+        let [books, others, beams, rest] = &mut self.split;
+        let sort = |from: &[Inst], k: u32, yes: &mut Vec<Inst>, no: &mut Vec<Inst>| {
+            yes.clear();
+            no.clear();
+            for inst in from {
+                if inst.kind == k {
+                    yes.push(*inst);
+                } else {
+                    no.push(*inst);
+                }
             }
-        }
+        };
+        sort(f.dynamic, kind::BOOK, books, others);
+        sort(f.trans, kind::SHAFT, beams, rest);
+        self.dyn_books_buf.upload(&self.device, &self.queue, books);
+        self.dyn_buf.upload(&self.device, &self.queue, others);
         self.trans_buf.upload(&self.device, &self.queue, rest);
         self.beam_buf.upload(&self.device, &self.queue, beams);
         self.held_buf.upload(&self.device, &self.queue, f.held);
@@ -1111,15 +1132,17 @@ impl Renderer {
             rp.set_bind_group(0, &self.globals_bg, &[]);
             rp.set_vertex_buffer(0, self.box_vb.slice(..));
             rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
+            // Walls and floors first: they hide whole rooms of books behind them. The
+            // chunks hold only books.
             rp.set_pipeline(&self.scene_pipe);
-            // Walls and floors first: they hide whole rooms of books behind them.
-            let opaque = visible.iter().map(|&(_, i)| &self.chunks[i].opaque);
-            for b in std::iter::once(&self.static_buf).chain(opaque).chain([&self.dyn_buf]) {
-                if b.len > 0 {
-                    rp.set_vertex_buffer(1, b.buf.slice(..));
-                    rp.draw_indexed(0..36, 0, 0..b.len);
-                }
+            draw_boxes(&mut rp, &self.static_buf);
+            rp.set_pipeline(&self.book_pipe);
+            for &(_, i) in &visible {
+                draw_boxes(&mut rp, &self.chunks[i].opaque);
             }
+            draw_boxes(&mut rp, &self.dyn_books_buf);
+            rp.set_pipeline(&self.scene_pipe);
+            draw_boxes(&mut rp, &self.dyn_buf);
             if self.text_buf.len > 0 {
                 rp.set_pipeline(&self.text_pipe);
                 rp.set_bind_group(1, &self.text_bg, &[]);
@@ -1155,17 +1178,13 @@ impl Renderer {
             rp.set_vertex_buffer(0, self.box_vb.slice(..));
             rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
             rp.set_pipeline(&self.trans_pipe);
-            let ghosts = visible.iter().rev().map(|&(_, i)| &self.chunks[i].trans);
-            for b in ghosts.chain([&self.trans_buf]) {
-                if b.len > 0 {
-                    rp.set_vertex_buffer(1, b.buf.slice(..));
-                    rp.draw_indexed(0..36, 0, 0..b.len);
-                }
+            for &(_, i) in visible.iter().rev() {
+                draw_boxes(&mut rp, &self.chunks[i].trans);
             }
+            draw_boxes(&mut rp, &self.trans_buf);
             if self.beam_buf.len > 0 {
                 rp.set_pipeline(&self.beam_pipe);
-                rp.set_vertex_buffer(1, self.beam_buf.buf.slice(..));
-                rp.draw_indexed(0..36, 0, 0..self.beam_buf.len);
+                draw_boxes(&mut rp, &self.beam_buf);
             }
         }
         {
@@ -1197,9 +1216,8 @@ impl Renderer {
                 rp.set_bind_group(0, &self.globals_bg, &[]);
                 rp.set_vertex_buffer(0, self.box_vb.slice(..));
                 rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
-                rp.set_pipeline(&self.scene_pipe);
-                rp.set_vertex_buffer(1, self.held_buf.buf.slice(..));
-                rp.draw_indexed(0..36, 0, 0..self.held_buf.len);
+                rp.set_pipeline(&self.book_pipe);
+                draw_boxes(&mut rp, &self.held_buf);
             }
         }
         // Bloom: downsample chain then additive upsample back to level 0.

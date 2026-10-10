@@ -22,7 +22,7 @@ struct Globals {
 
 const K_PLAIN: u32 = 0u;
 const K_WOOD: u32 = 1u;
-const K_BOOK: u32 = 2u;
+const K_BOOK: u32 = 2u; // drawn by fs_book
 const K_FLOOR: u32 = 3u;
 const K_STONE: u32 = 4u;
 const K_EMISSIVE: u32 = 5u;
@@ -901,14 +901,6 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
             s.albedo = wood(i, fw);
             s.gloss = 28.0;
         }
-        case K_BOOK: {
-            let b = book_surface(i);
-            s.albedo = b.albedo;
-            s.spec = vec3<f32>(b.spec);
-            s.gloss = b.gloss;
-            s.emit = b.emit;
-            ao = mix(0.7, 1.0, ao);
-        }
         case K_FLOOR: {
             let f = floorboards(i.color.rgb, i.world, fw);
             s.albedo = f.rgb;
@@ -968,6 +960,24 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
             s.gloss = 24.0;
         }
     }
+    let amb = mix(g.ambient_bottom.rgb, g.ambient_top.rgb, s.n.y * 0.5 + 0.5) * ao;
+    let col = s.albedo * amb + s.emit + shade(s, i.world);
+    return vec4<f32>(apply_fog(col, i.world), 1.0);
+}
+
+// Books (kind BOOK only), in a pipeline of their own: their material needs more than
+// the rest of the scene, and would otherwise cost every material its registers.
+@fragment
+fn fs_book(i: VOut) -> @location(0) vec4<f32> {
+    let b = book_surface(i);
+    var s: Mat;
+    s.albedo = b.albedo;
+    s.spec = vec3<f32>(b.spec);
+    s.gloss = b.gloss;
+    s.emit = b.emit;
+    s.n = qrot(i.rot, i.lnormal);
+    s.back = 0.0;
+    let ao = mix(0.7, 1.0, mix(0.55, 1.0, smoothstep(0.0, 2.2, i.world.y)));
     let amb = mix(g.ambient_bottom.rgb, g.ambient_top.rgb, s.n.y * 0.5 + 0.5) * ao;
     let col = s.albedo * amb + s.emit + shade(s, i.world);
     return vec4<f32>(apply_fog(col, i.world), 1.0);
