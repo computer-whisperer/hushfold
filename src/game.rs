@@ -3,6 +3,7 @@
 
 mod cheats;
 mod familiar;
+mod mood;
 #[cfg(test)]
 mod pacing;
 mod sound;
@@ -2069,7 +2070,12 @@ impl Game {
             push(&mut list, f.pos, 3.5, f.role.light(), 0.8);
         }
         // The library's lights nearest the eye (by how far their reach falls short of
-        // it), as many as are left.
+        // it), as many as are left, tinted by the mood of where the eye is.
+        let mood = self.mood();
+        let push = |list: &mut Vec<GpuLight>, p: Vec3, r: f32, c: [f32; 3], i: f32| {
+            let [tr, tg, tb] = mood.light;
+            push(list, p, r, [c[0] * tr, c[1] * tg, c[2] * tb], i);
+        };
         let t = self.time;
         let room = MAX_LIGHTS - list.len();
         let mut near: Vec<(f32, usize)> = (self.lib.lights.iter().enumerate())
@@ -2109,12 +2115,14 @@ impl Game {
         let n = list.len() as f32;
         let mut lights = [GpuLight::default(); MAX_LIGHTS];
         lights[..list.len()].copy_from_slice(&list);
+        let [tr, tg, tb] = mood.top;
+        let [br, bg, bb] = mood.bottom;
         Globals {
             view_proj: self.view_proj(aspect).to_cols_array_2d(),
             cam_pos: [eye.x, eye.y, eye.z, self.time],
-            fog: [0.035, 0.03, 0.04, 0.022],
-            ambient_top: [0.19, 0.18, 0.24, 0.0],
-            ambient_bottom: [0.09, 0.065, 0.05, n],
+            fog: mood.fog,
+            ambient_top: [tr, tg, tb, 0.0],
+            ambient_bottom: [br, bg, bb, n],
             lens: self.lens_sought(),
             glow: self.glow(),
             lights,

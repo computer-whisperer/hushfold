@@ -267,7 +267,9 @@ fn bevel(i: VOut, r: f32, k: f32, pillow: f32, fw: f32) -> vec3<f32> {
 // ---------------------------------------------------------------- materials
 
 // Wood: growth rings round a log axis along the box's longest side, set off its centre
-// so the faces show long arcs of figure, and pores where they can be seen.
+// so the faces show long arcs of figure, and pores where they can be seen. A round
+// mesh (a ring, a wheel, a squat turning: two sides alike, the third shorter) is bent
+// or turned with its grain running round it, about its short side.
 fn wood(i: VOut, fw: f32) -> vec3<f32> {
     let s = i.scale;
     let m = i.local * s;
@@ -282,9 +284,24 @@ fn wood(i: VOut, fw: f32) -> vec3<f32> {
     } else {
         along = m.z; a1 = m.x; a2 = m.y;
     }
+    let lo = min(s.x, min(s.y, s.z));
+    let hi = max(s.x, max(s.y, s.z));
+    let mid = s.x + s.y + s.z - lo - hi;
+    if (i.mesh != 0u && mid > 0.85 * hi && lo < 0.85 * mid) {
+        var flat = m.xy;
+        var h = m.z;
+        if (s.x == lo) {
+            flat = m.yz; h = m.x;
+        } else if (s.y == lo) {
+            flat = m.xz; h = m.y;
+        }
+        along = atan2(flat.y, flat.x) * 0.5 * hi; a1 = length(flat); a2 = h;
+    }
     let off = (vec2<f32>(seed, fract(seed * 7.13)) - 0.5) * 1.4 + vec2<f32>(0.3, -0.25);
     let warp = fbm2(vec3<f32>(along * 0.7, a1 * 5.0, a2 * 5.0) + seed * 13.0);
-    let ring = fract((length(vec2<f32>(a1, a2) - off) + warp * 0.05) * 22.0);
+    // Closer rings on a thin turning, or it would show none.
+    let rings = 22.0 * mix(1.0, clamp(0.12 / lo, 1.0, 3.0), f32(i.mesh != 0u));
+    let ring = fract((length(vec2<f32>(a1, a2) - off) + warp * 0.05) * rings);
     let late = smoothstep(0.5, 0.85, ring) * (1.0 - smoothstep(0.85, 1.0, ring));
     var pores = 0.0;
     if (fw < 0.006) {
@@ -329,43 +346,68 @@ struct Stone {
     n: vec3<f32>,
 };
 
-// Ashlar: blocks of their own tone and warmth, chipped arrises leaning in to sunken
-// mortar joints, broad weathering across the wall.
-fn stone(base: vec3<f32>, w: vec3<f32>, n: vec3<f32>, fw: f32) -> Stone {
+// Dressed stone (see `kind::STONE`), laid in courses of blocks each its own tone and
+// warmth, arrises leaning in to sunken joints, broad weathering across the wall:
+// ashlar (`look` 0) chipped, in dark mortar; polished marble (1) in big slabs with
+// hairline joints, clouded and veined; brick (2) in small fired courses, each brick
+// its own, now and then a darker one, in pale lime mortar. Branch-free but for the
+// chips: the three share every step. Courses lie in world space (neighbours line up),
+// wrapping round a round mesh (`curved`, `mid` its middle).
+fn stone(base: vec3<f32>, w: vec3<f32>, n: vec3<f32>, fw: f32, look: u32, mid: vec3<f32>, curved: bool) -> Stone {
     var a: f32;
     var b: f32;
     var ta = vec3<f32>(1.0, 0.0, 0.0);
     var tb = vec3<f32>(0.0, 1.0, 0.0);
-    if (abs(n.x) > 0.5) {
+    let out = w.xz - mid.xz;
+    if (curved && abs(n.y) < 0.7 && dot(n.xz, out) > 0.7 * length(n.xz) * length(out)) {
+        // Round a column or a drum, where it faces out from its middle.
+        a = atan2(out.y, out.x) * length(out); b = w.y; ta = normalize(vec3<f32>(-out.y, 0.0, out.x));
+    } else if (abs(n.x) > 0.5) {
         a = w.z; b = w.y; ta = vec3<f32>(0.0, 0.0, 1.0);
     } else if (abs(n.z) > 0.5) {
         a = w.x; b = w.y;
     } else {
         a = w.x; b = w.z; tb = vec3<f32>(0.0, 0.0, 1.0);
     }
-    let bh = 0.32;
-    let bw = 0.7;
-    let row = floor(b / bh);
-    let aa = a + row * bw * 0.5;
-    let id = hash1(row * 17.1 + floor(aa / bw) * 3.7);
-    let fb = fract(b / bh);
-    let fa = fract(aa / bw);
+    let marble = f32(look == 1u);
+    let brick = f32(look == 2u);
+    // Course height and block length; the joint's half width and its softening.
+    let size = mix(mix(vec2<f32>(0.32, 0.7), vec2<f32>(0.6, 0.9), marble), vec2<f32>(0.075, 0.225), brick);
+    let joint = mix(mix(vec2<f32>(0.003, 0.006), vec2<f32>(0.0006, 0.0012), marble), vec2<f32>(0.0045, 0.002), brick);
+    let row = floor(b / size.x);
+    let aa = a + row * size.y * 0.5;
+    let id = hash1(row * 17.1 + floor(aa / size.y) * 3.7);
+    let fb = fract(b / size.x);
+    let fa = fract(aa / size.y);
     var chip = 0.0;
     if (fw < 0.012) {
-        chip = (vnoise(w * 23.0) - 0.5) * 0.014 * (1.0 - smoothstep(0.006, 0.012, fw));
+        chip = (vnoise(w * 23.0) - 0.5) * 0.014 * (1.0 - smoothstep(0.006, 0.012, fw)) * (1.0 - marble);
     }
-    let da = min(fa, 1.0 - fa) * bw + chip;
-    let db = min(fb, 1.0 - fb) * bh + chip;
+    let da = min(fa, 1.0 - fa) * size.y + chip;
+    let db = min(fb, 1.0 - fb) * size.x + chip;
     let tint = mix(vec3<f32>(1.05, 1.0, 0.92), vec3<f32>(0.95, 0.98, 1.04), fract(id * 7.7));
-    let mottle = fbm(vec3<f32>(a, b, id) * 6.0);
+    // Marble's clouding is broader, and draws its veins.
+    let mottle = fbm(vec3<f32>(a, b, id) * (6.0 - 3.6 * marble));
     let broad = vnoise(w * 0.5);
-    var col = base * tint * (0.8 + 0.35 * id) * (0.75 + 0.35 * mottle) * (0.82 + 0.32 * broad);
-    let k = smoothstep(0.003, 0.009 + fw, min(da, db));
+    // Veins wander along contours of the clouding: a main one with a haze about it,
+    // finer ones between.
+    let off_vein = abs(mottle - 0.47);
+    let fine = abs(fract(mottle * 5.0 + id) - 0.5) * 0.2;
+    let vein = max(
+        1.0 - smoothstep(0.004, 0.014 + fw * 2.0, off_vein) * (0.65 + 0.35 * smoothstep(0.0, 0.06, off_vein)),
+        0.55 * (1.0 - smoothstep(0.001, 0.005 + fw * 2.0, fine)),
+    );
+    let tone = mix(0.8 + 0.35 * id, 0.65 + 0.55 * id - 0.35 * step(0.9, id), brick) * (1.0 - 0.18 * marble * (1.0 - id));
+    var col = base * tint * tone * (0.75 + 0.35 * mottle) * (0.82 + 0.32 * broad);
+    col = mix(col, base * 0.42, vein * marble * 0.75);
+    let k = smoothstep(joint.x, joint.x + joint.y + fw, min(da, db));
     var o: Stone;
-    o.albedo = mix(base * vec3<f32>(0.5, 0.48, 0.45), col, k);
-    let la = (1.0 - smoothstep(0.006, 0.03, da)) * select(1.0, -1.0, fa < 0.5);
-    let lb = (1.0 - smoothstep(0.006, 0.03, db)) * select(1.0, -1.0, fb < 0.5);
-    let fade = k * (1.0 - smoothstep(0.006, 0.02, fw));
+    let mortar = mix(base * vec3<f32>(0.5, 0.48, 0.45), vec3<f32>(0.3, 0.28, 0.25), brick);
+    o.albedo = mix(mortar, col, k);
+    let reach = mix(0.03, 0.012, max(marble, brick));
+    let la = (1.0 - smoothstep(joint.x * 2.0, reach, da)) * select(1.0, -1.0, fa < 0.5);
+    let lb = (1.0 - smoothstep(joint.x * 2.0, reach, db)) * select(1.0, -1.0, fb < 0.5);
+    let fade = k * (1.0 - smoothstep(0.006, 0.02, fw)) * (1.0 - 0.7 * marble);
     o.n = normalize(n + (ta * la + tb * lb) * 0.6 * fade);
     return o;
 }
@@ -404,26 +446,33 @@ fn rug_albedo(base: vec3<f32>, second: vec3<f32>, m: vec3<f32>, s: vec3<f32>) ->
 // A moonlit leaded window, unlit (the moon is behind it): diamond quarries of old glass
 // each a little different, sky brightening upward with cloud drifting across, iron
 // saddle bars, and shade toward the reveal.
+// Leaded glass's diamond quarries at `uv` (metres on the pane): x the distance to the
+// nearest lead, as a share of the quarry's width (0 to 0.5), y each quarry's own tone.
+fn quarries(uv: vec2<f32>) -> vec2<f32> {
+    let d1 = (uv.x * 1.3 + uv.y) / 0.2;
+    let d2 = (uv.x * 1.3 - uv.y) / 0.2;
+    let to_lead = min(0.5 - abs(fract(d1) - 0.5), 0.5 - abs(fract(d2) - 0.5));
+    return vec2<f32>(to_lead, hash3(vec3<f32>(floor(d1), floor(d2), 3.0)));
+}
+
+// A quarry's width across (metres), for `quarries`.
+const QUARRY: f32 = 0.1219421;
+
 fn window(i: VOut, fw: f32) -> vec3<f32> {
     let uv = face_uv(i.lnormal, i.local * i.scale);
     let ext = face_uv(i.lnormal, i.scale) * 0.5;
     let upright = abs(i.lnormal.y) < 0.5;
     let t = g.cam_pos.w;
-    let q = 0.2;
-    let d1 = (uv.x * 1.3 + uv.y) / q;
-    let d2 = (uv.x * 1.3 - uv.y) / q;
-    let pane = hash3(vec3<f32>(floor(d1), floor(d2), 3.0));
-    let pitch = q / length(vec2<f32>(1.3, 1.0));
-    let lead_d = min(0.5 - abs(fract(d1) - 0.5), 0.5 - abs(fract(d2) - 0.5)) * pitch;
-    var lead = line_aa(lead_d, 0.006, fw);
+    let qs = quarries(uv);
+    var lead = line_aa(qs.x * QUARRY, 0.006, fw);
     if (upright) {
         lead = max(lead, line_aa(abs(fract(uv.y / 0.7 + 0.5) - 0.5) * 0.7, 0.011, fw));
     }
     let up = select(0.0, uv.y / max(ext.y, 0.01), upright);
     let cloud = fbm(vec3<f32>(uv * 1.6 + vec2<f32>(t * 0.02, 0.0), t * 0.01));
     // Old glass is brighter toward the middle of each quarry.
-    let dome = 1.0 - smoothstep(0.1, 0.5, lead_d / pitch);
-    var c = i.color.rgb * i.color.w * (0.62 + 0.5 * cloud) * (0.88 + 0.22 * up) * (0.8 + 0.3 * pane);
+    let dome = 1.0 - smoothstep(0.1, 0.5, qs.x);
+    var c = i.color.rgb * i.color.w * (0.62 + 0.5 * cloud) * (0.88 + 0.22 * up) * (0.8 + 0.3 * qs.y);
     c *= 0.9 + 0.25 * dome * (1.0 - smoothstep(0.003, 0.01, fw));
     let edge = min(ext.x - abs(uv.x), ext.y - abs(uv.y));
     c *= 0.55 + 0.45 * smoothstep(0.0, 0.3, edge);
@@ -619,9 +668,17 @@ fn crystal(s: ptr<function, Mat>, i: VOut, fw: f32) {
     let c = i.color.rgb;
     let sc = i.scale;
     let lo = min(sc.x, min(sc.y, sc.z));
-    (*s).n = bevel(i, lo * 0.3, 1.6, 0.3, fw);
+    // A mesh has no edges to bevel: it is cut in facets instead, each tilted its own
+    // way, so the room it reflects breaks up across it; and its inner light shows by
+    // the size of its broad faces rather than its thickness.
+    let cut = f32(i.mesh != 0u);
+    let broad = mix(lo, sc.x + sc.y + sc.z - lo - max(sc.x, max(sc.y, sc.z)), cut);
+    let facet = hash3(floor(i.local * 5.0 + i.local.yzx * 2.5) + seed * 13.0);
+    let tilt = (vec3<f32>(facet, fract(facet * 13.7), fract(facet * 71.3)) - 0.5) * cut;
+    let lean = qrot(i.rot, tilt) * 0.7 * smoothstep(3.0, 10.0, 0.15 * broad / max(fw, 1e-5));
+    (*s).n = normalize(bevel(i, lo * 0.3, 1.6, 0.3, fw) + lean);
     let fr = fresnel(dot((*s).n, view));
-    let detail = smoothstep(12.0, 60.0, lo / max(fw, 1e-5));
+    let detail = smoothstep(12.0, 60.0, broad / max(fw, 1e-5));
     let into = normalize(qrot_inv(i.rot, -view) / sc);
     let p = i.local + into * 0.4;
     let core = 1.0 - smoothstep(0.0, 0.7, length(p));
@@ -629,18 +686,19 @@ fn crystal(s: ptr<function, Mat>, i: VOut, fw: f32) {
     let fleck = vnoise(p * sc * 40.0 + vec3<f32>(seed * 17.0, t * 0.15, 0.0));
     let pulse = 0.85 + 0.15 * sin(t * 1.6 + seed * 6.283);
     let edge = line_aa(box_edge(i.local, sc, i.lnormal), 0.002, fw) * detail * f32(i.mesh == 0u);
-    let inner = mix(0.75, 0.35 + 1.2 * core * core + 0.6 * fleck * core, detail) + 0.5 * edge;
+    // A mesh's facets each pass the light inside a little differently.
+    let inner = (mix(0.75, 0.35 + 1.2 * core * core + 0.6 * fleck * core, detail) + 0.5 * edge) * (1.0 + cut * (facet - 0.6));
     (*s).albedo = c * 0.3;
     (*s).back = 0.7;
     (*s).spec = vec3<f32>(1.5);
     (*s).gloss = 160.0;
-    (*s).emit = env(reflect(-view, (*s).n), 0.0) * mix(c, vec3<f32>(1.0), 0.4) * (0.5 + 2.5 * fr)
+    (*s).emit = env(reflect(-view, (*s).n), 0.0) * mix(c, vec3<f32>(1.0), 0.4) * (0.5 - 0.3 * cut + 2.5 * fr)
         + c * g.ambient_top.rgb * 2.5 * fr
-        + c * i.color.w * pulse * inner;
+        + mix(c, c * c / max(c.r, max(c.g, c.b)), cut) * i.color.w * pulse * inner;
 }
 
-// Ink on a sheet (mode 0 writing, 1 a map, 2 a star chart, 3 none); `uv` in metres from
-// the sheet's centre, `ext` its half size. Returns coverage.
+// Ink on a sheet (mode 0 writing, 1 a map, 2 a star chart, 3 none, 4 sheet music);
+// `uv` in metres from the sheet's centre, `ext` its half size. Returns coverage.
 fn ink(mode: u32, uv: vec2<f32>, ext: vec2<f32>, seed: f32, fw: f32) -> f32 {
     let e = min(ext.x - abs(uv.x), ext.y - abs(uv.y));
     let margin = smoothstep(0.025, 0.03, e);
@@ -682,10 +740,60 @@ fn ink(mode: u32, uv: vec2<f32>, ext: vec2<f32>, seed: f32, fw: f32) -> f32 {
             k = max(k, line_aa(length(uv - pt), 0.0006 + 0.002 * (h - 0.8), fw) * step(0.8, h));
             return max(k * margin, line_aa(abs(e - 0.015), 0.0012, fw));
         }
+        case 4u: {
+            // Sheet music: staves of five lines, notes on and between them with their
+            // stems, bar lines every four; grey staves from further off.
+            let pitch = 0.034;
+            let gap = 0.0022;
+            let row = floor(uv.y / pitch);
+            let f = (uv.y - row * pitch - 0.01) / gap;
+            let staff = step(-0.3, f) * step(f, 4.3);
+            let lines = line_aa(abs(fract(f + 0.5) - 0.5) * gap, 0.0002, fw) * staff;
+            let col = floor(uv.x / 0.013);
+            let h = hash3(vec3<f32>(col, row, seed * 7.0));
+            let d = uv - vec2<f32>((col + 0.5) * 0.013, row * pitch + 0.01 + (floor(h * 9.0) - 0.5) * gap * 0.5);
+            let note = step(0.25, h) * step(0.3, fract(col * 0.25 + 0.1));
+            let head = line_aa(length(vec2<f32>(d.x * 0.8 + d.y * 0.35, d.y)), 0.0013, fw);
+            let stem = line_aa(abs(d.x - 0.00135), 0.00018, fw) * step(0.0, d.y) * step(d.y, 0.009);
+            let bar = line_aa(abs(fract(uv.x / 0.052 + 0.5) - 0.5) * 0.052, 0.0002, fw) * staff;
+            let near = max(max(lines, bar), max(head, stem) * note);
+            return mix(near, 0.3 * staff, smoothstep(0.0012, 0.0035, fw)) * margin;
+        }
         default: {
             return 0.0;
         }
     }
+}
+
+// A coat of arms on a sheet (`kind::PARCHMENT` 5): a heater shield of a colour and a
+// metal parted by the seed's line, a charge on it counterchanged (a crescent, the
+// library's own, or a roundel, a cross, a chevron), outlined in ink. Returns its
+// colour, and its coverage of the sheet.
+fn arms(uv: vec2<f32>, ext: vec2<f32>, seed: f32, fw: f32) -> vec4<f32> {
+    let size = min(ext.x, ext.y / 1.15) * 0.78;
+    let p = uv / size - vec2<f32>(0.0, 0.1);
+    let fp = fw / size;
+    // Straight sides down to the middle, then curving in to the point.
+    let low = max((-0.15 - p.y) / 1.05, 0.0);
+    let edge = min(1.0 - pow(low, 1.7) - abs(p.x), 0.95 - p.y);
+    let inside = smoothstep(-0.5 * fp, 0.5 * fp, edge);
+    let h = fract(seed * 13.7);
+    let line = select(select(select(p.x, p.y - 0.1, h < 0.5), p.x + p.y * 0.8, h < 0.75), p.x * (p.y - 0.1), h < 0.25);
+    let part = step(0.0, line);
+    let c = fract(seed * 7.3);
+    let colour = select(select(select(vec3<f32>(0.06, 0.05, 0.05), vec3<f32>(0.08, 0.3, 0.13), c < 0.75), vec3<f32>(0.1, 0.17, 0.48), c < 0.5), vec3<f32>(0.55, 0.07, 0.05), c < 0.25);
+    let metal = select(vec3<f32>(0.82, 0.8, 0.74), vec3<f32>(0.85, 0.62, 0.2), fract(seed * 3.1) < 0.6);
+    let q = p - vec2<f32>(0.0, 0.05);
+    let ch = fract(seed * 5.9);
+    let crescent = step(length(q), 0.36) * step(0.3, length(q - vec2<f32>(0.0, 0.14)));
+    let roundel = step(length(q), 0.3);
+    let cross = step(min(abs(q.x), abs(q.y)), 0.1) * step(max(abs(q.x), abs(q.y)), 0.55);
+    let chevron = step(abs(q.y + 0.25 - (0.65 - abs(q.x) * 0.9)), 0.13) * step(abs(q.x), 0.75);
+    let charge = select(select(select(chevron, cross, ch < 0.75), roundel, ch < 0.55), crescent, ch < 0.35);
+    let tinct = abs(part - charge);
+    var col = mix(colour, metal, tinct);
+    col = mix(col, vec3<f32>(0.1, 0.07, 0.05), line_aa(abs(edge), 0.025, fp));
+    return vec4<f32>(col, max(inside, line_aa(abs(edge), 0.025, fp)));
 }
 
 // Parchment: stained and foxed, darker toward its edges, with ink on its broad faces
@@ -706,7 +814,12 @@ fn parchment(s: ptr<function, Mat>, i: VOut, fw: f32) {
     let e = min(ext.x - abs(uv.x), ext.y - abs(uv.y));
     col *= mix(vec3<f32>(0.55, 0.42, 0.3), vec3<f32>(1.0), smoothstep(0.0, 0.035, e + (stain - 0.5) * 0.02));
     if (thick <= lo + 1e-4 && lo < 0.02) {
-        col = mix(col, vec3<f32>(0.1, 0.07, 0.05), ink(i.param & 7u, uv, ext, seed, fw) * 0.85);
+        if (i.param == 5u) {
+            let a = arms(uv, ext, seed, fw);
+            col = mix(col, a.rgb * (0.85 + 0.25 * stain), a.a * 0.9);
+        } else {
+            col = mix(col, vec3<f32>(0.1, 0.07, 0.05), ink(i.param & 7u, uv, ext, seed, fw) * 0.85);
+        }
     } else if (thick >= hi - 1e-4 && lo >= 0.02) {
         let turn = fract(length(uv) / 0.005 - atan2(uv.y, uv.x) * 0.15915);
         col *= 1.0 - 0.3 * (1.0 - smoothstep(0.0, 0.35, turn)) * (1.0 - smoothstep(0.001, 0.003, fw));
@@ -810,9 +923,17 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
             ao = 1.0;
         }
         case K_STONE: {
-            let st = stone(i.color.rgb, i.world, s.n, fw);
+            let st = stone(i.color.rgb, i.world, s.n, fw, i.param, i.centre, i.mesh != 0u);
             s.albedo = st.albedo;
             s.n = st.n;
+            // Marble is polished: a sharp highlight, and the room dimly in it (only
+            // marble pays for the reflection: stone fills whole walls).
+            if (i.param == 1u) {
+                let view = normalize(g.cam_pos.xyz - i.world);
+                s.spec = vec3<f32>(0.44);
+                s.gloss = 90.0;
+                s.emit = env(reflect(-view, s.n), 0.3) * (0.06 + 0.5 * fresnel(dot(s.n, view)));
+            }
         }
         case K_EMISSIVE: {
             var flick = 1.0;
@@ -866,6 +987,180 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
     }
     let amb = mix(g.ambient_bottom.rgb, g.ambient_top.rgb, s.n.y * 0.5 + 0.5) * ao;
     let col = s.albedo * amb + s.emit + shade(s, i.world);
+    return vec4<f32>(apply_fog(col, i.world), 1.0);
+}
+
+// ---------------------------------------------------------------- fretwork
+
+// How much of fretwork pattern `pat` (gfx::kind::FRET) is there at `uv`, metres from
+// the middle of a piece `ext` half its size: x its coverage, y a tone for the part of
+// it there (each leaf its own).
+fn fret_cover(pat: u32, uv: vec2<f32>, ext: vec2<f32>, seed: f32, fw: f32) -> vec2<f32> {
+    let e = min(ext.x - abs(uv.x), ext.y - abs(uv.y));
+    let frame = line_aa(e, 0.014, fw);
+    switch pat {
+        case 0u: {
+            // A spray of leaves: each cell's leaf at its own angle, on a winding stem.
+            let cell_m = 0.055;
+            let q = uv / cell_m + seed * 17.0;
+            let cell = floor(q);
+            var best = 0.0;
+            var tone = 0.5;
+            for (var y = -1; y <= 1; y = y + 1) {
+                for (var x = -1; x <= 1; x = x + 1) {
+                    let c = cell + vec2<f32>(f32(x), f32(y));
+                    let h = hash3(vec3<f32>(c, seed * 31.0));
+                    let d = q - c - 0.5 - (vec2<f32>(fract(h * 13.7), fract(h * 71.3)) - 0.5) * 0.7;
+                    let dir = vec2<f32>(cos(h * 40.0), sin(h * 40.0));
+                    let lu = dot(d, dir);
+                    let lv = d.x * dir.y - d.y * dir.x;
+                    // A pointed blade: narrowing toward both ends, the tip sharper.
+                    let half = 0.24 * (1.0 - lu * lu / 0.36) * (1.0 - 0.3 * lu / 0.6);
+                    let k = line_aa(abs(lv), max(half, 0.0), fw / cell_m) * step(abs(lu), 0.6) * step(0.22, h);
+                    if (k > best) {
+                        best = k;
+                        tone = h;
+                    }
+                }
+            }
+            let wind = uv.y + 0.03 * sin(uv.x * 22.0 + seed * 9.0);
+            let stem = line_aa(abs(fract(wind / 0.16 + 0.5) - 0.5) * 0.16, 0.0025, fw);
+            return vec2<f32>(max(best, stem), tone);
+        }
+        case 1u: {
+            // A grille: upright bars, rails across them, and the frame.
+            let bars = line_aa(abs(fract(uv.x / 0.045 + 0.5) - 0.5) * 0.045, 0.0045, fw);
+            let rails = line_aa(abs(fract(uv.y / 0.3 + 0.5) - 0.5) * 0.3, 0.007, fw);
+            return vec2<f32>(max(frame, max(bars, rails)), 0.5);
+        }
+        case 2u: {
+            // Scrolled fretwork: rings on a square grid and on its corners, interlaced.
+            let c = 0.1;
+            let a = abs(length((fract(uv / c) - 0.5) * c) - 0.5 * c);
+            let b = abs(length((fract(uv / c + 0.5) - 0.5) * c) - 0.5 * c);
+            return vec2<f32>(max(frame, line_aa(min(a, b), 0.0055, fw)), 0.5);
+        }
+        default: {
+            // A lattice: laths crossing on the diagonals.
+            let p = 0.09;
+            let d1 = abs(fract((uv.x + uv.y) * 0.7071 / p + 0.5) - 0.5) * p;
+            let d2 = abs(fract((uv.x - uv.y) * 0.7071 / p + 0.5) - 0.5) * p;
+            return vec2<f32>(max(frame, line_aa(min(d1, d2), 0.006, fw)), 0.5);
+        }
+    }
+}
+
+// Fretwork (gfx::kind::FRET), in a pipeline of its own: the pattern lies across the
+// piece's broad sides, read on every face so its edges are cut too; where it has a
+// hole the fragment is discarded, and its coverage (alpha, to the samples covered)
+// smooths the cut. Grilles and bright pieces are metal; leaves let light through.
+@fragment
+fn fs_fret(i: VOut) -> @location(0) vec4<f32> {
+    let fw = length(fwidth(i.world));
+    let sc = i.scale;
+    let m = i.local * sc;
+    var uv = m.xy;
+    var ext = sc.xy;
+    if (sc.x < sc.z && sc.x <= sc.y) {
+        uv = m.zy;
+        ext = sc.zy;
+    } else if (sc.y < sc.z && sc.y < sc.x) {
+        uv = m.xz;
+        ext = sc.xz;
+    }
+    let seed = hash3(i.centre * 7.31);
+    let pat = i.param & 3u;
+    let cover = fret_cover(pat, uv, ext * 0.5, seed, fw);
+    if (cover.x < 0.02) {
+        discard;
+    }
+    var s: Mat;
+    s.n = qrot(i.rot, normalize(i.lnormal));
+    s.emit = vec3<f32>(0.0);
+    s.back = 0.0;
+    let c = i.color.rgb;
+    if (pat == 0u) {
+        // Each leaf its own tone and tilt, light through them from behind.
+        let tilt = vec3<f32>(fract(cover.y * 7.1), fract(cover.y * 3.3), fract(cover.y * 5.9)) - 0.5;
+        s.n = normalize(s.n + tilt * 0.6);
+        s.albedo = c * mix(vec3<f32>(1.15, 1.05, 0.75), vec3<f32>(0.85, 1.0, 1.1), cover.y) * (0.75 + 0.5 * cover.y);
+        s.spec = vec3<f32>(0.12);
+        s.gloss = 24.0;
+        s.back = 0.5;
+    } else if (pat == 1u || dot(c, vec3<f32>(0.3, 0.55, 0.15)) > 0.3) {
+        metal(&s, c, m + i.centre, i.world, 0.0);
+    } else {
+        s.albedo = c * (0.88 + 0.2 * vnoise(vec3<f32>(uv * vec2<f32>(4.0, 60.0), seed * 9.0)));
+        s.spec = vec3<f32>(0.06);
+        s.gloss = 24.0;
+    }
+    let ao = mix(0.55, 1.0, smoothstep(0.0, 2.2, i.world.y));
+    let amb = mix(g.ambient_bottom.rgb, g.ambient_top.rgb, s.n.y * 0.5 + 0.5) * ao;
+    let col = s.albedo * amb + s.emit + shade(s, i.world);
+    return vec4<f32>(apply_fog(col, i.world), cover.x);
+}
+
+// ---------------------------------------------------------------- the sky
+
+// Toward the moon: up the atrium's moonbeams (library::great), so they fall from it.
+const MOON: vec3<f32> = vec3<f32>(-0.2400077, 0.9600307, -0.1440046);
+// Its apparent radius (radians): larger than life, as it is painted.
+const MOON_R: f32 = 0.05;
+
+// The night sky along `d` (a unit direction), a pixel `px` radians across: deep blue,
+// paler round the moon; stars on a plane far overhead, twinkling, some warm, some
+// cool; a faint milky band; the moon, its seas, a halo; thin cloud drifting over.
+fn night_sky(d: vec3<f32>, px: f32) -> vec3<f32> {
+    let t = g.cam_pos.w;
+    let mc = dot(d, MOON);
+    var col = mix(vec3<f32>(0.014, 0.018, 0.045), vec3<f32>(0.006, 0.008, 0.026), max(d.y, 0.0));
+    col += vec3<f32>(0.012, 0.016, 0.034) * pow(max(mc, 0.0), 6.0) + vec3<f32>(0.05, 0.06, 0.1) * pow(max(mc, 0.0), 120.0);
+    // Stars, a cell each on the plane, as big as their brightness and the pixel allow.
+    let up = max(d.y, 0.08);
+    let p = d.xz / up;
+    let ppx = px / (up * up);
+    let cells = p / 0.03;
+    let c = floor(cells);
+    let h = hash3(vec3<f32>(c, 7.0));
+    let at = c + 0.5 + (vec2<f32>(fract(h * 13.7), fract(h * 71.3)) - 0.5) * 0.7;
+    let r = length(cells - at) * 0.03;
+    // Most faint, a few bright and a little bigger.
+    let mag = pow(fract(h * 91.7), 6.0);
+    let size = max(ppx * 0.7, 0.0004 + 0.0012 * mag);
+    let bright = step(0.35, h) * (0.06 + 2.4 * mag) * min(1.0, 0.0012 / size + 0.4);
+    let twinkle = 0.65 + 0.35 * sin(t * (1.3 + 2.5 * fract(h * 53.3)) + h * 40.0);
+    let tint = mix(vec3<f32>(1.0, 0.86, 0.7), vec3<f32>(0.75, 0.85, 1.0), fract(h * 23.3));
+    col += tint * exp(-r * r / (size * size)) * bright * twinkle * 2.0;
+    // The milky band across the sky, dust in it.
+    let band = exp(-pow(dot(d, vec3<f32>(0.62, 0.35, -0.7)), 2.0) * 14.0);
+    col += vec3<f32>(0.022, 0.024, 0.034) * band * (0.4 + fbm2(vec3<f32>(p * 3.0, 1.0)));
+    // The moon: a lit disc with darker seas, its limb a little dimmer, and its halo.
+    let off = sqrt(max(2.0 * (1.0 - mc), 0.0));
+    let disc = 1.0 - smoothstep(MOON_R - ppx, MOON_R + ppx, off);
+    // Across its face (the moon is high, so x and z will do).
+    let face = (d - MOON * mc).xz / MOON_R;
+    let seas = fbm2(vec3<f32>(face * 1.8, 4.0));
+    let moon = vec3<f32>(0.95, 0.95, 0.88) * (1.0 - 0.35 * smoothstep(0.45, 0.7, seas)) * (1.0 - 0.25 * dot(face, face));
+    col = mix(col, moon * 2.6, disc);
+    col += vec3<f32>(0.25, 0.3, 0.45) * exp(-max(off - MOON_R, 0.0) * 30.0) * 0.25;
+    // Thin cloud drifting across, lit by the moon near it.
+    let wisp = smoothstep(0.52, 0.85, fbm(vec3<f32>(p * 0.35 + vec2<f32>(t * 0.006, t * 0.0025), 2.0)));
+    let lit = vec3<f32>(0.03, 0.035, 0.05) + vec3<f32>(0.2, 0.22, 0.28) * pow(max(mc, 0.0), 30.0);
+    return mix(col, lit, wisp * 0.7);
+}
+
+// A skylight (gfx::kind::GLASS param 1): the night sky beyond it, seen along the eye's
+// ray (so it lies at infinity and moves as the eye does), through leaded glass, each
+// quarry a little different, the leads dark across it. In a pipeline of its own.
+@fragment
+fn fs_sky(i: VOut) -> @location(0) vec4<f32> {
+    let fw = length(fwidth(i.world));
+    let to = i.world - g.cam_pos.xyz;
+    let dist = length(to);
+    let qs = quarries(face_uv(i.lnormal, i.local * i.scale));
+    let lead = line_aa(qs.x * QUARRY, 0.006, fw);
+    let glass = mix(vec3<f32>(1.0), i.color.rgb * 1.6, 0.25) * (0.85 + 0.3 * qs.y);
+    let col = mix(night_sky(to / dist, fw / dist) * glass, vec3<f32>(0.01, 0.01, 0.014), lead);
     return vec4<f32>(apply_fog(col, i.world), 1.0);
 }
 
@@ -1570,16 +1865,22 @@ fn moonbeam(i: VOut, front: bool, seen: f32, facing: f32) -> vec4<f32> {
     return vec4<f32>(i.color.rgb * glow, 0.0);
 }
 
-// Moonbeams, drawn with no depth test: `moonbeam` hides and clips itself against the
-// scene's depth.
-@fragment
-fn fs_beam(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+// How far the eye sees along a fragment's ray, in multiples of the distance to it
+// (under 1 where the opaque scene hides it).
+fn seen_along(i: VOut) -> f32 {
     // View depth is p23 / (z + p22) from the projection's third row; p22 is recovered
     // from view_proj, whose fourth row is the view's (unit) depth axis.
     let r2 = vec3<f32>(g.view_proj[0][2], g.view_proj[1][2], g.view_proj[2][2]);
     let r3 = vec3<f32>(g.view_proj[0][3], g.view_proj[1][3], g.view_proj[2][3]);
     let p22 = -length(r2) / length(r3);
-    let seen = (i.clip.z + p22) / (textureLoad(scene_depth, vec2<i32>(i.clip.xy), 0) + p22);
+    return (i.clip.z + p22) / (textureLoad(scene_depth, vec2<i32>(i.clip.xy), 0) + p22);
+}
+
+// Moonbeams, drawn with no depth test: `moonbeam` hides and clips itself against the
+// scene's depth.
+@fragment
+fn fs_beam(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let seen = seen_along(i);
     // The scene's surface there, and its normal from how that point moves across the
     // screen (derivatives here, in uniform control flow).
     let hit = g.cam_pos.xyz + (i.world - g.cam_pos.xyz) * seen;
@@ -1607,15 +1908,6 @@ fn fs_trans(i: VOut) -> @location(0) vec4<f32> {
         let a = (0.12 + 0.3 * n1 * n2) * i.color.w;
         let c = mix(vec3<f32>(0.2, 0.25, 0.7), vec3<f32>(0.55, 0.3, 0.8), n2) * (0.3 + 0.7 * n1);
         return vec4<f32>(c * a, a * 0.7);
-    }
-    // Stand-ins for flames and mist (gfx::kind::FIRE, MIST).
-    if (i.kind == K_FIRE) {
-        let flick = 0.8 + 0.2 * vnoise(vec3<f32>(t * 6.0, i.centre.x * 3.0, i.centre.z * 3.0));
-        return vec4<f32>(i.color.rgb * i.color.w * flick, 0.3);
-    }
-    if (i.kind == K_MIST) {
-        let a = i.color.w * 0.3;
-        return vec4<f32>(i.color.rgb * g.ambient_top.rgb * a, a);
     }
     // Ghost slot. param: 0 = waiting, 1 = a series you carry, 2 = the active book's slot.
     // Highlighted ghosts arrive in a fixed-brightness signal colour; color.w scales them.
@@ -1668,6 +1960,196 @@ fn fs_glass(i: VOut) -> @location(0) vec4<f32> {
     let d = length(i.world - g.cam_pos.xyz);
     let f = 1.0 - exp(-d * g.fog.w);
     return vec4<f32>(mix(col, g.fog.rgb * a, f), a);
+}
+
+// ---------------------------------------------------------------- flames and mist
+
+// Where the eye's ray, cam + ray * u in the box's coordinates, is inside the box: from
+// u0 to u1 (empty where u1 <= u0), from the eye on and short of the scene's surface.
+fn through_box(cam: vec3<f32>, ray: vec3<f32>, seen: f32) -> vec2<f32> {
+    let inv = 1.0 / select(ray, vec3<f32>(1e-6), abs(ray) < vec3<f32>(1e-6));
+    let a = (vec3<f32>(-0.5) - cam) * inv;
+    let b = (vec3<f32>(0.5) - cam) * inv;
+    let lo = min(a, b);
+    let hi = max(a, b);
+    return vec2<f32>(max(max(lo.x, max(lo.y, lo.z)), 0.0), min(min(hi.x, min(hi.y, hi.z)), seen));
+}
+
+// A candle's or a lamp's flame (gfx::kind::FIRE param 0): a teardrop standing up the
+// box's y, the same from every side, so drawn where the eye's ray passes nearest its
+// axis. A blue foot, a white-gold heart low in it, amber out to the edges and a redder
+// tip that sways and stretches as it flickers. Light only (premultiplied, no alpha).
+fn candle(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, len: f32) -> vec4<f32> {
+    let t = g.cam_pos.w;
+    let seed = hash3(i.centre * 7.31) * 17.0;
+    let c = cam * i.scale;
+    let r = ray * i.scale;
+    let near = -dot(c.xz, r.xz) / max(dot(r.xz, r.xz), 1e-9);
+    let p = c + r * clamp(near, 0.0, seen);
+    let tall = 0.86 + 0.14 * vnoise(vec3<f32>(t * 6.5, seed, 0.0));
+    let y = (p.y / i.scale.y + 0.5) / tall;
+    let sway = (vec2<f32>(vnoise(vec3<f32>(t * 2.3, seed, 1.0)), vnoise(vec3<f32>(t * 1.9, seed, 2.0))) - 0.5) * y * y;
+    let x = length(p.xz / (0.5 * i.scale.xz) - sway);
+    // Widest a third of the way up, drawn to a point above.
+    let w = 2.6 * sqrt(clamp(y, 0.0, 1.0)) * clamp(1.0 - y, 0.0, 1.0);
+    let d = x / max(w, 1e-3);
+    let body = 1.0 - smoothstep(0.45, 1.0, d);
+    let heart = (1.0 - smoothstep(0.0, 0.75, d)) * smoothstep(0.03, 0.18, y) * (1.0 - smoothstep(0.2, 0.75, y));
+    var col = mix(i.color.rgb, i.color.rgb * vec3<f32>(1.0, 0.75, 0.55), smoothstep(0.4, 1.0, y));
+    col = mix(col, vec3<f32>(1.0, 0.86, 0.6), heart);
+    col = mix(col, vec3<f32>(0.25, 0.4, 1.0) * 0.6, (1.0 - smoothstep(0.04, 0.2, y)) * smoothstep(0.2, 0.7, d));
+    // Hidden where the wick or anything else stands before it.
+    let shown = smoothstep(-0.004, 0.002, (seen - near) * len);
+    let k = i.color.w * body * (0.5 + 0.7 * heart) * shown;
+    return vec4<f32>(col * k * fog_keep(i.world), 0.0);
+}
+
+// A hearth's or a brazier's fire (gfx::kind::FIRE param 1): tongues of flame rising
+// through the box from its floor and thinning to tips, fullest in the middle; the eye's
+// ray through it read at a few depths. Light only.
+fn hearth(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, len: f32) -> vec4<f32> {
+    let span = through_box(cam, ray, seen);
+    if (span.y <= span.x) {
+        return vec4<f32>(0.0);
+    }
+    let t = g.cam_pos.w;
+    let seed = hash3(i.centre * 7.31) * 17.0;
+    var acc = vec3<f32>(0.0);
+    for (var k = 0; k < 4; k = k + 1) {
+        let p = cam + ray * mix(span.x, span.y, (f32(k) + 0.5) / 4.0);
+        let y = p.y + 0.5;
+        // Tongues lick sideways as they rise.
+        let m = p * i.scale + vec3<f32>(0.04 * y * sin(y * 9.0 - t * 4.0 + seed), 0.0, 0.0);
+        let n = fbm2(vec3<f32>(m.x * 11.0, m.y * 4.0 - t * 2.6, m.z * 11.0 + t * 0.3) + seed);
+        let wide = dot(p.xz, p.xz) * 4.0;
+        let heat = clamp((1.0 - wide) * 1.3 - y * 1.5 + (n - 0.5) * 2.6, 0.0, 1.0);
+        // Deep red where it is coolest through amber to a yellow-white heart.
+        let h2 = heat * heat;
+        acc += vec3<f32>(h2 * 1.5, h2 * heat * 1.1, h2 * h2 * 0.6);
+    }
+    let deep = min((span.y - span.x) * len / (0.5 * min(i.scale.x, i.scale.z)), 1.0);
+    let col = acc * 0.3 * deep * i.color.rgb * i.color.w;
+    return vec4<f32>(col * fog_keep(i.world), 0.0);
+}
+
+// Rain (gfx::kind::MIST param 2): streaks falling through the box, in four sheets
+// across its broader upright side, fixed in it (so they stay put as the eye moves),
+// each sheet its own drops.
+fn rain(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, fw: f32) -> vec4<f32> {
+    let span = through_box(cam, ray, seen);
+    if (span.y <= span.x) {
+        return vec4<f32>(0.0);
+    }
+    let t = g.cam_pos.w;
+    let seed = hash3(i.centre * 7.31) * 17.0;
+    let wide = i.scale.x >= i.scale.z;
+    // The eye's depth across the sheets, and how fast the ray goes through them.
+    let deep0 = select(cam.x, cam.z, wide);
+    let rate = select(ray.x, ray.z, wide);
+    var cover = 0.0;
+    for (var k = 0; k < 4; k = k + 1) {
+        let u = ((f32(k) + 0.5) / 4.0 - 0.5 - deep0) / select(rate, 1e-6, abs(rate) < 1e-6);
+        let p = (cam + ray * u) * i.scale;
+        let h = select(p.z, p.x, wide) / 0.035 + f32(k) * 0.37;
+        let h1 = hash1(floor(h) * 7.1 + f32(k) * 13.3 + seed);
+        let x = (fract(h) - 0.5 - (h1 - 0.5) * 0.6) * 0.035;
+        let ph = fract((p.y + t * (3.2 + h1) + h1 * 7.0) / 0.7);
+        let streak = smoothstep(0.0, 0.03, ph) * (1.0 - smoothstep(0.1, 0.25, ph));
+        let within = step(span.x, u) * step(u, span.y);
+        cover += line_aa(abs(x), 0.0005, fw * u) * streak * within;
+    }
+    let a = min(cover, 1.0) * i.color.w * 0.6;
+    let col = i.color.rgb * (g.ambient_top.rgb * 2.5 + vec3<f32>(0.04));
+    return vec4<f32>(col * a * fog_keep(i.world), a);
+}
+
+// Smoke or steam rising (gfx::kind::MIST param 0) and cloud (1): the ellipsoid that
+// fills the box, densest at its middle, its density summed along the eye's ray in
+// closed form, so its edges and where it meets the scene are soft; stirred by noise
+// that rises through smoke and billows slowly in cloud. Lit by the room and its lights
+// as a volume, from below and through.
+fn puff(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, len: f32) -> vec4<f32> {
+    // In q = 2 local the ellipsoid is the unit sphere: |q|^2 = qa u^2 + 2 qb u + qc.
+    let qa = 4.0 * dot(ray, ray);
+    let qb = 4.0 * dot(cam, ray);
+    let qc = 4.0 * dot(cam, cam);
+    let disc = qb * qb - qa * (qc - 1.0);
+    if (disc <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    let sq = sqrt(disc);
+    let u0 = max((-qb - sq) / qa, 0.0);
+    let u1 = min((-qb + sq) / qa, seen);
+    if (u1 <= u0) {
+        return vec4<f32>(0.0);
+    }
+    // The integral of 1 - |q|^2, in metres, as a share of what the sphere's middle
+    // holds (4/3 its radius).
+    let along = (1.0 - qc) * (u1 - u0) - qb * (u1 * u1 - u0 * u0) - qa * (u1 * u1 * u1 - u0 * u0 * u0) / 3.0;
+    let r = 0.5 * min(i.scale.x, min(i.scale.y, i.scale.z));
+    let thick = along * len / (1.333 * r);
+    let t = g.cam_pos.w;
+    let seed = hash3(i.centre * 7.31) * 17.0;
+    let mid = cam + ray * (0.5 * (u0 + u1));
+    let smoke = i.param == 0u;
+    // Noise a few features across the piece: rising through smoke, drifting in cloud.
+    let f = mid * i.scale * (1.25 / r);
+    let flow = select(vec3<f32>(t * 0.06, t * 0.03, t * 0.05), vec3<f32>(0.0, -t * 0.7, 0.0), smoke);
+    let n = fbm(f + flow + seed);
+    // Smoke thins as it rises, in wisps; cloud is thick, billowing at its edges.
+    let rise = select(1.0, smoothstep(-0.5, -0.3, mid.y) * (1.0 - smoothstep(-0.2, 0.5, mid.y)), smoke);
+    let body = select(1.8 * (0.3 + 1.3 * n), 0.3 + 1.4 * n * n, smoke);
+    let dens = thick * body * rise * i.color.w;
+    let a = 1.0 - exp(-2.2 * dens);
+    // Lit as the ellipsoid's surface where the ray enters it (smooth across it).
+    var s: Mat;
+    s.n = normalize(qrot(i.rot, (cam + ray * u0) / (i.scale * i.scale)));
+    s.albedo = i.color.rgb;
+    s.spec = vec3<f32>(0.0);
+    s.gloss = 1.0;
+    s.back = 0.8;
+    let world = i.centre + qrot(i.rot, mid * i.scale);
+    let amb = mix(g.ambient_bottom.rgb, g.ambient_top.rgb, s.n.y * 0.5 + 0.5);
+    let under = select(0.6 + 0.6 * smoothstep(-0.5, 0.3, mid.y), 1.0, smoke);
+    let col = s.albedo * (amb * 1.6 * under + shade(s, world) * 0.8);
+    let d = length(world - g.cam_pos.xyz);
+    let fogged = mix(col, g.fog.rgb, 1.0 - exp(-d * g.fog.w));
+    return vec4<f32>(fogged * a, a);
+}
+
+// How much of a light far off the fog leaves (as `apply_fog` would, for light added
+// over what is behind it).
+fn fog_keep(world: vec3<f32>) -> f32 {
+    return exp(-length(world - g.cam_pos.xyz) * g.fog.w);
+}
+
+// Flames and mist (gfx::kind::FIRE, MIST), drawn with no depth test: volumes the eye
+// looks through, each read along its ray from where it enters (or the eye, inside)
+// to where it leaves or meets the scene.
+@fragment
+fn fs_fx(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let fw = length(fwidth(i.world));
+    let seen = seen_along(i);
+    // The eye in the box's coordinates; cam + ray * u reaches this fragment at u = 1.
+    let cam = qrot_inv(i.rot, g.cam_pos.xyz - i.centre) / i.scale;
+    let inside = all(abs(cam) < vec3<f32>(0.5));
+    // Once a pixel: where the ray enters from outside, where it leaves from inside;
+    // nothing where the near side is hidden.
+    if (inside == front || (!inside && seen < 1.0)) {
+        return vec4<f32>(0.0);
+    }
+    let ray = i.local - cam;
+    let len = length(i.world - g.cam_pos.xyz);
+    if (i.kind == K_FIRE) {
+        if (i.param == 0u) {
+            return candle(i, cam, ray, seen, len);
+        }
+        return hearth(i, cam, ray, seen, len);
+    }
+    if (i.param == 2u) {
+        return rain(i, cam, ray, seen, fw);
+    }
+    return puff(i, cam, ray, seen, len);
 }
 
 // ---------------------------------------------------------------- lettering
