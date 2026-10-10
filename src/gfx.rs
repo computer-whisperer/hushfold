@@ -11,6 +11,8 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
+pub mod crane;
+
 pub mod kind {
     pub const PLAIN: u32 = 0;
     pub const WOOD: u32 = 1;
@@ -31,6 +33,7 @@ pub mod kind {
     pub const GLASS: u32 = 9;
     pub const VEIL: u32 = 10;
     pub const SHAFT: u32 = 11;
+    /// Plain paper: cream, glowing in color.rgb by color.w.
     pub const PAPER: u32 = 12;
     /// Brass, iron, silver: the colour is the metal's. Grey metals come out rough,
     /// bright or coloured ones polished. param 1: aged (verdigris on warm metals, rust
@@ -50,6 +53,11 @@ pub mod kind {
     /// broad faces: 0 writing, 1 a map, 2 a star chart, 3 none. A thick box shows a
     /// rolled scroll's turns at its ends.
     pub const PARCHMENT: u32 = 17;
+    /// A part of a folded-paper bird, drawn from its own mesh rather than as a box
+    /// (see `crane`). param: bits 0..3 the mesh (a fold's part), 4..7 the print on
+    /// the sheet (a `crane::Print`), 8..31 the paper's tint (r | g << 8 | b << 16);
+    /// color: the glow inside it, and its strength in w.
+    pub const CRANE: u32 = 18;
 }
 
 #[repr(C)]
@@ -436,6 +444,7 @@ pub struct Renderer {
     models: HeldModels,
     model_verts: GrowBuf<books::ModelVertex>,
     model_idx: GrowBuf<u32>,
+    cranes: crane::Cranes,
     chunks: Vec<ChunkGpu>,
     timer: Option<Timer>,
     targets: Targets,
@@ -1023,6 +1032,7 @@ impl Renderer {
             models: Default::default(),
             model_verts: GrowBuf::new(&device, "held models", 4096),
             model_idx: GrowBuf::index(&device, "held model indices", 16384),
+            cranes: crane::Cranes::new(&device),
             chunks: Vec::new(),
             timer,
             window,
@@ -1225,7 +1235,8 @@ impl Renderer {
     }
 
     pub fn set_static(&mut self, insts: &[Inst]) {
-        self.static_buf.upload(&self.device, &self.queue, insts);
+        let boxes = self.cranes.set_fixed(&self.device, &self.queue, insts);
+        self.static_buf.upload(&self.device, &self.queue, &boxes);
     }
 
     /// The library's lettering.
@@ -1295,7 +1306,8 @@ impl Renderer {
                 }
             }
         };
-        sort(f.dynamic, kind::BOOK, books, others);
+        let boxes = self.cranes.set_moving(&self.device, &self.queue, f.dynamic);
+        sort(boxes, kind::BOOK, books, others);
         sort(f.trans, kind::SHAFT, beams, rest);
         self.dyn_books_buf.upload(&self.device, &self.queue, books);
         self.dyn_buf.upload(&self.device, &self.queue, others);
@@ -1383,6 +1395,7 @@ impl Renderer {
             draw_boxes(&mut rp, &self.dyn_books_buf);
             rp.set_pipeline(&self.scene_pipe);
             draw_boxes(&mut rp, &self.dyn_buf);
+            self.cranes.draw(&mut rp);
             if self.text_buf.len > 0 {
                 rp.set_pipeline(&self.text_pipe);
                 rp.set_bind_group(1, &self.text_bg, &[]);

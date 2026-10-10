@@ -1,4 +1,5 @@
-// Hushfold scene shader. Everything is a box; `kind` picks a procedural material.
+// Hushfold scene shader. Everything is a box but the paper birds, which have meshes of
+// their own (gfx::crane); `kind` picks a procedural material.
 
 struct Light {
     pos_radius: vec4<f32>,
@@ -38,6 +39,7 @@ const K_CLOTH: u32 = 14u;
 const K_LEAF: u32 = 15u;
 const K_CRYSTAL: u32 = 16u;
 const K_PARCHMENT: u32 = 17u;
+const K_CRANE: u32 = 18u;
 
 const BRASS: vec3<f32> = vec3<f32>(0.8, 0.5, 0.15);
 
@@ -699,6 +701,70 @@ fn parchment(s: ptr<function, Mat>, i: VOut, fw: f32) {
     (*s).gloss = 10.0;
 }
 
+// A folded-paper bird (see `kind::CRANE`; its mesh's facets are lit flat, so each
+// crease turns the light): the sheet's tint and print, fibres where they can be seen,
+// light through the paper, and a glow from inside, strongest at the body.
+fn crane(s: ptr<function, Mat>, i: VOut, fw: f32) {
+    let p = i.local;
+    let tint = vec3<f32>(f32((i.param >> 8u) & 255u), f32((i.param >> 16u) & 255u), f32(i.param >> 24u)) / 255.0;
+    // The sheet seen from above on the wings, from the side on the body's flanks; and
+    // a pixel's footprint on it (the mesh is drawn scaled).
+    let n = abs(i.lnormal);
+    let uv = select(select(p.zy, p.xy, n.z > n.x), p.xz, n.y > 0.5);
+    let fs = fw / i.scale.x;
+    let seed = dot(tint, vec3<f32>(7.1, 3.3, 5.7));
+    var cover = 0.0;
+    switch (i.param >> 4u) & 15u {
+        case 1u, 2u, 3u: {
+            cover = ink(((i.param >> 4u) & 15u) - 1u, uv, vec2<f32>(0.3), seed, fs);
+        }
+        case 4u: {
+            // Staves of five lines, and notes on and between them.
+            let row = floor(uv.y / 0.05);
+            let f = (uv.y - row * 0.05 - 0.012) / 0.006;
+            let lines = line_aa(abs(fract(f + 0.5) - 0.5) * 0.006, 0.0004, fs) * step(-0.5, f) * step(f, 4.5);
+            let cell = floor(uv.x / 0.02);
+            let h = hash3(vec3<f32>(cell, row, seed));
+            let at = vec2<f32>((cell + 0.5) * 0.02, row * 0.05 + 0.012 + floor(h * 9.0) * 0.003);
+            let note = line_aa(length((uv - at) * vec2<f32>(0.8, 1.2)), 0.0024, fs) * step(0.5, h);
+            cover = max(lines * 0.8, note);
+        }
+        case 5u: {
+            let q = uv / 0.03;
+            let c = fract(vec2<f32>(q.x + 0.5 * floor(q.y), q.y)) - 0.5;
+            cover = line_aa(length(c) * 0.03, 0.0045, fs);
+        }
+        case 6u: {
+            // Waves: rings of scales, each row overlapping the one behind.
+            let q = uv / 0.045;
+            let row = floor(q.y);
+            let c = vec2<f32>(fract(q.x + 0.5 * row) - 0.5, fract(q.y));
+            let d = length(c) * 0.045;
+            cover = line_aa(abs(fract(d / 0.009 + 0.5) - 0.5) * 0.009, 0.0012, fs) * step(d, 0.045);
+        }
+        case 7u: {
+            cover = line_aa(abs(fract((uv.x + uv.y) / 0.05) - 0.5) * 0.05, 0.007, fs);
+        }
+        case 8u: {
+            let c = floor(uv / 0.04);
+            cover = mix(f32((i32(c.x + c.y) & 1) == 1), 0.5, smoothstep(0.01, 0.03, fs)) * 0.7;
+        }
+        default: {}
+    }
+    var fibre = 0.0;
+    if (fs < 0.006) {
+        fibre = (vnoise(vec3<f32>(uv * 260.0, seed)) - 0.5) * (1.0 - smoothstep(0.002, 0.006, fs));
+    }
+    let paper = tint * (0.94 + 0.1 * vnoise(vec3<f32>(uv * 14.0, seed)) + 0.12 * fibre);
+    let dark = dot(tint, vec3<f32>(0.3, 0.55, 0.15)) < 0.4;
+    let ink_rgb = select(vec3<f32>(0.1, 0.07, 0.05), vec3<f32>(0.95, 0.9, 0.78), dark);
+    (*s).albedo = mix(paper, ink_rgb, cover * 0.85);
+    (*s).back = 0.45;
+    (*s).spec = vec3<f32>(0.05);
+    (*s).gloss = 10.0;
+    (*s).emit = i.color.rgb * i.color.w * (0.25 + 0.75 / (1.0 + dot(p, p) * 60.0)) * mix(vec3<f32>(1.0), tint, 0.5);
+}
+
 @fragment
 fn fs_main(i: VOut) -> @location(0) vec4<f32> {
     // How much world a pixel spans here (derivatives first, in uniform control flow):
@@ -752,7 +818,7 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
         case K_GLASS: { // moonlit window
             return vec4<f32>(apply_fog(window(i, fw), i.world), 1.0);
         }
-        case K_PAPER: { // familiar
+        case K_PAPER: {
             s.albedo = vec3<f32>(0.9, 0.86, 0.75);
             s.emit = i.color.rgb * i.color.w;
         }
@@ -772,6 +838,9 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
         }
         case K_PARCHMENT: {
             parchment(&s, i, fw);
+        }
+        case K_CRANE: {
+            crane(&s, i, fw);
         }
         default: {
             // Plain stuff (wax, marble) with a soft polish.

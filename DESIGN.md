@@ -275,6 +275,31 @@ familiar that finds nothing to do for two minutes folds up and comes back to the
 shoulder (a burst where it was, a hint saying so), so a post that runs dry costs
 no walk back to it.
 
+Each familiar is drawn as a folded-paper bird (`gfx/crane.rs`) with a glow inside it
+in its role's colour (gold for shelvers, blue for couriers, as the HUD and their
+lights have it). A shelver is a classic crane: neck and tail raised, a bent head,
+broad wings creased down the middle, 0.86 m across spread flat. A courier is folded
+for speed, like a swift: smaller and flat, a pointed head held forward, long wings
+swept back to a sickle, a forked tail, 0.63 m across. Each of a role is folded from
+a paper of its own, in the order they come: shelvers from the library's pages (a
+page of writing, an old map, a song, a star chart, a letter on rose paper),
+couriers from deep blue papers printed with dots, waves, stripes or checks; the
+tint tells them apart across a room, the print up close. How a bird is drawn
+(`Look` in `familiar.rs`) is eased toward what it is doing and changes nothing it
+does: its position and everything its work reads are as before, and the look takes
+none of the game's random numbers. Flying, its wings beat with its speed and effort
+(a shelver ~1.9 beats a second cruising, a courier ~2.9; faster taking off,
+climbing, turning hard or flaring to land), in bouts of a few beats with a glide
+between (wings held in a shallow V) when it flies steadily; it banks into turns as
+it would to make them at its speed, noses up climbing and flaring, and its body
+lifts on each downstroke. The outer half of each wing lags the inner, so the wing
+bends through the beat. Hovering over books it beats fast, nose up; on its perch it
+settles into the tray with its wings half raised, turns half toward the player
+nearby (to one side, so its shape shows) or else looks about, and now and then
+stretches its wings; riding, it is a little over half size with its wings raised.
+A perch is a brass stand on a stepped foot with a tray on top, and a gem of the
+role's colour turning over it.
+
 "Nearest" means nearest on foot: `nav.rs` keeps a Dijkstra distance field from
 the player over a 0.5 m grid per level (furniture inflated by the player's
 radius; neighbouring cells more than a step apart in height are not linked;
@@ -354,9 +379,15 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   will cost them more.
 
 ## Rendering
-Box-only geometry (but for books in hand, below); each instance's `kind` picks a
-procedural material in WGSL: wood, book, floor, stone, rug, emissive, plaque,
-window glass, paper, metal, cloth, leaf, crystal and parchment, each documented in
+Box geometry, but for books in hand (below) and the paper birds (familiars, the
+Verse Gallery's cranes): those are instances of `kind::CRANE`, drawn with the same
+pipeline and instance format from small two-sided triangle meshes (`gfx/crane.rs`),
+one per part (a body, each wing's inner and outer half) and posed per instance; the
+renderer sorts them out of the static and per-frame instances. Each instance's
+`kind` picks a procedural material in WGSL: wood, book, floor, stone, rug,
+emissive, plaque, window glass, paper, metal, cloth, leaf, crystal, parchment and
+folded paper (a bird's sheet: its tint and print, lit flat per facet so the creases
+show), each documented in
 `gfx::kind` with what its colour and `param` mean. Materials work from the box's local coordinates, a
 per-instance seed and the pixel's footprint, so fine detail fades out rather
 than shimmers. The scene shader is register-bound: materials work out what they
@@ -436,7 +467,16 @@ bells and glints where something magical happens. Everything is synthesised;
   weights each frame: a room fills in from its doorway and spills out into the
   atrium; the engine eases between them over a second. Fires are found by their
   light (a bright flicker near the floor) and heard from where they burn;
-  familiars on the wing beat their paper wings where they fly.
+  familiars on the wing beat their paper wings where they fly: a soft push of air
+  through paper on each downstroke, in time with the beat the bird is drawn with
+  (`Scene::wings` carries it), fluttering a little, with the paper's faint snap at
+  the bottom of the stroke, and silent while it glides. A shelver's are deeper and
+  slower (~1.9 beats a second, air round 400–600 Hz), a courier's lighter and
+  quicker (~2.9, round 650–1000 Hz); both are dulled above ~2 kHz. One circling 3 m
+  off peaks −28 to −31 dBFS (a footfall −27). The first wings (noise round 1.4 kHz
+  at a random 6–8.5 beats a second, apart from the drawn beat) peaked −26 with 30%
+  of their energy above 3 kHz; now 3–6%. Posting a familiar and taking it back
+  (`Unfold`, `Fold`) sound its role's wings, in one of three voices each.
 - **Music** is composed a piece at a time (key, mode, metre, ensemble of music
   box, celesta, felt piano, harp, pad and bass, progressions, a motif and its
   answer in A A B A), then a quiet spell of 35–95 s. Tonal effects and the

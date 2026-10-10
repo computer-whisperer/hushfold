@@ -10,9 +10,16 @@
 //! `Field`), at flying height, straightened where the line is clear to sight, so a
 //! familiar goes through doorways and up the stairs, or over a railing and across
 //! the well, but never through a wall or a floor.
+//!
+//! Each is drawn as a folded-paper bird (`gfx::crane`): a shelver a crane, a courier a
+//! smaller swift, each familiar of a role folded from a paper of its own. How it is
+//! drawn (`Look`) follows what it does without touching it.
 
 use super::*;
+use crate::audio::DOWNSTROKE;
+use crate::gfx::crane::{Crane, Fold, Paper, Print};
 use std::collections::HashMap;
+use std::f32::consts::{FRAC_PI_4, TAU};
 
 /// Familiar Wings by level: (flight speed in m/s, books carried, how far round its
 /// post a familiar takes books from, how far on foot from its post a shelver files).
@@ -32,6 +39,54 @@ const GRASP: f32 = 0.8;
 const SETTLED: f32 = 2.5;
 /// Seconds a posted familiar finds nothing to do before it comes back to the shoulder.
 const IDLE_HOME: f32 = 120.0;
+/// Height of the tray on top of a perch, which a perched bird sits in.
+const TRAY: f32 = 1.16;
+/// A riding familiar's size, to a posted one's.
+const RIDING: f32 = 0.55;
+/// The papers shelvers are folded from, one each: pages of the library's own, in
+/// tints that tell them apart across a room (a page of writing, an old map, a song,
+/// a star chart, a letter on rose paper).
+const SHELVER_PAPERS: [Paper; 5] = [
+    Paper {
+        tint: [0.8, 0.74, 0.6],
+        print: Print::Text,
+    },
+    Paper {
+        tint: [0.66, 0.44, 0.2],
+        print: Print::Map,
+    },
+    Paper {
+        tint: [0.3, 0.62, 0.3],
+        print: Print::Music,
+    },
+    Paper {
+        tint: [0.25, 0.42, 0.8],
+        print: Print::StarChart,
+    },
+    Paper {
+        tint: [0.8, 0.3, 0.35],
+        print: Print::Text,
+    },
+];
+/// And couriers': deep blues printed with patterns in light ink.
+const COURIER_PAPERS: [Paper; 4] = [
+    Paper {
+        tint: [0.05, 0.08, 0.32],
+        print: Print::Dots,
+    },
+    Paper {
+        tint: [0.02, 0.19, 0.24],
+        print: Print::Waves,
+    },
+    Paper {
+        tint: [0.1, 0.17, 0.45],
+        print: Print::Stripes,
+    },
+    Paper {
+        tint: [0.13, 0.06, 0.3],
+        print: Print::Checks,
+    },
+];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
@@ -52,6 +107,31 @@ impl Role {
         match self {
             Role::Shelver => [1.0, 0.82, 0.55],
             Role::Courier => [0.55, 0.68, 1.0],
+        }
+    }
+
+    /// How it is folded, and its size posted.
+    fn fold(self) -> (Fold, f32) {
+        match self {
+            Role::Shelver => (Fold::Crane, 1.2),
+            Role::Courier => (Fold::Swift, 1.05),
+        }
+    }
+
+    /// Its wingbeats a second flying steadily, and how long it glides between bouts of
+    /// beating (seconds, least and most).
+    fn wingbeat(self) -> (f32, (f32, f32)) {
+        match self {
+            Role::Shelver => (1.9, (0.6, 1.3)),
+            Role::Courier => (2.9, (0.35, 0.8)),
+        }
+    }
+
+    /// The papers its familiars are folded from, in the order they come.
+    fn papers(self) -> &'static [Paper] {
+        match self {
+            Role::Shelver => &SHELVER_PAPERS,
+            Role::Courier => &COURIER_PAPERS,
         }
     }
 }
@@ -94,6 +174,7 @@ pub(super) struct Familiar {
     riding_since: f32,
     /// Seconds it has sat at its post finding nothing to do.
     pub(super) idle: f32,
+    pub(super) look: Look,
     /// Books it has set down where they were wanted (a courier); for the pacing bot.
     #[cfg(test)]
     pub(super) delivered: u32,
@@ -107,8 +188,224 @@ impl Familiar {
             self.path.clear();
             self.task = Task::Idle;
             self.rest = 0.5;
+            self.look.size = self.role.fold().1;
+            self.look.settled = 1.0;
         }
     }
+
+    /// Posted and off its perch, or beating its wings: heard.
+    pub(super) fn on_the_wing(&self) -> bool {
+        self.post.is_some() && (self.look.settled < 0.5 || self.look.flap > 0.01)
+    }
+
+    /// Which of the Unfold and Fold sounds it makes (`Sfx`): its role's, each
+    /// familiar of a role one of three.
+    fn voice(&self, i: usize) -> usize {
+        self.role as usize * 3 + i % 3
+    }
+
+    /// Ease how familiar `i` is drawn toward what it is doing, `dt` seconds on, at
+    /// game time `t`: `speed` is how fast familiars fly, `(eye, yaw)` the player's.
+    fn animate(&mut self, i: usize, dt: f32, speed: f32, (eye, yaw): (Vec3, f32), t: f32) {
+        let (cruise, (short, long)) = self.role.wingbeat();
+        let ease = |rate: f32| 1.0 - (-dt * rate).exp();
+        let v = self.vel;
+        let l = &mut self.look;
+        let accel = (v - l.was) / dt.max(1e-4);
+        l.was = v;
+        let level = Vec2::new(v.x, v.z).length();
+        // Working hard (speeding up, climbing, swinging round a corner), or slowing
+        // to arrive, which it flares for.
+        let effort = (accel.length() / (speed * 3.0)).max(v.y / speed * 2.0).clamp(0.0, 1.0);
+        let flare = (-accel.dot(v.normalize_or_zero()) / (speed * 2.5)).clamp(0.0, 1.0);
+        let perch = self.post.as_ref().map(|p| p.at + Vec3::Y * PERCH_H);
+        let riding = perch.is_none();
+        // Idle at its perch (it stops within `ARRIVE` of the point over it).
+        let perched = perch.is_some_and(|p| self.task == Task::Idle && self.pos.distance(p) < ARRIVE * 2.0);
+        let hovering = !riding && !perched && self.rest > 0.0;
+        let flying = !riding && !perched && !hovering;
+        // It faces along its flight; on its perch half toward the player nearby (to
+        // one side or the other, so its shape shows), or else about it; riding, the
+        // way the player looks.
+        let target = if riding {
+            yaw
+        } else if level > 0.3 {
+            v.x.atan2(-v.z)
+        } else if perched {
+            let to = eye - self.pos;
+            if to.length() < 8.0 {
+                to.x.atan2(-to.z) + if hash(i, 0) < 0.5 { 0.9 } else { -0.9 }
+            } else {
+                hash(i, (t / 6.0) as u32) * TAU
+            }
+        } else {
+            l.heading
+        };
+        let rate = if flying {
+            8.0
+        } else if riding {
+            6.0
+        } else {
+            2.0
+        };
+        let turn = wrap(target - l.heading) * ease(rate);
+        l.heading = wrap(l.heading + turn);
+        // Banking into a turn as it would to make it at its speed; nose up climbing,
+        // flaring to land and hovering.
+        let bank = if flying {
+            (-turn / dt.max(1e-4) * level * 0.08).clamp(-0.7, 0.7)
+        } else {
+            0.0
+        };
+        l.bank += (bank - l.bank) * ease(6.0);
+        let pitch = if hovering {
+            0.3
+        } else if flying {
+            v.y.atan2(level) * 0.6 + 0.35 * flare
+        } else {
+            0.0
+        };
+        l.pitch += (pitch - l.pitch) * ease(5.0);
+        // Wings: beating in bouts with a glide between when it flies steadily, quicker
+        // and harder when it works, fast to hover, held still on the perch but for a
+        // stretch now and then, and riding.
+        if l.glide > 0.0 && (!flying || effort > 0.3 || flare > 0.2) {
+            l.glide = 0.0;
+        }
+        let stretch = perched && hash(i ^ 0x51, (t / 7.0) as u32) < 0.3 && (t / 7.0).fract() < 0.2;
+        let (flap, rate) = if hovering {
+            (1.0, cruise * 1.5)
+        } else if flying && l.glide <= 0.0 {
+            let work = effort.max(flare);
+            (0.65 + 0.35 * work, cruise * (0.8 + 0.06 * level) * (1.0 + 0.5 * work))
+        } else if stretch {
+            (0.6, cruise * 0.7)
+        } else {
+            (0.0, l.rate)
+        };
+        l.flap += (flap - l.flap) * ease(8.0);
+        l.rate += (rate - l.rate) * ease(4.0);
+        if l.glide > 0.0 {
+            l.glide -= dt;
+        } else {
+            l.phase += l.rate * dt;
+            if l.phase >= 1.0 {
+                l.phase = l.phase.fract();
+                // A beat done: flying steadily, it glides after a few.
+                if flying && effort < 0.15 && flare < 0.1 && level > speed * 0.7 {
+                    if l.beats == 0 {
+                        l.glide = short + (long - short) * hash(i, l.glides);
+                        l.glides += 1;
+                        l.beats = 2 + (hash(i ^ 0xb7, l.glides) * 3.0) as u32;
+                        l.phase = 0.0;
+                    } else {
+                        l.beats -= 1;
+                    }
+                }
+            }
+        }
+        let (raise, wrist) = if riding {
+            (0.75, 0.2)
+        } else if perched {
+            (0.3, -0.35)
+        } else if hovering {
+            (0.25, 0.0)
+        } else {
+            (0.12, 0.06)
+        };
+        l.raise += (raise - l.raise) * ease(6.0);
+        l.wrist += (wrist - l.wrist) * ease(6.0);
+        let size = self.role.fold().1 * if riding { RIDING } else { 1.0 };
+        l.size += (size - l.size) * ease(3.0);
+        let settled = if perched { 1.0 } else { 0.0 };
+        l.settled += (settled - l.settled) * ease(6.0);
+    }
+}
+
+/// How a familiar's bird is drawn, eased from frame to frame toward what it is doing:
+/// for drawing, and the sound of its wings, only (nothing it does depends on it).
+#[derive(Clone, Copy)]
+pub(super) struct Look {
+    /// Where its wings are in their beat (0 to 1 from the top of the stroke, the
+    /// downstroke first), beats a second, and how hard they beat (0 held still).
+    phase: f32,
+    rate: f32,
+    flap: f32,
+    /// Seconds left of the glide it is in, beats to go before it may glide again, and
+    /// glides so far (which pick the next one's length).
+    glide: f32,
+    beats: u32,
+    glides: u32,
+    /// Which way it faces (radians from -z toward +x), how far it banks (the right
+    /// wing down negative), and how far its nose is up.
+    heading: f32,
+    bank: f32,
+    pitch: f32,
+    /// Its wings at rest (raised at the root, and at the wrist), its size, and how far
+    /// it has settled into its perch's tray (0 to 1).
+    raise: f32,
+    wrist: f32,
+    size: f32,
+    settled: f32,
+    /// Its velocity a frame ago.
+    was: Vec3,
+}
+
+impl Look {
+    /// Its beat as heard: where the wings are in it, how fast that moves on (not at
+    /// all while it glides, the wings held), and how hard they beat.
+    pub(super) fn beat(&self) -> (f32, f32, f32) {
+        let rate = if self.glide > 0.0 { 0.0 } else { self.rate };
+        (self.phase, rate, self.flap)
+    }
+
+    /// Riding, wings raised, facing `heading`.
+    fn new(role: Role, heading: f32) -> Self {
+        Look {
+            phase: 0.0,
+            rate: role.wingbeat().0,
+            flap: 0.0,
+            glide: 0.0,
+            beats: 3,
+            glides: 0,
+            heading,
+            bank: 0.0,
+            pitch: 0.0,
+            raise: 0.75,
+            wrist: 0.2,
+            size: role.fold().1 * RIDING,
+            settled: 0.0,
+            was: Vec3::ZERO,
+        }
+    }
+}
+
+/// Where wings are in a beat at `phase` (0 to 1 from the top): from 1 at the top down
+/// to -1 at the bottom over the downstroke, and back up.
+fn stroke(phase: f32) -> f32 {
+    let p = phase.rem_euclid(1.0);
+    if p < DOWNSTROKE {
+        (PI * p / DOWNSTROKE).cos()
+    } else {
+        -(PI * (p - DOWNSTROKE) / (1.0 - DOWNSTROKE)).cos()
+    }
+}
+
+/// A number in 0..1 picked by `a` and `b`, the same each time: familiars' looks take
+/// nothing from the game's random numbers, which their work draws on.
+fn hash(a: usize, b: u32) -> f32 {
+    let mut x = (a as u32).wrapping_mul(0x9E37_79B9) ^ b.wrapping_mul(0x85EB_CA6B);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2C1B_3C6D);
+    x ^= x >> 12;
+    x = x.wrapping_mul(0x297A_2D39);
+    x ^= x >> 15;
+    (x >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// An angle brought into -π..π.
+fn wrap(a: f32) -> f32 {
+    (a + PI).rem_euclid(TAU) - PI
 }
 
 impl Game {
@@ -132,6 +429,7 @@ impl Game {
             rest: 0.5,
             riding_since: self.time,
             idle: 0.0,
+            look: Look::new(role, self.player.yaw),
             #[cfg(test)]
             delivered: 0,
         });
@@ -142,7 +440,7 @@ impl Game {
     pub(super) fn post_or_recall(&mut self, audio: &mut Audio) {
         if let Aim::Familiar(i) = self.aim {
             self.recall(i);
-            audio.play(Sfx::Fold, 0.4);
+            audio.play_pitched(Sfx::Fold, 0.4, self.familiars[i].voice(i));
             return;
         }
         let riding = (0..self.familiars.len())
@@ -167,7 +465,7 @@ impl Game {
             return;
         };
         self.post_familiar(i, at);
-        audio.play(Sfx::Unfold, 0.3);
+        audio.play_pitched(Sfx::Unfold, 0.3, self.familiars[i].voice(i));
     }
 
     /// Post familiar `i` at `at` (a free spot on a floor).
@@ -457,6 +755,16 @@ impl Game {
             self.arrive(i);
             self.carry_dangle(i);
         }
+        self.animate_familiars(dt);
+    }
+
+    /// Ease how each familiar is drawn toward what it is doing (drawing only).
+    fn animate_familiars(&mut self, dt: f32) {
+        let (speed, ..) = WINGS[self.level(Upg::Wings) as usize];
+        let player = (self.player.eye(), self.player.yaw);
+        for (i, f) in self.familiars.iter_mut().enumerate() {
+            f.animate(i, dt, speed, player, self.time);
+        }
     }
 
     /// Set familiar `i` off on `task`, planning its path.
@@ -555,87 +863,81 @@ impl Game {
         }
     }
 
-    /// The familiars (folded-paper cranes with a soft inner glow, in their role's
+    /// The familiars (folded-paper birds with a soft glow inside, in their role's
     /// colour) and the perches they are posted at.
     pub(super) fn draw_familiars(&self, out: &mut Vec<Inst>) {
+        let mut nth = [0; 2];
         for f in &self.familiars {
+            let l = &f.look;
+            let (fold, _) = f.role.fold();
             let c = f.role.light();
-            let glow = [c[0], c[1], c[2], 0.3];
+            let mut at = f.pos;
             if let Some(post) = &f.post {
-                let brass = [0.55, 0.36, 0.12];
-                out.push(Inst::aabox(
-                    post.at + Vec3::Y * (PERCH_H * 0.5 - 0.05),
-                    Vec3::new(0.035, PERCH_H - 0.1, 0.035),
-                    kind::WOOD,
-                    brass,
-                ));
-                out.push(Inst::aabox(
-                    post.at + Vec3::Y * 0.02,
-                    Vec3::new(0.3, 0.04, 0.3),
-                    kind::WOOD,
-                    brass,
-                ));
-                out.push(Inst::aabox(
-                    post.at + Vec3::Y * (PERCH_H - 0.08),
-                    Vec3::new(0.26, 0.025, 0.04),
-                    kind::WOOD,
-                    brass,
-                ));
-                out.push(Inst::new(
-                    post.at + Vec3::Y * (PERCH_H + 0.32),
-                    Quat::IDENTITY,
-                    Vec3::splat(0.05),
-                    kind::EMISSIVE,
-                    [c[0], c[1], c[2], 1.2],
-                    0,
-                ));
+                self.draw_perch(out, post.at, c);
+                at = at.lerp(post.at + Vec3::Y * (TRAY + fold.keel() * l.size), l.settled);
             }
-            let heading = if f.vel.length_squared() > 0.01 {
-                f.vel.x.atan2(-f.vel.z)
-            } else {
-                f.phase * 0.02
+            // The body lifts as the wings beat down.
+            at.y -= l.flap * l.size * 0.012 * stroke(l.phase - 0.15);
+            let s = stroke(l.phase);
+            let papers = f.role.papers();
+            let k = &mut nth[f.role as usize];
+            let bird = Crane {
+                fold,
+                at,
+                rot: Quat::from_rotation_y(-l.heading) * Quat::from_rotation_x(l.pitch) * Quat::from_rotation_z(l.bank),
+                size: l.size,
+                // The outer half of each wing lags the inner a little, so the wing
+                // bends through the beat.
+                raise: l.raise + l.flap * (0.12 + 0.6 * s),
+                wrist: l.wrist + l.flap * 0.45 * (stroke(l.phase - 0.1) - s),
+                paper: papers[*k % papers.len()],
+                glow: [c[0], c[1], c[2], 0.15],
             };
-            let body_rot = Quat::from_rotation_y(-heading);
-            let k = if f.post.is_some() { 1.6 } else { 0.9 };
-            out.push(Inst::new(
-                f.pos,
-                body_rot,
-                Vec3::new(0.05, 0.05, 0.3) * k,
-                kind::PAPER,
-                glow,
-                0,
-            ));
-            let flap = f.phase.sin() * 0.6;
-            for s in [-1.0f32, 1.0] {
-                let wing_rot = body_rot * Quat::from_rotation_z(s * (0.2 + flap));
-                let off = wing_rot * Vec3::new(s * 0.14 * k, 0.0, 0.0);
-                out.push(Inst::new(
-                    f.pos + off,
-                    wing_rot,
-                    Vec3::new(0.26, 0.008, 0.14) * k,
-                    kind::PAPER,
-                    glow,
-                    0,
-                ));
-            }
-            // Neck and tail.
-            out.push(Inst::new(
-                f.pos + body_rot * Vec3::new(0.0, 0.06, -0.16) * k,
-                body_rot * Quat::from_rotation_x(0.6),
-                Vec3::new(0.025, 0.12, 0.025) * k,
-                kind::PAPER,
-                glow,
-                0,
-            ));
-            out.push(Inst::new(
-                f.pos + body_rot * Vec3::new(0.0, 0.05, 0.15) * k,
-                body_rot * Quat::from_rotation_x(-0.7),
-                Vec3::new(0.02, 0.1, 0.02) * k,
-                kind::PAPER,
-                glow,
-                0,
-            ));
+            *k += 1;
+            out.extend(bird.parts());
         }
+    }
+
+    /// A post's perch: a brass stand on a stepped foot with a tray on top for its bird
+    /// to sit in, and a gem of its role's colour turning slowly over it.
+    fn draw_perch(&self, out: &mut Vec<Inst>, at: Vec3, light: [f32; 3]) {
+        let brass = [0.72, 0.5, 0.2, 1.0];
+        let mut part = |p: Vec3, size: Vec3, turn: f32| {
+            out.push(Inst::new(
+                at + p,
+                Quat::from_rotation_y(turn),
+                size,
+                kind::METAL,
+                brass,
+                0,
+            ));
+        };
+        part(Vec3::Y * 0.015, Vec3::new(0.26, 0.03, 0.26), 0.0);
+        part(Vec3::Y * 0.045, Vec3::new(0.17, 0.03, 0.17), FRAC_PI_4);
+        part(Vec3::Y * (TRAY + 0.06) * 0.5, Vec3::new(0.026, TRAY - 0.06, 0.026), 0.0);
+        for y in [0.33, TRAY - 0.04] {
+            part(Vec3::Y * y, Vec3::new(0.05, 0.035, 0.05), FRAC_PI_4);
+        }
+        // The tray, and its rim.
+        part(Vec3::Y * (TRAY - 0.008), Vec3::new(0.17, 0.016, 0.17), 0.0);
+        for (dx, dz) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+            let size = if dx == 0.0 {
+                Vec3::new(0.172, 0.03, 0.012)
+            } else {
+                Vec3::new(0.012, 0.03, 0.148)
+            };
+            part(Vec3::new(dx * 0.08, TRAY + 0.007, dz * 0.08), size, 0.0);
+        }
+        let t = self.time;
+        let spin = Quat::from_rotation_y(t * 0.8) * Quat::from_rotation_x(FRAC_PI_4) * Quat::from_rotation_z(FRAC_PI_4);
+        out.push(Inst::new(
+            at + Vec3::Y * (TRAY + 0.36 + 0.02 * (t * 1.3).sin()),
+            spin,
+            Vec3::splat(0.035),
+            kind::EMISSIVE,
+            [light[0], light[1], light[2], 0.8],
+            0,
+        ));
     }
 }
 

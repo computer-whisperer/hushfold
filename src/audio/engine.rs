@@ -24,7 +24,9 @@ const CROWD_TAU: f32 = 0.6;
 /// its kind's gap and crowd.
 const NEAR: f32 = 0.3;
 
-/// What the game asks of the engine.
+/// What the game asks of the engine. A scene comes by value, every frame: boxed, it
+/// would be freed on the audio thread.
+#[allow(clippy::large_enum_variant)]
 pub enum Cmd {
     /// The clips, once synthesised; until then plays are dropped.
     Banks(Arc<Banks>),
@@ -86,7 +88,7 @@ fn props(s: Sfx) -> Props {
         Sfx::Purchase => t(0.26, 0.3, 0.1, 0.0),
         Sfx::Spell => t(0.32, 0.35, 0.1, 0.0),
         Sfx::Unfold => t(0.3, 0.25, 0.1, 0.0),
-        Sfx::Fold => p(0.22, 0.15, 0.1, 0.0, 0.02, 0.0),
+        Sfx::Fold => p(0.11, 0.15, 0.1, 0.0, 0.02, 0.0),
         Sfx::Nope => t(0.24, 0.1, 0.1, 0.0),
         Sfx::Tick => p(0.18, 0.05, 0.03, 0.0, 0.03, 0.0),
         Sfx::Step => p(0.26, 0.15, 0.08, 0.1, 0.05, 0.0),
@@ -391,7 +393,10 @@ impl Engine {
                 let fine = finite(s.ears)
                     && finite(s.right)
                     && s.fires.iter().all(|&(at, v)| finite(at) && v.is_finite())
-                    && s.wings.iter().flatten().all(|&(_, at)| finite(at));
+                    && s.wings
+                        .iter()
+                        .flatten()
+                        .all(|w| finite(w.at) && (w.phase + w.rate + w.flap).is_finite());
                 if fine {
                     for w in &mut s.places {
                         *w = if w.is_finite() { w.clamp(0.0, 1.0) } else { 0.0 };

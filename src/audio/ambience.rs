@@ -5,7 +5,7 @@
 use super::clips::{Banks, Grain};
 use super::dsp::*;
 use super::engine::{DT, Ears, Heard, Voice};
-use super::{MAX_FIRES, MAX_WINGS, Place, Scene};
+use super::{DOWNSTROKE, MAX_FIRES, MAX_WINGS, Place, Scene, Wingbeat};
 use glam::Vec3;
 use rand::prelude::*;
 use std::f32::consts::{PI, TAU};
@@ -660,17 +660,38 @@ impl Fire {
     }
 }
 
-/// A paper familiar's wings, beating as it flies.
+/// A paper familiar's wings, beating as it flies: a soft push of air through paper
+/// on each downstroke, in time with the beat it is drawn with, fluttering a little,
+/// and the paper's faint snap as it pulls taut at the bottom; a shelver's deeper, a
+/// courier's lighter. Gliding, they are silent.
 struct Wings {
     /// Whose wings: the familiar's number, until they have fallen silent.
     id: Option<usize>,
     level: Smooth,
-    at: Vec3,
-    band: Svf,
+    /// Where it is and how its wings beat, as last told, and where the beat told has
+    /// got to since (it is told once a frame).
+    beat: Wingbeat,
+    aim: f32,
+    /// The beat as heard, kept to the one told, the flutter's, and seconds since the
+    /// last snap.
     phase: f32,
-    rate: f32,
-    beat: f32,
+    flutter: f32,
+    snap: f32,
+    flap: Smooth,
+    air: Svf,
+    dull: OnePole,
+    crisp: Svf,
     gains: Option<(f32, f32)>,
+}
+
+/// How hard wings push the air at `phase` in their beat: a swell over the
+/// downstroke, a breath on the way up.
+fn push(phase: f32) -> f32 {
+    if phase < DOWNSTROKE {
+        (PI * phase / DOWNSTROKE).sin().powi(2)
+    } else {
+        0.1 * (PI * (phase - DOWNSTROKE) / (1.0 - DOWNSTROKE)).sin().powi(2)
+    }
 }
 
 impl Wings {
@@ -678,11 +699,22 @@ impl Wings {
         Wings {
             id: None,
             level: Smooth::new(0.0),
-            at: Vec3::ZERO,
-            band: Svf::new(1400.0, 0.8),
+            beat: Wingbeat {
+                id: 0,
+                at: Vec3::ZERO,
+                phase: 0.0,
+                rate: 0.0,
+                flap: 0.0,
+                courier: false,
+            },
+            aim: 0.0,
             phase: 0.0,
-            rate: 7.0,
-            beat: 1.0,
+            flutter: 0.0,
+            snap: 1.0,
+            flap: Smooth::new(0.0),
+            air: Svf::new(500.0, 0.7),
+            dull: OnePole::new(2000.0),
+            crisp: Svf::new(1600.0, 1.4),
             gains: None,
         }
     }
@@ -696,26 +728,43 @@ impl Wings {
             }
             return;
         }
-        let h = Heard::from(ears, self.at);
+        let b = self.beat;
+        // Keep to the beat as drawn: eased toward it, or caught up at once when well
+        // out (after a hitch).
+        let off = (self.aim - self.phase + 0.5).rem_euclid(1.0) - 0.5;
+        self.phase = (self.phase + if off.abs() > 0.2 { off } else { off * 0.15 }).rem_euclid(1.0);
+        self.aim = (self.aim + b.rate * DT).fract();
+        self.flap.target = b.flap;
+        let (f0, f1) = self.flap.step(DT, 0.05);
+        // (centre of the rush of air, its Q, how dull, flutters a second, the snap's
+        // pitch, loudness)
+        let (centre, q, dull, flutter, crisp, gain): (f32, f32, f32, f32, f32, f32) = if b.courier {
+            (650.0, 0.8, 2000.0, 31.0, 2000.0, 0.16)
+        } else {
+            (420.0, 0.7, 1600.0, 19.0, 1500.0, 0.21)
+        };
+        let h = Heard::from(ears, b.at);
         let (gl0, gr0) = self.gains.unwrap_or((h.left, h.right));
         self.gains = Some((h.left, h.right));
+        self.dull.set(dull.min(h.cutoff));
+        // The air rises in pitch as the stroke pushes harder.
+        self.air.set(centre * (1.0 + 0.5 * push(self.phase)), q);
+        self.crisp.set(crisp, 1.4);
         let n = c.l.len();
         for i in 0..n {
             let k = (i + 1) as f32 / n as f32;
-            self.phase += self.rate / SRF;
-            if self.phase >= 1.0 {
-                self.phase -= 1.0;
-                self.rate = c.rng.gen_range(6.0..8.5);
-                self.beat = c.rng.gen_range(0.6..1.0);
+            let was = self.phase;
+            self.phase = (self.phase + b.rate / SRF).fract();
+            if was < DOWNSTROKE && self.phase >= DOWNSTROKE {
+                self.snap = 0.0;
             }
-            // The downstroke whispers; the upstroke is nearly silent.
-            let stroke = if self.phase < 0.55 {
-                (PI * self.phase / 0.55).sin().powi(3)
-            } else {
-                0.0
-            };
-            let v = (v0 + (v1 - v0) * k) * 0.1 * stroke * self.beat;
-            let s = self.band.band(c.noise.white()) * v;
+            self.snap += 1.0 / SRF;
+            self.flutter = (self.flutter + flutter / SRF).fract();
+            let shake = 1.0 - 0.3 * (0.5 + 0.5 * (TAU * self.flutter).sin());
+            let air = self.dull.lp(self.air.band(c.noise.white())) * push(self.phase) * shake;
+            let taut = (self.snap / 0.002).min(1.0) * (-(self.snap - 0.002).max(0.0) / 0.006).exp();
+            let snap = self.crisp.band(c.noise.white()) * taut * 0.3;
+            let s = (air + snap) * (v0 + (v1 - v0) * k) * (f0 + (f1 - f0) * k) * gain;
             c.l[i] += s * (gl0 + (h.left - gl0) * k);
             c.r[i] += s * (gr0 + (h.right - gr0) * k);
             c.wet[i] += s * 0.2 * h.wet;
@@ -807,21 +856,31 @@ impl Ambience {
         // pair that has fallen silent.
         let flying = || scene.wings.iter().flatten();
         for wings in &mut self.wings {
-            match wings.id.and_then(|id| flying().find(|w| w.0 == id)) {
-                Some(&(_, at)) => {
-                    wings.at = at;
+            match wings.id.and_then(|id| flying().find(|w| w.id == id)) {
+                Some(&beat) => {
+                    // A new frame's beat to keep to.
+                    if beat.phase != wings.beat.phase {
+                        wings.aim = beat.phase;
+                    }
+                    wings.beat = beat;
                     wings.level.target = 1.0;
                 }
-                None => wings.level.target = 0.0,
+                // Fading from where it was, and falling still.
+                None => {
+                    wings.beat.flap = 0.0;
+                    wings.level.target = 0.0;
+                }
             }
         }
-        for &(id, at) in flying() {
-            if self.wings.iter().any(|w| w.id == Some(id)) {
+        for &beat in flying() {
+            if self.wings.iter().any(|w| w.id == Some(beat.id)) {
                 continue;
             }
             if let Some(free) = self.wings.iter_mut().find(|w| w.id.is_none()) {
-                free.id = Some(id);
-                free.at = at;
+                free.id = Some(beat.id);
+                free.beat = beat;
+                free.aim = beat.phase;
+                free.phase = beat.phase;
                 free.level.target = 1.0;
             }
         }

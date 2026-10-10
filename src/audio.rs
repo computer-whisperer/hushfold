@@ -39,9 +39,10 @@ pub enum Sfx {
     Purchase,
     /// A spell cast; `play_pitched` by its hotbar slot.
     Spell,
-    /// A familiar posted: it unfolds.
+    /// A familiar posted: it unfolds. `play_pitched` by its voice: 0 to 2 a
+    /// shelver's, 3 to 5 a courier's.
     Unfold,
-    /// A familiar taken back: it folds up.
+    /// A familiar taken back: it folds up. `play_pitched` by its voice, as `Unfold`.
     Fold,
     /// Refused.
     Nope,
@@ -145,6 +146,24 @@ impl Place {
 /// Fires heard at once, and familiars' wings.
 pub const MAX_FIRES: usize = 2;
 pub const MAX_WINGS: usize = 3;
+/// How much of a familiar's wingbeat is the downstroke, which pushes the air.
+pub const DOWNSTROKE: f32 = 0.42;
+
+/// A familiar on the wing, as its wings are heard.
+#[derive(Clone, Copy, Debug)]
+pub struct Wingbeat {
+    /// Its own number, so it keeps its own wings from frame to frame.
+    pub id: usize,
+    pub at: Vec3,
+    /// Where its wings are in their beat (0 to 1 from the top, the downstroke first,
+    /// as it is drawn), beats a second (0 while it glides), and how hard they beat (0
+    /// held still).
+    pub phase: f32,
+    pub rate: f32,
+    pub flap: f32,
+    /// A courier's wings: smaller, quicker and lighter than a shelver's.
+    pub courier: bool,
+}
 
 /// Where the listener is and what is around them, each frame.
 #[derive(Clone, Copy)]
@@ -156,9 +175,8 @@ pub struct Scene {
     pub places: [f32; Place::ALL.len()],
     /// Fires: where each burns and how much of it is heard (0 for none).
     pub fires: [(Vec3, f32); MAX_FIRES],
-    /// Familiars in flight, nearest first: each one's own number (so it keeps its
-    /// own wingbeat from frame to frame) and where it is.
-    pub wings: [Option<(usize, Vec3)>; MAX_WINGS],
+    /// Familiars on the wing, nearest first.
+    pub wings: [Option<Wingbeat>; MAX_WINGS],
 }
 
 impl Default for Scene {
