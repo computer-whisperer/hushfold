@@ -2402,7 +2402,7 @@ impl Game {
             let c = pose.point(m.pivot);
             if c.distance(eye) - m.reach < MOVERS_SEEN && gfx::ball_visible(&planes, c, m.reach) {
                 for i in &self.lib.moving_insts[m.parts.start as usize..m.parts.end as usize] {
-                    let to = if i.kind == kind::CLEAR {
+                    let to = if kind::translucent(i.kind) {
                         &mut trans
                     } else {
                         &mut dyn_insts

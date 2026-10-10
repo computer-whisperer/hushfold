@@ -41,6 +41,9 @@ const K_CRYSTAL: u32 = 16u;
 const K_PARCHMENT: u32 = 17u;
 const K_CRANE: u32 = 18u;
 const K_CLEAR: u32 = 19u; // drawn by fs_glass
+const K_FIRE: u32 = 20u; // in the translucent pass
+const K_MIST: u32 = 21u; // in the translucent pass
+const K_FRET: u32 = 22u;
 
 const BRASS: vec3<f32> = vec3<f32>(0.8, 0.5, 0.15);
 
@@ -703,7 +706,7 @@ fn parchment(s: ptr<function, Mat>, i: VOut, fw: f32) {
     let e = min(ext.x - abs(uv.x), ext.y - abs(uv.y));
     col *= mix(vec3<f32>(0.55, 0.42, 0.3), vec3<f32>(1.0), smoothstep(0.0, 0.035, e + (stain - 0.5) * 0.02));
     if (thick <= lo + 1e-4 && lo < 0.02) {
-        col = mix(col, vec3<f32>(0.1, 0.07, 0.05), ink(i.param & 3u, uv, ext, seed, fw) * 0.85);
+        col = mix(col, vec3<f32>(0.1, 0.07, 0.05), ink(i.param & 7u, uv, ext, seed, fw) * 0.85);
     } else if (thick >= hi - 1e-4 && lo >= 0.02) {
         let turn = fract(length(uv) / 0.005 - atan2(uv.y, uv.x) * 0.15915);
         col *= 1.0 - 0.3 * (1.0 - smoothstep(0.0, 0.35, turn)) * (1.0 - smoothstep(0.001, 0.003, fw));
@@ -1604,6 +1607,15 @@ fn fs_trans(i: VOut) -> @location(0) vec4<f32> {
         let a = (0.12 + 0.3 * n1 * n2) * i.color.w;
         let c = mix(vec3<f32>(0.2, 0.25, 0.7), vec3<f32>(0.55, 0.3, 0.8), n2) * (0.3 + 0.7 * n1);
         return vec4<f32>(c * a, a * 0.7);
+    }
+    // Stand-ins for flames and mist (gfx::kind::FIRE, MIST).
+    if (i.kind == K_FIRE) {
+        let flick = 0.8 + 0.2 * vnoise(vec3<f32>(t * 6.0, i.centre.x * 3.0, i.centre.z * 3.0));
+        return vec4<f32>(i.color.rgb * i.color.w * flick, 0.3);
+    }
+    if (i.kind == K_MIST) {
+        let a = i.color.w * 0.3;
+        return vec4<f32>(i.color.rgb * g.ambient_top.rgb * a, a);
     }
     // Ghost slot. param: 0 = waiting, 1 = a series you carry, 2 = the active book's slot.
     // Highlighted ghosts arrive in a fixed-brightness signal colour; color.w scales them.

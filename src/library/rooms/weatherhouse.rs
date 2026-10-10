@@ -521,7 +521,7 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         48,
     );
     let jar = lib.shape(jar.two_sided());
-    lib.glass(jar.at(
+    lib.translucent(jar.at(
         base + Vec3::Y * 0.06,
         Quat::IDENTITY,
         kind::CLEAR,

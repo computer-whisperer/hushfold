@@ -198,7 +198,7 @@ pub struct Library {
     /// Things that move (`motion`), and their parts as they are at rest.
     pub movers: Vec<Mover>,
     pub moving_insts: Vec<Inst>,
-    /// Translucent static geometry (moonbeams, clear glass).
+    /// Translucent static geometry (moonbeams, clear glass, flames, mist).
     pub static_trans: Vec<Inst>,
     /// Lettering on signs and labels.
     pub text: Vec<Glyph>,
@@ -346,9 +346,10 @@ impl Library {
         self.static_insts.push(i);
     }
 
-    /// Clear glass (`kind::CLEAR`), drawn only, over what is behind it.
-    fn glass(&mut self, i: Inst) {
-        debug_assert_eq!(i.kind, kind::CLEAR, "glass is clear");
+    /// Drawn only, in the translucent pass, over what is behind it: clear glass,
+    /// flames, mist (`kind::translucent`).
+    fn translucent(&mut self, i: Inst) {
+        debug_assert!(kind::translucent(i.kind), "kind {} is opaque", i.kind);
         self.static_trans.push(i);
     }
 

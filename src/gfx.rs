@@ -26,6 +26,7 @@ pub mod kind {
     /// Seeker's Lens). Bit 31 is the shader's own: set for books modelled in the round.
     pub const BOOK: u32 = 2;
     pub const FLOOR: u32 = 3;
+    /// Dressed stone. param: 0 ashlar, 1 polished marble, 2 brick.
     pub const STONE: u32 = 4;
     pub const EMISSIVE: u32 = 5;
     pub const GHOST: u32 = 6;
@@ -51,18 +52,36 @@ pub mod kind {
     /// Gems and glass: color.w is how brightly it glows from inside (0 for plain glass).
     pub const CRYSTAL: u32 = 16;
     /// Maps, charts, scrolls; the colour is the paper's. param picks the ink on its
-    /// broad faces: 0 writing, 1 a map, 2 a star chart, 3 none. A thick box shows a
-    /// rolled scroll's turns at its ends.
+    /// broad faces: 0 writing, 1 a map, 2 a star chart, 3 none, 4 sheet music, 5 a coat
+    /// of arms. A thick box shows a rolled scroll's turns at its ends.
     pub const PARCHMENT: u32 = 17;
     /// A part of a folded-paper bird, drawn from its own mesh (see `crane`). param:
     /// bits 4..7 the print on the sheet (a `crane::Print`), 8..31 the paper's tint (r |
     /// g << 8 | b << 16); color: the glow inside it, and its strength in w.
     pub const CRANE: u32 = 18;
     /// Clear glass (jars, bell jars, glazed doors, a lamp's chimney), drawn in the
-    /// translucent pass (`Library::glass`): the room reflected in it and the lights'
-    /// highlights, more at grazing angles. color: its tint, and in w how much of what is
-    /// behind it it hides (0.05 to 0.3).
+    /// translucent pass (`Library::translucent`): the room reflected in it and the
+    /// lights' highlights, more at grazing angles. color: its tint, and in w how much of
+    /// what is behind it it hides (0.05 to 0.3).
     pub const CLEAR: u32 = 19;
+    /// Flames, drawn in the translucent pass (`Library::translucent`): tongues licking
+    /// up the piece's local y, flickering. color: the flame's colour, w its brightness.
+    /// param: 0 a candle's or a lamp's flame, 1 a hearth's or a brazier's fire.
+    pub const FIRE: u32 = 20;
+    /// Smoke, steam, cloud and rain, drawn in the translucent pass
+    /// (`Library::translucent`): soft, see-through, stirring in itself. color: its
+    /// colour, w its density. param: 0 smoke or steam rising, 1 cloud, 2 rain falling.
+    pub const MIST: u32 = 21;
+    /// A thin flat piece cut through in a pattern, the holes see-through: leaves on a
+    /// spray, a grille, fretwork. Its broad faces carry the pattern. color: its colour.
+    /// param: 0 a spray of leaves, 1 a grille of bars, 2 scrolled fretwork, 3 a lattice.
+    #[allow(dead_code)] // TEMP: for the round-4 area agents; remove at merge if unused.
+    pub const FRET: u32 = 22;
+
+    /// Whether instances of kind `k` are drawn in the translucent pass.
+    pub fn translucent(k: u32) -> bool {
+        matches!(k, CLEAR | FIRE | MIST)
+    }
 }
 
 #[repr(C)]
