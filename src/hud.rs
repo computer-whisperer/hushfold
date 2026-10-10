@@ -24,6 +24,8 @@ pub struct Hud {
 
 pub enum HudAction {
     Buy(Upg),
+    /// Use a skill at this level (0: off), up to the level learned.
+    Use(Upg, u32),
     Cheat(Cheat),
     CloseCheats,
     Begin,
@@ -884,11 +886,11 @@ fn cheat_window(ctx: &egui::Context, g: &Game, actions: &mut Vec<HudAction>) {
     }
 }
 
-/// One skill in the Grimoire: its name, level and blurb, and the button to learn
-/// the next level.
+/// One skill in the Grimoire: its name, level and blurb, the level it is used at
+/// (once learned; any level up to that, or off), and the button to learn the next.
 fn grimoire_entry(ui: &mut egui::Ui, g: &Game, u: Upg, actions: &mut Vec<HudAction>) {
     let def = upg_def(u);
-    let lvl = g.level(u);
+    let lvl = g.learned(u);
     let max = upg_costs(g.layout, u).len() as u32;
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(Vec2::new(420.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
@@ -900,6 +902,26 @@ fn grimoire_entry(ui: &mut egui::Ui, g: &Game, u: Upg, actions: &mut Vec<HudActi
             };
             ui.label(RichText::new(title).font(serif(17.0)).color(INK));
             ui.label(RichText::new(def.blurb).font(serif(13.0)).color(DIM));
+            if lvl > 0 {
+                ui.horizontal(|ui| {
+                    // The level in use marked in the progress bars' brown, not egui's blue.
+                    ui.visuals_mut().selection.bg_fill = Color32::from_rgb(110, 76, 34);
+                    ui.label(RichText::new("In use:").font(serif(13.0)).color(DIM));
+                    let roman = ["I", "II", "III", "IV", "V"];
+                    for l in 0..=lvl {
+                        let name = match l {
+                            0 => "off",
+                            _ if max == 1 => "on",
+                            _ => roman[(l as usize - 1).min(roman.len() - 1)],
+                        };
+                        let on = g.level(u) == l;
+                        let text = RichText::new(name).font(serif(13.0)).color(if on { GOLD } else { DIM });
+                        if ui.selectable_label(on, text).clicked() && !on {
+                            actions.push(HudAction::Use(u, l));
+                        }
+                    }
+                });
+            }
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             match g.next_cost(u) {

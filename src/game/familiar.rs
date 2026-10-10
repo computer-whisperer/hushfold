@@ -96,6 +96,14 @@ pub enum Role {
 }
 
 impl Role {
+    /// The skill whose level says how many there are.
+    pub(super) fn skill(self) -> Upg {
+        match self {
+            Role::Shelver => Upg::Shelver,
+            Role::Courier => Upg::Courier,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Role::Shelver => "shelver",
@@ -415,6 +423,29 @@ impl Game {
         self.familiars.iter().map(|f| (f.role, f.post.is_some()))
     }
 
+    /// As many familiars of `role` as its skill's level in use: new ones ride with
+    /// you, and ones turned away set down what they carry and fold away, those
+    /// riding first.
+    pub(super) fn fit_familiars(&mut self, role: Role) {
+        let want = self.level(role.skill()) as usize;
+        let have = self.familiars.iter().filter(|f| f.role == role).count();
+        for _ in have..want {
+            self.spawn_familiar(role);
+        }
+        for _ in want..have {
+            let Some(i) = (0..self.familiars.len())
+                .rev()
+                .filter(|&i| self.familiars[i].role == role)
+                .min_by_key(|&i| self.familiars[i].post.is_some())
+            else {
+                break;
+            };
+            self.burst(self.familiars[i].pos, 14, role.light(), 0.8);
+            self.recall(i);
+            self.familiars.remove(i);
+        }
+    }
+
     /// A new familiar of `role`, riding on the shoulder.
     pub(super) fn spawn_familiar(&mut self, role: Role) {
         let p = self.player.eye() + self.player.right() * 0.5;
@@ -681,7 +712,7 @@ impl Game {
             .collect();
         let books = self.loose.gather(lv, spot, GRASP, cap, |b| wanted.contains(&b));
         for &b in &books {
-            self.state[b as usize] = BookState::Carried(i as u8);
+            self.state[b as usize] = BookState::Carried;
         }
         let f = &mut self.familiars[i];
         f.carry = books;
@@ -1164,6 +1195,47 @@ mod tests {
             carried += g.familiars[0].carry.len();
         }
         assert_eq!(carried, 0);
+    }
+
+    /// Turned down in the Grimoire, shelvers fold away, those riding first, and a
+    /// posted one sets down what it carries; couriers are left be. Turned back up,
+    /// as many ride with you again.
+    #[test]
+    fn familiars_follow_the_level_in_use() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = Audio::silent();
+        g.upg[upg_index(Upg::Shelver)] = 3;
+        g.upg[upg_index(Upg::Courier)] = 1;
+        g.fit_familiars(Role::Shelver);
+        g.fit_familiars(Role::Courier);
+        let post = g.nav.standable_near(Vec3::new(0.0, 0.0, 3.5));
+        g.post_familiar(1, post);
+        let books: Vec<u32> = (0..g.lib.books.len() as u32)
+            .filter(|&b| g.loose.is_resting(b))
+            .take(3)
+            .collect();
+        g.loose.take(&books);
+        for &b in &books {
+            g.state[b as usize] = BookState::Carried;
+        }
+        g.familiars[1].carry = books.clone();
+        let shelvers = |g: &Game| -> Vec<bool> {
+            (g.familiars().filter(|&(r, _)| r == Role::Shelver))
+                .map(|(_, posted)| posted)
+                .collect()
+        };
+        g.set_in_use(Upg::Shelver, 1, &mut audio);
+        assert_eq!(shelvers(&g), vec![true]);
+        g.set_in_use(Upg::Shelver, 0, &mut audio);
+        assert_eq!(shelvers(&g), Vec::<bool>::new());
+        assert!(
+            books
+                .iter()
+                .all(|&b| g.state[b as usize] == BookState::Loose && g.loose.is_flying(b))
+        );
+        assert_eq!(g.familiars().filter(|&(r, _)| r == Role::Courier).count(), 1);
+        g.set_in_use(Upg::Shelver, 3, &mut audio);
+        assert_eq!(shelvers(&g), vec![false; 3]);
     }
 
     /// G at the floor posts the familiar riding longest; G at it takes it back.

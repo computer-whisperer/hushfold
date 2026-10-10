@@ -382,8 +382,8 @@ pub enum BookState {
     /// Flying to its slot.
     Filing,
     Shelved,
-    /// Dangling from familiar i.
-    Carried(u8),
+    /// Dangling from a familiar.
+    Carried,
     /// Flying to the hub on a Gathering Charm.
     Streaming,
 }
@@ -544,9 +544,12 @@ struct SaveData {
     seed: u64,
     lumens: u64,
     earned: u64,
-    /// Upgrade levels by name.
+    /// Upgrade levels learned, by name.
     #[serde(default)]
     levels: BTreeMap<String, u32>,
+    /// The skills turned down in the Grimoire, by name, and the level each is used at.
+    #[serde(default)]
+    in_use: BTreeMap<String, u32>,
     shelved: Vec<u32>,
     /// Books mid-flight to a shelf; they fly home on load so their rewards are paid
     /// through the normal path.
@@ -587,7 +590,11 @@ pub struct Game {
     pub player: Player,
     pub lumens: u64,
     pub earned: u64,
-    pub upg: [u32; UPGRADES.len()],
+    /// Each skill's level learned: what prices follow (`learned`).
+    upg: [u32; UPGRADES.len()],
+    /// The level each skill is turned down to in the Grimoire, if it is
+    /// (`set_in_use`): what its effects follow (`level`).
+    in_use: [Option<u32>; UPGRADES.len()],
     pub series_shelved: Vec<u32>,
     pub category_shelved: Vec<u32>,
     pub dept_total: Vec<u32>,
@@ -726,6 +733,7 @@ impl Game {
             lumens: 0,
             earned: 0,
             upg: [0; UPGRADES.len()],
+            in_use: [None; UPGRADES.len()],
             series_shelved: vec![0; lib.series.len()],
             category_shelved: vec![0; lib.catalog.categories.len()],
             dept_shelved: vec![0; dept_total.len()],
@@ -779,8 +787,38 @@ impl Game {
         }
     }
 
+    /// The level of skill `u` in use: learned, unless turned down.
     pub fn level(&self, u: Upg) -> u32 {
+        let i = upg_index(u);
+        self.in_use[i].map_or(self.upg[i], |l| l.min(self.upg[i]))
+    }
+
+    pub fn learned(&self, u: Upg) -> u32 {
         self.upg[upg_index(u)]
+    }
+
+    /// Turn skill `u` down to level `l` (0: off), or back up to what is learned;
+    /// free, and undone the same way.
+    pub fn set_in_use(&mut self, u: Upg, l: u32, audio: &mut Audio) {
+        let i = upg_index(u);
+        let l = l.min(self.upg[i]);
+        self.in_use[i] = (l < self.upg[i]).then_some(l);
+        match u {
+            Upg::Shelver => self.fit_familiars(Role::Shelver),
+            Upg::Courier => self.fit_familiars(Role::Courier),
+            Upg::Sift if l == 0 => self.seek = None,
+            Upg::Broad | Upg::Fine if !self.groups().contains(&self.group) => self.group = Group::Category,
+            Upg::Tidy if l > 0 => self.tidy_arms(),
+            _ => {}
+        }
+        // A spell turned off ends its effect; its recharge runs on.
+        if l == 0
+            && let Some(s) = SPELLS.iter().position(|&x| x == u)
+        {
+            self.spell_left[s] = 0.0;
+        }
+        audio.play(Sfx::Tick, 0.25);
+        self.dirty_save = true;
     }
 
     pub fn capacity(&self) -> usize {
@@ -800,7 +838,7 @@ impl Game {
     }
 
     pub fn next_cost(&self, u: Upg) -> Option<u64> {
-        upg_costs(self.layout, u).get(self.level(u) as usize).copied()
+        upg_costs(self.layout, u).get(self.learned(u) as usize).copied()
     }
 
     pub fn buy(&mut self, u: Upg, audio: &mut Audio) -> bool {
@@ -810,6 +848,8 @@ impl Game {
         }
         self.lumens -= cost;
         self.upg[upg_index(u)] += 1;
+        // A level learned is put to use, with all below it.
+        self.in_use[upg_index(u)] = None;
         audio.play(Sfx::Purchase, 0.7);
         let role = match u {
             Upg::Shelver => Some(Role::Shelver),
@@ -817,7 +857,7 @@ impl Game {
             _ => None,
         };
         if let Some(role) = role {
-            self.spawn_familiar(role);
+            self.fit_familiars(role);
             let msg = format!(
                 "Your {} rides with you: aim at the floor and press G to post it.",
                 role.name()
@@ -825,16 +865,14 @@ impl Game {
             self.hint = Some((msg, 4.0));
         }
         if u == Upg::Tidy {
-            let prev = self.active_book();
-            self.held.sort();
-            self.follow_active(prev);
+            self.tidy_arms();
         }
         let def = upg_def(u);
         let news = if let Some(role) = role {
             format!("A {} joins you", role.name())
         } else if upg_costs(self.layout, u).len() > 1 {
             let roman = ["I", "II", "III", "IV", "V"];
-            let level = roman[(self.level(u) as usize - 1).min(roman.len() - 1)];
+            let level = roman[(self.learned(u) as usize - 1).min(roman.len() - 1)];
             format!("{} {level} learned", def.name)
         } else {
             format!("{} learned", def.name)
@@ -1067,7 +1105,7 @@ impl Game {
         let (here, legs) = self.books_about(level, Vec2::new(pos.x, pos.z), pos.y);
         let wade = wading(legs);
         let in_heap = here > HEAP_WALL || (self.player.in_heap && here > HEAP_WALL - HEAP_CLEAR);
-        let base = [4.0, 5.5, 7.0][self.upg[upg_index(Upg::Slippers)] as usize] * wade;
+        let base = [4.0, 5.5, 7.0][self.level(Upg::Slippers) as usize] * wade;
         let speed = if input.sprint { base * (1.0 + 0.6 * wade) } else { base };
         let k = 1.0 - libm::expf(-dt * 10.0);
         let walk = Vec3::new(self.player.vel.x, 0.0, self.player.vel.z).lerp(wish * speed, k);
@@ -2109,6 +2147,13 @@ impl Game {
         )
     }
 
+    /// Tidy Arms: sort the armful, the active book staying active.
+    fn tidy_arms(&mut self) {
+        let prev = self.active_book();
+        self.held.sort();
+        self.follow_active(prev);
+    }
+
     /// After `held` changes, point `active` back at the book it was on (`prev`),
     /// or clamp if that book has left the arms.
     fn follow_active(&mut self, prev: Option<u32>) {
@@ -2147,7 +2192,7 @@ impl Game {
             let moving = match st {
                 BookState::Loose => still.is_none(),
                 BookState::Held => in_flight.contains(&bu),
-                BookState::Filing | BookState::Carried(_) | BookState::Streaming => true,
+                BookState::Filing | BookState::Carried | BookState::Streaming => true,
                 BookState::Shelved => false,
             };
             if moving {
@@ -2429,7 +2474,7 @@ impl Game {
             match st {
                 BookState::Shelved => shelved.push(b as u32),
                 BookState::Filing => pending.push(b as u32),
-                BookState::Loose | BookState::Held | BookState::Carried(_) | BookState::Streaming => {}
+                BookState::Loose | BookState::Held | BookState::Carried | BookState::Streaming => {}
             }
         }
         let p = &self.player;
@@ -2441,8 +2486,11 @@ impl Game {
             earned: self.earned,
             levels: UPGRADES
                 .iter()
-                .map(|&u| (format!("{u:?}"), self.level(u)))
+                .map(|&u| (format!("{u:?}"), self.learned(u)))
                 .filter(|&(_, l)| l > 0)
+                .collect(),
+            in_use: (UPGRADES.iter())
+                .filter_map(|&u| self.in_use[upg_index(u)].map(|l| (format!("{u:?}"), l)))
                 .collect(),
             shelved,
             pending,
@@ -2460,7 +2508,7 @@ impl Game {
             airborne: (self.loose.airborne())
                 .chain(
                     (0..self.state.len() as u32).filter_map(|b| match self.state[b as usize] {
-                        BookState::Carried(_) | BookState::Streaming => Some((b, self.pos[b as usize])),
+                        BookState::Carried | BookState::Streaming => Some((b, self.pos[b as usize])),
                         _ => None,
                     }),
                 )
@@ -2588,6 +2636,7 @@ impl Game {
         for (i, &u) in UPGRADES.iter().enumerate() {
             let l = data.levels.get(&format!("{u:?}")).copied().unwrap_or(0);
             self.upg[i] = l.min(upg_costs(self.layout, u).len() as u32);
+            self.in_use[i] = data.in_use.get(&format!("{u:?}")).copied().filter(|&n| n < self.upg[i]);
         }
         self.lumens = data.lumens;
         self.earned = data.earned;
@@ -2597,14 +2646,7 @@ impl Game {
         self.player.yaw = yaw;
         self.player.pitch = pitch;
         for role in [Role::Shelver, Role::Courier] {
-            let upg = if role == Role::Shelver {
-                Upg::Shelver
-            } else {
-                Upg::Courier
-            };
-            for _ in 0..self.level(upg) {
-                self.spawn_familiar(role);
-            }
+            self.fit_familiars(role);
         }
         for (name, at) in &data.familiars {
             let Some(at) = at.map(Vec3::from_array) else { continue };
@@ -3422,6 +3464,43 @@ mod tests {
         assert!(p.z < -5.5 - 0.25 && p.y == 0.0, "walked into the stairs: {p}");
     }
 
+    /// A skill turned down in the Grimoire works at the level in use and is priced by
+    /// the level learned; learning the next puts every level to use again. Turned
+    /// off, a spell's effect ends (its recharge runs on), seeking by series falls back
+    /// to category, and seeking stops with Sifting Touch.
+    #[test]
+    fn skills_turn_down_and_back() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = crate::audio::Audio::silent();
+        g.upg[upg_index(Upg::Arms)] = 2;
+        let cost = g.next_cost(Upg::Arms);
+        g.set_in_use(Upg::Arms, 0, &mut audio);
+        assert_eq!((g.level(Upg::Arms), g.learned(Upg::Arms), g.capacity()), (0, 2, 6));
+        assert_eq!(g.next_cost(Upg::Arms), cost);
+        g.lumens = cost.unwrap();
+        assert!(g.buy(Upg::Arms, &mut audio));
+        assert_eq!(g.capacity(), 48);
+
+        g.upg[upg_index(Upg::Rush)] = 1;
+        let slot = SPELLS.iter().position(|&u| u == Upg::Rush).unwrap();
+        g.cast(slot, &mut audio);
+        assert!(g.spell_on(Upg::Rush));
+        g.set_in_use(Upg::Rush, 0, &mut audio);
+        assert!(!g.spell_on(Upg::Rush) && g.spell_wait[slot] > 0.0);
+
+        g.upg[upg_index(Upg::Fine)] = 1;
+        g.upg[upg_index(Upg::Sift)] = 1;
+        g.group = Group::Series;
+        g.seek = Some(0);
+        g.set_in_use(Upg::Fine, 0, &mut audio);
+        assert_eq!((g.group, g.groups()), (Group::Category, vec![Group::Category]));
+        assert!(g.seek.is_some());
+        g.set_in_use(Upg::Sift, 0, &mut audio);
+        assert!(g.seek.is_none());
+        g.set_in_use(Upg::Fine, 1, &mut audio);
+        assert_eq!(g.groups(), vec![Group::Category, Group::Series]);
+    }
+
     #[test]
     fn save_round_trip() {
         let dir = std::env::temp_dir().join(format!("hushfold-test-{}", std::process::id()));
@@ -3477,6 +3556,8 @@ mod tests {
         g.lumens = 42;
         g.upg[upg_index(Upg::Arms)] = 2;
         g.upg[upg_index(Upg::Sift)] = 1;
+        g.upg[upg_index(Upg::Glow)] = 3;
+        g.set_in_use(Upg::Glow, 1, &mut audio);
         g.save();
 
         let mut l = Game::new(Layout::Hall);
@@ -3485,6 +3566,7 @@ mod tests {
         assert_eq!(l.lumens, 42);
         assert_eq!(l.capacity(), 24);
         assert_eq!(l.level(Upg::Sift), 1);
+        assert_eq!((l.level(Upg::Glow), l.learned(Upg::Glow)), (1, 3));
         assert_eq!(l.held, g.held);
         // Every book lying still lies exactly where it did, and the ground under the
         // airborne book's old spot is gone with it.

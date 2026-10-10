@@ -219,7 +219,13 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
 1 per book, +volumes on series completion, +100 per category.
 Skills are grouped in the Grimoire by what they work on; each library offers
 those that fit it, at its own costs (`upg_costs`), and a skill does the same in
-both. Reading: Signposts (signs of carried categories show through the stacks),
+both. A learned skill can be turned down to any lower level or off, and back,
+for nothing (`set_in_use`, the Grimoire's "In use" row): effects follow the level
+in use (`level`), prices the level learned (`learned`), and learning a level puts
+every level back in use. Turned down, familiars beyond the count fold away (riding
+ones first, posted ones setting down what they carry), a spell's effect ends (its
+recharge runs on), and a seek group no longer offered falls back to category.
+Refunds were left out for now. Reading: Signposts (signs of carried categories show through the stacks),
 Kindred Glow I–III (runs of carried series glow: within ~3 m, ~12 m, everywhere
 with a glint; done in the shader from a reach and strength in the globals), Sort
 Sense I–II (compass and exact-slot pulse: in the book's room, then anywhere),
@@ -511,7 +517,7 @@ platform's maths library, which rounds sines and powers differently in the last
 bit on Windows and from one glibc to the next; the Great Library's heaps settled
 those bits into books centimetres apart. `clippy.toml` forbids the std calls
 outside audio. Save = seed + shelved/held/in-flight ids +
-lumens + upgrade levels by name + the poses of loose books that moved from where
+lumens + upgrade levels by name (and those turned down) + the poses of loose books that moved from where
 they were generated (books in the air are saved where they are and fall on
 load), JSON in $XDG_DATA_HOME/hushfold/save.json (%APPDATA% on Windows),
 autosaved. Settings live beside it in settings.json. Each library has its own save

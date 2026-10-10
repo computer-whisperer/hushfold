@@ -308,6 +308,7 @@ impl Running {
                 HudAction::Buy(u) => {
                     self.game.buy(u, &mut self.audio);
                 }
+                HudAction::Use(u, l) => self.game.set_in_use(u, l, &mut self.audio),
                 HudAction::Begin => {
                     self.hud.show_intro = false;
                     self.save_settings();
@@ -433,13 +434,15 @@ impl Running {
                 }
                 Some("grant") => self.game.lumens += num(1) as u64,
                 Some("buy") => {
-                    let name = w.get(1).copied().unwrap_or("");
-                    if let Some(u) = game::UPGRADES
-                        .iter()
-                        .find(|u| format!("{u:?}").eq_ignore_ascii_case(name))
-                    {
-                        self.game.lumens += self.game.next_cost(*u).unwrap_or(0);
-                        self.game.buy(*u, &mut self.audio);
+                    if let Some(u) = skill_named(w.get(1).copied().unwrap_or("")) {
+                        self.game.lumens += self.game.next_cost(u).unwrap_or(0);
+                        self.game.buy(u, &mut self.audio);
+                    }
+                }
+                // use <skill> <level>: as the Grimoire's "In use" row (0: off).
+                Some("use") => {
+                    if let Some(u) = skill_named(w.get(1).copied().unwrap_or("")) {
+                        self.game.set_in_use(u, num(2) as u32, &mut self.audio);
                     }
                 }
                 Some("menu") => self.hud.menu_open = w.get(1) == Some(&"on"),
@@ -736,4 +739,9 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App::default();
     event_loop.run_app(&mut app).expect("run");
+}
+
+/// A skill by its name in scripts (`Upg`'s, any case).
+fn skill_named(name: &str) -> Option<game::Upg> {
+    (game::UPGRADES.iter().copied()).find(|u| format!("{u:?}").eq_ignore_ascii_case(name))
 }

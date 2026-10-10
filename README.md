@@ -87,7 +87,9 @@ pause screen replaces the current library's save with a fresh one (settings, in
 ## Upgrades
 
 The Grimoire groups them by what they help with; each library offers the ones
-that fit it.
+that fit it. A skill you've learned can be turned down to a lower level, or off,
+from its entry ("In use"), and back up, freely; learning its next level puts it
+all back to use.
 
 - **Reading**: Signposts (signs of the categories you carry show through the
   stacks), Kindred Glow (the runs of series you carry glow: on the case in front
