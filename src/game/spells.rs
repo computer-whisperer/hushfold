@@ -104,7 +104,7 @@ impl Game {
         let (lasts, recharge) = spell_times(u, lvl);
         self.spell_left[slot] = lasts;
         self.spell_wait[slot] = recharge;
-        audio.play(Sfx::Chime, 0.5);
+        audio.play_pitched(Sfx::Spell, 0.5, slot);
     }
 
     /// Seconds since Echo rang out, while its marks last.

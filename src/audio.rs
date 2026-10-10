@@ -1,92 +1,216 @@
-//! Procedurally synthesised sound: book thunks, page rustles, chimes, fire and a
-//! generative music-box loop. Nothing is loaded from disk.
+//! Sound, all synthesised: effects heard from where they happen, the ambience of
+//! each place, and generative music, mixed on the audio device's thread by
+//! `engine`. Nothing is loaded from disk; the clips are synthesised on a thread at
+//! startup, and effects asked for before they are ready are skipped.
 
-use rand::prelude::*;
-use rodio::{ChannelCount, Sample, SampleRate, Source};
+mod ambience;
+mod clips;
+mod dsp;
+mod engine;
+mod music;
+
+use engine::{BLOCK, Cmd, Engine};
+use glam::Vec3;
+use rodio::{ChannelCount, SampleRate, Source};
 use std::num::NonZero;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, Instant};
-
-const SR: u32 = 44100;
+use std::sync::mpsc::{SyncSender, sync_channel};
+use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Sfx {
+    /// A book slid home onto its shelf.
     Thunk,
+    /// Books taken up into the arms.
     Rustle,
+    /// Books gliding off to their shelves.
     Whoosh,
-    Chime,
-    Fanfare,
-    Nope,
-    Tick,
-    Purchase,
-    Step,
+    /// Books thrown.
+    Toss,
     /// A tossed book landing.
     Land,
+    /// A series completed; `play_pitched` by its length.
+    Chime,
+    /// A category fully catalogued.
+    Fanfare,
+    /// A department's veil lifting.
+    Veil,
+    /// A skill learned in the Grimoire.
+    Purchase,
+    /// A spell cast; `play_pitched` by its hotbar slot.
+    Spell,
+    /// A familiar posted: it unfolds.
+    Unfold,
+    /// A familiar taken back: it folds up.
+    Fold,
+    /// Refused.
+    Nope,
+    /// Cycling, regrouping, seeking.
+    Tick,
+    /// A footfall.
+    Step,
+    /// Pushing off to jump.
+    Hop,
+    /// Landing on the floor; louder the harder the fall.
+    Alight,
 }
 
-const SFX_COUNT: usize = 10;
-
-fn sfx_index(s: Sfx) -> usize {
-    s as usize
+impl Sfx {
+    pub const ALL: [Sfx; 17] = [
+        Sfx::Thunk,
+        Sfx::Rustle,
+        Sfx::Whoosh,
+        Sfx::Toss,
+        Sfx::Land,
+        Sfx::Chime,
+        Sfx::Fanfare,
+        Sfx::Veil,
+        Sfx::Purchase,
+        Sfx::Spell,
+        Sfx::Unfold,
+        Sfx::Fold,
+        Sfx::Nope,
+        Sfx::Tick,
+        Sfx::Step,
+        Sfx::Hop,
+        Sfx::Alight,
+    ];
 }
 
-/// A mono clip, optionally looping, with an optional shared live gain.
-struct Clip {
-    data: Arc<[f32]>,
-    pos: usize,
-    gain: f32,
-    looping: bool,
-    live_gain: Option<Arc<AtomicU32>>,
-    smoothed: f32,
+/// The places with an ambience of their own.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Place {
+    /// The Hall, wings and all.
+    Hall,
+    /// The Great Library's atrium, its galleries and stairs.
+    Atrium,
+    Observatory,
+    AlchemicalWing,
+    Herbarium,
+    Bestiary,
+    MapRoom,
+    ChronicleHall,
+    VerseGallery,
+    Arcanum,
+    Clockworks,
+    MusicRoom,
+    Weatherhouse,
+    HearthLibrary,
+    /// A department room without one of its own.
+    Room,
 }
 
-impl Iterator for Clip {
-    type Item = Sample;
-    fn next(&mut self) -> Option<Sample> {
-        if self.pos >= self.data.len() {
-            if !self.looping {
-                return None;
-            }
-            self.pos = 0;
+impl Place {
+    pub const ALL: [Place; 15] = [
+        Place::Hall,
+        Place::Atrium,
+        Place::Observatory,
+        Place::AlchemicalWing,
+        Place::Herbarium,
+        Place::Bestiary,
+        Place::MapRoom,
+        Place::ChronicleHall,
+        Place::VerseGallery,
+        Place::Arcanum,
+        Place::Clockworks,
+        Place::MusicRoom,
+        Place::Weatherhouse,
+        Place::HearthLibrary,
+        Place::Room,
+    ];
+
+    /// A Great Library department's room, by the department's name.
+    pub fn department(name: &str) -> Place {
+        match name {
+            "Observatory" => Place::Observatory,
+            "Alchemical Wing" => Place::AlchemicalWing,
+            "Herbarium" => Place::Herbarium,
+            "Bestiary" => Place::Bestiary,
+            "Map Room" => Place::MapRoom,
+            "Chronicle Hall" => Place::ChronicleHall,
+            "Verse Gallery" => Place::VerseGallery,
+            "Arcanum" => Place::Arcanum,
+            "Clockworks" => Place::Clockworks,
+            "Music Room" => Place::MusicRoom,
+            "Weatherhouse" => Place::Weatherhouse,
+            "Hearth Library" => Place::HearthLibrary,
+            _ => Place::Room,
         }
-        let mut g = self.gain;
-        if let Some(live) = &self.live_gain {
-            let target = f32::from_bits(live.load(Ordering::Relaxed));
-            self.smoothed += (target - self.smoothed) * 0.0005;
-            g *= self.smoothed;
-        }
-        let s = self.data[self.pos] * g;
-        self.pos += 1;
-        Some(s as Sample)
     }
 }
 
-impl Source for Clip {
+/// Fires heard at once, and familiars' wings.
+pub const MAX_FIRES: usize = 2;
+pub const MAX_WINGS: usize = 3;
+
+/// Where the listener is and what is around them, each frame.
+#[derive(Clone, Copy)]
+pub struct Scene {
+    pub ears: Vec3,
+    /// The listener's right, level.
+    pub right: Vec3,
+    /// How much of each place's ambience reaches the ears, by `Place`.
+    pub places: [f32; Place::ALL.len()],
+    /// 0 on the ground floor, 1 up under the atrium's roof.
+    pub loft: f32,
+    /// Fires: where each burns and how much of it is heard (0 for none).
+    pub fires: [(Vec3, f32); MAX_FIRES],
+    /// Familiars in flight, nearest first.
+    pub wings: [Option<Vec3>; MAX_WINGS],
+}
+
+impl Default for Scene {
+    fn default() -> Self {
+        Scene {
+            ears: Vec3::ZERO,
+            right: Vec3::X,
+            places: [0.0; Place::ALL.len()],
+            loft: 0.0,
+            fires: [(Vec3::ZERO, 0.0); MAX_FIRES],
+            wings: [None; MAX_WINGS],
+        }
+    }
+}
+
+/// The engine as a rodio source: interleaved stereo, rendered a block at a time.
+struct Output {
+    engine: Engine,
+    buf: [f32; BLOCK * 2],
+    at: usize,
+}
+
+impl Iterator for Output {
+    type Item = rodio::Sample;
+    fn next(&mut self) -> Option<rodio::Sample> {
+        if self.at == self.buf.len() {
+            self.engine.render(&mut self.buf);
+            self.at = 0;
+        }
+        self.at += 1;
+        Some(self.buf[self.at - 1])
+    }
+}
+
+impl Source for Output {
     fn current_span_len(&self) -> Option<usize> {
         None
     }
     fn channels(&self) -> ChannelCount {
-        NonZero::new(1).unwrap()
+        NonZero::new(2).unwrap()
     }
     fn sample_rate(&self) -> SampleRate {
-        NonZero::new(SR).unwrap()
+        NonZero::new(dsp::SR).unwrap()
     }
     fn total_duration(&self) -> Option<Duration> {
         None
     }
 }
 
+/// The game's handle on the sound.
 pub struct Audio {
-    sink: Option<rodio::MixerDeviceSink>,
-    banks: Vec<Vec<Arc<[f32]>>>,
-    last: [Option<Instant>; SFX_COUNT],
-    rng: StdRng,
-    music_gain: Arc<AtomicU32>,
-    ambience_gain: Arc<AtomicU32>,
-    music_on: bool,
-    music_volume: f32,
-    effects_volume: f32,
+    /// Held to keep the device open.
+    _sink: Option<rodio::MixerDeviceSink>,
+    tx: Option<SyncSender<Cmd>>,
 }
 
 impl Audio {
@@ -94,525 +218,90 @@ impl Audio {
         let sink = match rodio::DeviceSinkBuilder::open_default_sink() {
             Ok(mut s) => {
                 s.log_on_drop(false);
-                Some(s)
+                s
             }
             Err(e) => {
                 eprintln!("hushfold: audio unavailable ({e}); continuing silently");
-                None
+                return Audio { _sink: None, tx: None };
             }
         };
-        let mut rng = StdRng::seed_from_u64(7);
-        let mut banks: Vec<Vec<Arc<[f32]>>> = vec![Vec::new(); SFX_COUNT];
-        for v in 0..6 {
-            let p = 0.85 + v as f32 * 0.06;
-            banks[sfx_index(Sfx::Thunk)].push(thunk(&mut rng, p).into());
-            banks[sfx_index(Sfx::Rustle)].push(rustle(&mut rng).into());
-            banks[sfx_index(Sfx::Whoosh)].push(whoosh(&mut rng, p).into());
-            banks[sfx_index(Sfx::Step)].push(step(&mut rng, p).into());
-            banks[sfx_index(Sfx::Land)].push(land(&mut rng, p).into());
+        let (tx, rx) = sync_channel(1024);
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(1, |d| d.as_nanos() as u64);
+        sink.mixer().add(Output {
+            engine: Engine::new(rx, seed),
+            buf: [0.0; BLOCK * 2],
+            at: BLOCK * 2,
+        });
+        let banks = tx.clone();
+        std::thread::spawn(move || {
+            let _ = banks.send(Cmd::Banks(Arc::new(clips::Banks::synthesize())));
+        });
+        Audio {
+            _sink: Some(sink),
+            tx: Some(tx),
         }
-        // Chime variants are indexed by pitch step.
-        for step in 0..13 {
-            banks[sfx_index(Sfx::Chime)].push(chime(step).into());
-        }
-        banks[sfx_index(Sfx::Fanfare)].push(fanfare().into());
-        banks[sfx_index(Sfx::Nope)].push(nope().into());
-        banks[sfx_index(Sfx::Tick)].push(tick().into());
-        banks[sfx_index(Sfx::Purchase)].push(purchase().into());
-
-        let music_gain = Arc::new(AtomicU32::new(0.0f32.to_bits()));
-        let ambience_gain = Arc::new(AtomicU32::new(0.0f32.to_bits()));
-        if let Some(s) = &sink {
-            let mixer = s.mixer().clone();
-            let gain = music_gain.clone();
-            let amb_gain = ambience_gain.clone();
-            std::thread::spawn(move || {
-                let amb: Arc<[f32]> = ambience().into();
-                mixer.add(Clip {
-                    data: amb,
-                    pos: 0,
-                    gain: 0.35,
-                    looping: true,
-                    live_gain: Some(amb_gain),
-                    smoothed: 0.0,
-                });
-                let music: Arc<[f32]> = music().into();
-                mixer.add(Clip {
-                    data: music,
-                    pos: 0,
-                    gain: 0.5,
-                    looping: true,
-                    live_gain: Some(gain),
-                    smoothed: 0.0,
-                });
-            });
-        }
-        let audio = Audio {
-            sink,
-            banks,
-            last: [None; SFX_COUNT],
-            rng,
-            music_gain,
-            ambience_gain,
-            music_on: true,
-            music_volume: 1.0,
-            effects_volume: 1.0,
-        };
-        audio.apply_gains();
-        audio
     }
 
     /// No output device and no synthesis; every play is a no-op. Used by tests.
     #[cfg(test)]
     pub fn silent() -> Self {
-        Audio {
-            sink: None,
-            banks: vec![Vec::new(); SFX_COUNT],
-            last: [None; SFX_COUNT],
-            rng: StdRng::seed_from_u64(0),
-            music_gain: Arc::new(AtomicU32::new(0)),
-            ambience_gain: Arc::new(AtomicU32::new(0)),
-            music_on: false,
-            music_volume: 0.0,
-            effects_volume: 0.0,
+        Audio { _sink: None, tx: None }
+    }
+
+    fn send(&self, c: Cmd) {
+        if let Some(tx) = &self.tx {
+            // A full queue means the device has stalled; drop rather than pile up.
+            let _ = tx.try_send(c);
         }
     }
 
-    /// Volumes in 0..=1. Effects cover sound effects and the hall's ambience.
+    /// Volumes in 0..=1. Effects cover sound effects and the ambience.
     pub fn configure(&mut self, music_on: bool, music_volume: f32, effects_volume: f32) {
-        self.music_on = music_on;
-        self.music_volume = music_volume;
-        self.effects_volume = effects_volume;
-        self.apply_gains();
-    }
-
-    fn apply_gains(&self) {
-        let music = if self.music_on { self.music_volume } else { 0.0 };
-        self.music_gain.store(music.to_bits(), Ordering::Relaxed);
-        self.ambience_gain
-            .store(self.effects_volume.to_bits(), Ordering::Relaxed);
-    }
-
-    pub fn play(&mut self, s: Sfx, vol: f32) {
-        let n = self.banks[sfx_index(s)].len();
-        if n == 0 {
-            return;
-        }
-        let v = self.rng.gen_range(0..n);
-        self.play_variant(s, vol, v);
-    }
-
-    pub fn play_pitched(&mut self, s: Sfx, vol: f32, step: usize) {
-        let n = self.banks[sfx_index(s)].len();
-        if n == 0 {
-            return;
-        }
-        self.play_variant(s, vol, step.min(n - 1));
-    }
-
-    fn play_variant(&mut self, s: Sfx, vol: f32, v: usize) {
-        let Some(sink) = &self.sink else { return };
-        // Avoid machine-gunning identical sounds.
-        let min_gap = match s {
-            Sfx::Thunk => 0.025,
-            Sfx::Rustle | Sfx::Whoosh => 0.06,
-            Sfx::Chime => 0.08,
-            _ => 0.03,
-        };
-        let now = Instant::now();
-        if let Some(t) = self.last[sfx_index(s)]
-            && now.duration_since(t).as_secs_f32() < min_gap
-        {
-            return;
-        }
-        self.last[sfx_index(s)] = Some(now);
-        let data = self.banks[sfx_index(s)][v].clone();
-        sink.mixer().add(Clip {
-            data,
-            pos: 0,
-            gain: vol * self.effects_volume,
-            looping: false,
-            live_gain: None,
-            smoothed: 1.0,
+        let music = if music_on { music_volume } else { 0.0 };
+        self.send(Cmd::Gains {
+            music,
+            effects: effects_volume,
         });
     }
-}
 
-// ---------------------------------------------------------------- synthesis
-
-fn secs(s: f32) -> usize {
-    (s * SR as f32) as usize
-}
-
-fn lowpass(buf: &mut [f32], cutoff: f32) {
-    let a = 1.0 - (-2.0 * std::f32::consts::PI * cutoff / SR as f32).exp();
-    let mut y = 0.0;
-    for x in buf.iter_mut() {
-        y += a * (*x - y);
-        *x = y;
+    /// Play `s` at the listener (the player's own doings, and the interface).
+    pub fn play(&mut self, s: Sfx, vol: f32) {
+        self.send(Cmd::Play {
+            sfx: s,
+            vol,
+            variant: None,
+            at: None,
+        });
     }
-}
 
-fn highpass(buf: &mut [f32], cutoff: f32) {
-    let mut lp = buf.to_vec();
-    lowpass(&mut lp, cutoff);
-    for (x, l) in buf.iter_mut().zip(lp) {
-        *x -= l;
+    /// Play variant `step` of `s` at the listener (see `Sfx`).
+    pub fn play_pitched(&mut self, s: Sfx, vol: f32, step: usize) {
+        self.send(Cmd::Play {
+            sfx: s,
+            vol,
+            variant: Some(step),
+            at: None,
+        });
     }
-}
 
-fn normalize(buf: &mut [f32], peak: f32) {
-    let m = buf.iter().fold(0.0f32, |a, &x| a.max(x.abs()));
-    if m > 0.0 {
-        for x in buf.iter_mut() {
-            *x *= peak / m;
-        }
+    /// Play `s` from `at` in the world: panned by its bearing, quieter and duller
+    /// with distance.
+    pub fn play_at(&mut self, s: Sfx, vol: f32, at: Vec3) {
+        self.send(Cmd::Play {
+            sfx: s,
+            vol,
+            variant: None,
+            at: Some(at),
+        });
     }
-}
 
-fn thunk(rng: &mut StdRng, pitch: f32) -> Vec<f32> {
-    let n = secs(0.18);
-    let mut out = vec![0.0; n];
-    let mut noise: Vec<f32> = (0..n).map(|_| rng.gen_range(-1.0..1.0)).collect();
-    lowpass(&mut noise, 1800.0 * pitch);
-    let mut ph = 0.0f32;
-    let mut ph2 = 0.0f32;
-    for i in 0..n {
-        let t = i as f32 / SR as f32;
-        let f = (150.0 + 120.0 * (-t * 60.0).exp()) * pitch;
-        ph += f / SR as f32;
-        ph2 += 620.0 * pitch / SR as f32;
-        let body = (ph * std::f32::consts::TAU).sin() * (-t * 38.0).exp();
-        let knock = (ph2 * std::f32::consts::TAU).sin() * (-t * 90.0).exp() * 0.35;
-        let click = noise[i] * (-t * 160.0).exp() * 1.2;
-        out[i] = body + knock + click;
+    /// Where the listener is now and what surrounds them (each frame).
+    pub fn set_scene(&mut self, scene: Scene) {
+        self.send(Cmd::Scene(scene));
     }
-    normalize(&mut out, 0.8);
-    out
-}
-
-/// A soft footfall on old floorboards: a low thump under a short, muffled scuff.
-fn step(rng: &mut StdRng, pitch: f32) -> Vec<f32> {
-    let n = secs(0.22);
-    let mut scuff: Vec<f32> = (0..n).map(|_| rng.gen_range(-1.0..1.0)).collect();
-    lowpass(&mut scuff, 700.0 * pitch);
-    highpass(&mut scuff, 120.0);
-    let mut out = vec![0.0; n];
-    let mut ph = 0.0f32;
-    for (i, o) in out.iter_mut().enumerate() {
-        let t = i as f32 / SR as f32;
-        ph += (62.0 + 40.0 * (-t * 50.0).exp()) * pitch / SR as f32;
-        let thump = (ph * std::f32::consts::TAU).sin() * (-t * 32.0).exp();
-        let scuff_env = (t / 0.004).min(1.0) * (-t * 55.0).exp();
-        *o = thump + scuff[i] * scuff_env * 1.6;
-    }
-    reverb(&mut out, 0.12);
-    normalize(&mut out, 0.5);
-    out
-}
-
-fn rustle(rng: &mut StdRng) -> Vec<f32> {
-    let n = secs(0.32);
-    let mut noise: Vec<f32> = (0..n).map(|_| rng.gen_range(-1.0..1.0)).collect();
-    highpass(&mut noise, 1500.0);
-    lowpass(&mut noise, 6000.0);
-    let bursts: Vec<(f32, f32)> = (0..7)
-        .map(|_| (rng.gen_range(0.0..0.22), rng.gen_range(0.3..1.0)))
-        .collect();
-    for (i, x) in noise.iter_mut().enumerate() {
-        let t = i as f32 / SR as f32;
-        let mut env = 0.0;
-        for &(bt, amp) in &bursts {
-            if t >= bt {
-                env += amp * (-(t - bt) * 40.0).exp();
-            }
-        }
-        *x *= env * (1.0 - t / 0.32).max(0.0);
-    }
-    normalize(&mut noise, 0.6);
-    noise
-}
-
-/// A book landing flat: a papery slap over a dull thud.
-fn land(rng: &mut StdRng, pitch: f32) -> Vec<f32> {
-    let n = secs(0.16);
-    let mut slap: Vec<f32> = (0..n).map(|_| rng.gen_range(-1.0..1.0)).collect();
-    lowpass(&mut slap, 3200.0 * pitch);
-    highpass(&mut slap, 500.0 * pitch);
-    let mut out = vec![0.0; n];
-    let mut ph = 0.0f32;
-    for (i, o) in out.iter_mut().enumerate() {
-        let t = i as f32 / SR as f32;
-        ph += (95.0 + 60.0 * (-t * 50.0).exp()) * pitch / SR as f32;
-        let thud = (ph * std::f32::consts::TAU).sin() * (-t * 45.0).exp();
-        *o = thud * 0.8 + slap[i] * (-t * 70.0).exp() * 1.4;
-    }
-    normalize(&mut out, 0.7);
-    out
-}
-
-fn whoosh(rng: &mut StdRng, pitch: f32) -> Vec<f32> {
-    let n = secs(0.3);
-    let mut out = vec![0.0; n];
-    let mut lp = 0.0f32;
-    let mut lp2 = 0.0f32;
-    for (i, o) in out.iter_mut().enumerate() {
-        let t = i as f32 / n as f32;
-        let cutoff = (400.0 + 2400.0 * (t * std::f32::consts::PI).sin()) * pitch;
-        let a = 1.0 - (-2.0 * std::f32::consts::PI * cutoff / SR as f32).exp();
-        let x: f32 = rng.gen_range(-1.0..1.0);
-        lp += a * (x - lp);
-        lp2 += a * 0.5 * (lp - lp2);
-        *o = (lp - lp2) * (t * std::f32::consts::PI).sin().powf(1.5);
-    }
-    normalize(&mut out, 0.4);
-    out
-}
-
-fn bell(out: &mut [f32], start: usize, freq: f32, amp: f32, decay: f32) {
-    let partials = [(1.0, 1.0), (2.0, 0.45), (2.76, 0.25), (5.4, 0.08)];
-    let n = secs(decay * 5.0).min(out.len().saturating_sub(start));
-    for i in 0..n {
-        let t = i as f32 / SR as f32;
-        let attack = (t / 0.004).min(1.0);
-        let mut s = 0.0;
-        for (k, (mul, a)) in partials.iter().enumerate() {
-            let d = decay / (1.0 + k as f32 * 1.4);
-            s += a * (std::f32::consts::TAU * freq * mul * t).sin() * (-t / d).exp();
-        }
-        out[start + i] += s * amp * attack;
-    }
-}
-
-const PENTA: [f32; 5] = [0.0, 2.0, 4.0, 7.0, 9.0];
-
-fn penta_freq(base: f32, step: i32) -> f32 {
-    let oct = step.div_euclid(5);
-    let deg = PENTA[step.rem_euclid(5) as usize];
-    base * 2f32.powf(oct as f32 + deg / 12.0)
-}
-
-fn chime(step: usize) -> Vec<f32> {
-    let mut out = vec![0.0; secs(2.2)];
-    let base = 587.33; // D5
-    let s = step as i32;
-    bell(&mut out, 0, penta_freq(base, s % 6), 0.6, 0.5);
-    bell(&mut out, secs(0.09), penta_freq(base, s % 6 + 2), 0.45, 0.5);
-    bell(&mut out, secs(0.18), penta_freq(base, s % 6 + 4), 0.35, 0.6);
-    reverb(&mut out, 0.25);
-    normalize(&mut out, 0.55);
-    out
-}
-
-fn fanfare() -> Vec<f32> {
-    let mut out = vec![0.0; secs(4.5)];
-    let base = 293.66;
-    for (k, step) in [0, 2, 3, 5, 7, 10].iter().enumerate() {
-        bell(&mut out, secs(k as f32 * 0.14), penta_freq(base, *step), 0.5, 0.9);
-    }
-    bell(&mut out, secs(0.9), penta_freq(base, 0), 0.35, 1.4);
-    bell(&mut out, secs(0.9), penta_freq(base, 3), 0.3, 1.4);
-    bell(&mut out, secs(0.9), penta_freq(base, 5), 0.3, 1.4);
-    reverb(&mut out, 0.4);
-    normalize(&mut out, 0.6);
-    out
-}
-
-fn nope() -> Vec<f32> {
-    let n = secs(0.22);
-    let mut out = vec![0.0; n];
-    for (i, o) in out.iter_mut().enumerate() {
-        let t = i as f32 / SR as f32;
-        let (f, t0) = if t < 0.09 { (240.0, 0.0) } else { (190.0, 0.09) };
-        let tt = t - t0;
-        *o = (std::f32::consts::TAU * f * tt).sin() * (-tt * 30.0).exp() * (tt / 0.003).min(1.0);
-    }
-    normalize(&mut out, 0.35);
-    out
-}
-
-fn tick() -> Vec<f32> {
-    let n = secs(0.03);
-    (0..n)
-        .map(|i| {
-            let t = i as f32 / SR as f32;
-            (std::f32::consts::TAU * 2600.0 * t).sin() * (-t * 300.0).exp() * 0.3
-        })
-        .collect()
-}
-
-fn purchase() -> Vec<f32> {
-    let mut out = vec![0.0; secs(2.0)];
-    for k in 0..6 {
-        bell(&mut out, secs(k as f32 * 0.06), penta_freq(587.33, k + 3), 0.3, 0.35);
-    }
-    reverb(&mut out, 0.35);
-    normalize(&mut out, 0.5);
-    out
-}
-
-/// Small Schroeder reverb, mixed in place.
-fn reverb(buf: &mut [f32], wet: f32) {
-    let combs = [1557usize, 1617, 1491, 1422];
-    let fb = 0.78;
-    let mut acc = vec![0.0f32; buf.len()];
-    for &d in &combs {
-        let mut line = vec![0.0f32; d];
-        let mut idx = 0;
-        let mut lp = 0.0f32;
-        for i in 0..buf.len() {
-            let y = line[idx];
-            lp += 0.4 * (y - lp);
-            line[idx] = buf[i] + lp * fb;
-            idx = (idx + 1) % d;
-            acc[i] += y * 0.25;
-        }
-    }
-    for &d in &[225usize, 556] {
-        let mut line = vec![0.0f32; d];
-        let mut idx = 0;
-        for x in acc.iter_mut() {
-            let b = line[idx];
-            let y = -*x + b;
-            line[idx] = *x + b * 0.5;
-            idx = (idx + 1) % d;
-            *x = y;
-        }
-    }
-    for (x, r) in buf.iter_mut().zip(acc) {
-        *x = *x * (1.0 - wet * 0.5) + r * wet;
-    }
-}
-
-/// Fire crackle and room tone, ~24 s loop.
-fn ambience() -> Vec<f32> {
-    let mut rng = StdRng::seed_from_u64(99);
-    let n = secs(24.0);
-    let mut rumble: Vec<f32> = (0..n).map(|_| rng.gen_range(-1.0..1.0)).collect();
-    lowpass(&mut rumble, 180.0);
-    lowpass(&mut rumble, 180.0);
-    normalize(&mut rumble, 0.12);
-    let mut crackle = vec![0.0f32; n];
-    let mut t = 0usize;
-    while t < n {
-        t += secs(rng.gen_range(0.02..0.5));
-        let len = secs(rng.gen_range(0.002..0.012));
-        let amp = rng.gen_range(0.05..0.5f32).powf(2.0);
-        for i in 0..len {
-            if t + i < n {
-                crackle[t + i] += rng.gen_range(-1.0..1.0) * amp * (1.0 - i as f32 / len as f32);
-            }
-        }
-    }
-    highpass(&mut crackle, 900.0);
-    let mut out: Vec<f32> = rumble.iter().zip(&crackle).map(|(a, b)| a + b * 0.6).collect();
-    // Crossfade the loop seam.
-    let fade = secs(0.5);
-    for i in 0..fade {
-        let k = i as f32 / fade as f32;
-        let tail = out[n - fade + i];
-        out[i] = out[i] * k + tail * (1.0 - k);
-    }
-    out.truncate(n - fade);
-    out
-}
-
-/// A slow, generative music-box piece in D major pentatonic over a soft pad.
-fn music() -> Vec<f32> {
-    let mut rng = StdRng::seed_from_u64(2024);
-    let len_s = 128.0;
-    let n = secs(len_s);
-    let tail = secs(6.0);
-    let mut out = vec![0.0f32; n + tail];
-    // Pad chords, 16 s each.
-    let chords: [[i32; 3]; 8] = [
-        [0, 2, 4],
-        [-2, 0, 3],
-        [1, 3, 5],
-        [-1, 2, 4],
-        [0, 3, 5],
-        [-2, 1, 3],
-        [1, 2, 4],
-        [-1, 0, 3],
-    ];
-    let pad_base = 146.83; // D3
-    for (ci, ch) in chords.iter().enumerate() {
-        let start = secs(ci as f32 * 16.0);
-        let dur = secs(18.0);
-        for &step in ch {
-            let f = penta_freq(pad_base, step);
-            for i in 0..dur {
-                let idx = start + i;
-                if idx >= out.len() {
-                    break;
-                }
-                let t = i as f32 / SR as f32;
-                let env = (t / 4.0).min(1.0) * ((18.0 - t) / 4.0).clamp(0.0, 1.0);
-                let s = (std::f32::consts::TAU * f * t).sin() + 0.3 * (std::f32::consts::TAU * f * 2.0 * t + 0.4).sin();
-                let wob = 1.0 + 0.15 * (t * 0.7 + step as f32).sin();
-                out[idx] += s * env * 0.05 * wob;
-            }
-        }
-    }
-    // Plucked melody.
-    let mel_base = 587.33;
-    let mut t = 1.0;
-    let mut step: i32 = 2;
-    while t < len_s - 1.0 {
-        let chord = chords[((t / 16.0) as usize).min(7)];
-        // Wander, gently attracted to chord tones.
-        step += rng.gen_range(-2..=2);
-        if rng.gen_bool(0.35) {
-            step = chord[rng.gen_range(0..3)] + 5 * rng.gen_range(0..2);
-        }
-        step = step.clamp(-3, 9);
-        let amp = rng.gen_range(0.12..0.22);
-        bell(&mut out, secs(t), penta_freq(mel_base, step), amp, 0.9);
-        if rng.gen_bool(0.2) {
-            bell(&mut out, secs(t + 0.18), penta_freq(mel_base, step + 2), amp * 0.6, 0.9);
-        }
-        t += *[0.75f32, 1.0, 1.5, 1.5, 2.0, 3.0].choose(&mut rng).unwrap();
-    }
-    reverb(&mut out, 0.5);
-    // Wrap the tail onto the start for a seamless loop.
-    for i in 0..tail {
-        out[i] += out[n + i];
-    }
-    out.truncate(n);
-    normalize(&mut out, 0.3);
-    out
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn check(name: &str, buf: &[f32]) {
-        assert!(!buf.is_empty(), "{name} is empty");
-        let peak = buf.iter().fold(0.0f32, |a, &x| a.max(x.abs()));
-        assert!(buf.iter().all(|x| x.is_finite()), "{name} has non-finite samples");
-        assert!(peak > 0.01 && peak <= 1.0, "{name} peak {peak}");
-    }
-
-    #[test]
-    fn synthesis_is_sane() {
-        let mut rng = StdRng::seed_from_u64(1);
-        check("thunk", &thunk(&mut rng, 1.0));
-        check("rustle", &rustle(&mut rng));
-        check("whoosh", &whoosh(&mut rng, 1.0));
-        check("step", &step(&mut rng, 1.0));
-        check("land", &land(&mut rng, 1.0));
-        for s in 0..13 {
-            check("chime", &chime(s));
-        }
-        check("fanfare", &fanfare());
-        check("nope", &nope());
-        check("tick", &tick());
-        check("purchase", &purchase());
-        check("ambience", &ambience());
-        let m = music();
-        check("music", &m);
-        // The loop seam should not click: compare the ends.
-        assert!((m[0] - m[m.len() - 1]).abs() < 0.05);
-    }
-}
+mod tests;
