@@ -209,6 +209,9 @@ pub struct Library {
     pub category_center: Vec<Vec3>,
     /// (category, position) of each category lantern; drawn per frame since they change.
     pub lanterns: Vec<(usize, Vec3)>,
+    /// (department, gem) of each gem by a department's door; drawn per frame, since
+    /// they brighten as it nears done.
+    pub door_gems: Vec<(usize, Inst)>,
     /// Where a new game starts: (feet, yaw).
     pub spawn: (Vec3, f32),
     /// The heap in the middle of the library that the Gathering Charm sends books to.
@@ -245,6 +248,7 @@ impl Library {
             category_books: vec![0; n],
             category_center: vec![Vec3::ZERO; n],
             lanterns: Vec::new(),
+            door_gems: Vec::new(),
             spawn: (Vec3::ZERO, 0.0),
             hub: Vec3::ZERO,
         };

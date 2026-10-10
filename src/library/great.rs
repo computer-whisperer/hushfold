@@ -634,6 +634,49 @@ fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
     [rgb[0], rgb[1], rgb[2], w]
 }
 
+/// The turn laying a piece made in xy (x across, y up) flat on the wall on `side`, its
+/// z out from the wall's face toward the middle of the atrium.
+fn wall_rot(side: Side) -> Quat {
+    let across = side.across3();
+    Quat::from_mat3(&Mat3::from_cols(across, Vec3::Y, across.cross(Vec3::Y)))
+}
+
+/// Turned to stand a lathe's axis (y) out of the wall on `side`.
+fn out_of_wall(side: Side) -> Quat {
+    wall_rot(side) * Quat::from_rotation_x(FRAC_PI_2)
+}
+
+/// `n` + 1 points along an arc `r` round the origin in xy, from angle `a0` to `a1`.
+fn arc(r: f32, (a0, a1): Span, n: usize) -> impl Iterator<Item = Vec2> {
+    (0..=n).map(move |k| {
+        let a = a0 + (a1 - a0) * k as f32 / n as f32;
+        Vec2::new(libm::cosf(a), libm::sinf(a)) * r
+    })
+}
+
+/// A round of `n` points `r` from the origin in xy.
+fn round(r: f32, n: usize) -> Vec<Vec2> {
+    arc(r, (0.0, TAU), n).take(n).collect()
+}
+
+/// A lathe's profile, (radius, height) up its outside.
+fn profile(points: &[(f32, f32)]) -> Vec<Vec2> {
+    points.iter().map(|&p| Vec2::from(p)).collect()
+}
+
+/// A small flame, a teardrop on its foot (the origin), 1 tall.
+fn flame() -> Mesh {
+    let p = [
+        (0.0, 0.0),
+        (0.3, 0.06),
+        (0.5, 0.22),
+        (0.44, 0.42),
+        (0.24, 0.7),
+        (0.0, 1.0),
+    ];
+    Mesh::lathe(&profile(&p), 12)
+}
+
 /// The atrium's dressing: what stands on its walls, under its ceilings, along its
 /// galleries, round its doors, beside its stairs and over the well.
 impl Library {
@@ -672,12 +715,12 @@ impl Library {
             faces.extend([p - 0.25, p + 0.25]);
         }
         faces.push(FACE - 0.5);
-        for bay in faces.chunks(2) {
+        for (b, bay) in faces.chunks(2).enumerate() {
             let (l, r) = (bay[0], bay[1]);
             if r > d - PORTAL_HALF && l < d + PORTAL_HALF {
                 continue;
             }
-            self.banner(side, (l + r) * 0.5, y + 4.15, colour);
+            self.banner(side, (l + r) * 0.5, y + 4.15, colour, (level * 4 + si) * 7 + b);
             self.blind_arch(side, (l, r), y);
         }
         // Panelling between the pedestals (the corner piers', the pilasters' and the
@@ -760,24 +803,36 @@ impl Library {
         let (c, ri) = ((l + r) * 0.5, (r - l) * 0.5);
         let n = 9;
         let step = PI / n as f32;
+        let wall = wall_rot(side);
+        // A voussoir: the ring's wedge from `r0` to `r1` round the arch's centre, its
+        // middle along x, 1 thick (each is sized to how proud it stands).
+        let wedge = |lib: &mut Self, r0: f32, r1: f32| {
+            let half = (-step * 0.5, step * 0.5);
+            let mut outline: Vec<Vec2> = arc(r1, half, 4).collect();
+            outline.extend(arc(r0, (half.1, half.0), 4));
+            lib.shape(Mesh::prism(&outline, 1.0))
+        };
+        let plain = wedge(self, ri, ri + 0.28);
+        let key = wedge(self, ri - 0.06, ri + 0.42);
         for k in 0..n {
             let t = (k as f32 + 0.5) * step;
-            let key = k == n / 2;
-            let (r0, r1) = if key { (ri - 0.06, ri + 0.42) } else { (ri, ri + 0.28) };
-            // Neighbours overlap toward the inside; alternate ones stand a little
-            // prouder so the overlaps don't flicker.
-            let proud = if key { 0.15 } else { 0.1 + 0.012 * (k % 2) as f32 };
-            let rm = (r0 + r1) * 0.5;
-            let at = (c + rm * libm::cosf(t), spring + rm * libm::sinf(t));
-            let size = (2.0 * r1 * libm::tanf(step * 0.5), r1 - r0);
-            let look = (kind::STONE, rgba(if key { PALE } else { DRESSED }, 1.0));
-            self.decor(in_wall(side, at, (FACE - proud, FACE), size, t - FRAC_PI_2, look));
+            // Alternate stones stand a little prouder, so the joints show.
+            let (shape, proud, rgb) = if k == n / 2 {
+                (key, 0.15, PALE)
+            } else {
+                (plain, 0.1 + 0.012 * (k % 2) as f32, DRESSED)
+            };
+            let s = shape.sized(Vec3::new(shape.size.x, shape.size.y, proud));
+            let at = side.at3(c, FACE - proud * 0.5, spring);
+            self.decor(s.at(at, wall * Quat::from_rotation_z(t), kind::STONE, rgba(rgb, 1.0)));
         }
         for a in [(l - 0.04, l + 0.12), (r - 0.12, r + 0.04)] {
             self.part(side, a, (FACE - 0.2, FACE), (spring - 0.16, spring), kind::STONE, PALE);
         }
         // The recess: from the panelling up to the springing, then strips narrowing
-        // as the arch does, their corners under the ring.
+        // as the arch does, their corners under the ring. Boxes, laid down before the
+        // wall's face, so the wall behind them is never shaded (meshes are drawn after
+        // every box).
         let recess = (FACE - 0.012, FACE);
         self.part(side, (l, r), recess, (y + 1.16, spring), kind::STONE, RECESS);
         let strips = 6;
@@ -792,43 +847,109 @@ impl Library {
 
     /// A banner on the wall on `side`, centred at `c` across, hung from a gilt rod at
     /// `top`: a field of `colour` in a gold border, coming to a point with a tassel,
-    /// a gold band across its head and a lozenge on it.
-    fn banner(&mut self, side: Side, c: f32, top: f32, colour: [f32; 3]) {
+    /// a gold band across its head and a lozenge on it. It stirs in the air of the
+    /// well, its foot lifting a little off the wall and settling back, slowly, each
+    /// banner (`k`) in its own time.
+    fn banner(&mut self, side: Side, c: f32, top: f32, colour: [f32; 3], k: usize) {
         const BORDER: [f32; 3] = [0.45, 0.32, 0.1];
+        // How far the rod's axis stands off the wall.
+        const ROD: f32 = 0.075;
         let (w, h) = (1.7, 1.9);
-        let (y0, y1) = (top - 0.05 - h, top - 0.05);
-        let field = colour.map(|v| v * 0.6);
-        // A layer standing `front`..`back` off the wall over `a` across and `y` up;
-        // and one turned on its corner, centred `at`, `w` on a side. Layers further
-        // forward hide the ones behind, and are laid down first.
-        let flat = |lib: &mut Self, a, (front, back): Span, y, (kind, rgb): (u32, [f32; 3])| {
-            lib.part(side, a, (FACE - front, FACE - back), y, kind, rgb);
-        };
-        let turned = |lib: &mut Self, at, (front, back): Span, w: f32, (kind, rgb): (u32, [f32; 3])| {
-            let o = (FACE - front, FACE - back);
-            lib.decor(in_wall(side, at, o, (w, w), FRAC_PI_4, (kind, rgba(rgb, 1.0))));
-        };
-        let cloth = |rgb| (kind::CLOTH, rgb);
-        let gilt = (kind::METAL, GILT);
-        let lozenge = (c, y0 + 0.75);
-        turned(self, lozenge, (0.09, 0.07), 0.24, cloth(colour));
-        turned(self, lozenge, (0.086, 0.065), 0.5, cloth(BORDER));
-        let inner = (c - w * 0.5 + 0.1, c + w * 0.5 - 0.1);
-        flat(self, inner, (0.083, 0.06), (y1 - 0.36, y1 - 0.3), cloth(BORDER));
-        let span = |x: f32, half: f32| (x - half, x + half);
-        flat(self, span(c, w * 0.5 + 0.12), (0.1, 0.05), span(top, 0.025), gilt);
-        for s in [-1.0f32, 1.0] {
-            let x = c + s * (w * 0.5 + 0.03);
-            flat(self, span(x, 0.025), (0.08, 0.0), (top - 0.05, top + 0.035), gilt);
-        }
-        // The point: a square turned on its corner behind the foot of each layer.
-        let point = |inset: f32| (w - inset) * libm::cosf(FRAC_PI_4);
-        flat(self, inner, (0.08, 0.055), (y0, y1 - 0.1), cloth(field));
-        turned(self, (c, y0), (0.079, 0.055), point(0.2), cloth(field));
+        // Made about the rod's axis: x across, y up, z out from the wall.
+        let (y0, y1) = (-0.05 - h, -0.05);
         let tip = y0 - w * 0.5;
-        flat(self, span(c, 0.035), (0.078, 0.06), (tip - 0.1, tip + 0.02), gilt);
-        flat(self, span(c, w * 0.5), (0.076, 0.05), (y0, y1), cloth(BORDER));
-        turned(self, (c, y0), (0.074, 0.05), point(0.0), cloth(BORDER));
+        // A layer standing `front`..`back` off the wall: its middle and thickness.
+        let layer = |(front, back): Span| (Vec3::Z * ((front + back) * 0.5 - ROD), front - back);
+        // Cloth `hw` either side, from `head` down to `foot` and on to a point.
+        let pennant = |hw: f32, head: f32, foot: f32| {
+            [(-hw, head), (-hw, foot), (0.0, foot - hw), (hw, foot), (hw, head)].map(Vec2::from)
+        };
+        let lozenge = Vec3::Y * (y0 + 0.75);
+        let turned = Quat::from_rotation_z(FRAC_PI_4);
+        let one = Vec3::ONE;
+        // The field, made first: meshes are drawn in the order they were made, and it
+        // hides most of the border behind it.
+        let mut field = Mesh::default();
+        let (at, d) = layer((0.08, 0.055));
+        field.add(
+            &Mesh::prism(&pennant(w * 0.5 - 0.1, y1 - 0.1, y0), d),
+            at,
+            Quat::IDENTITY,
+            one,
+        );
+        let field = self.shape(field);
+        // The border, the band across its head and the lozenge's frame, one cloth.
+        let mut border = Mesh::default();
+        let (at, d) = layer((0.076, 0.05));
+        border.add(&Mesh::prism(&pennant(w * 0.5, y1, y0), d), at, Quat::IDENTITY, one);
+        let (at, d) = layer((0.083, 0.06));
+        let band = Vec3::new(w - 0.2, 0.06, d);
+        border.add(&Mesh::cube(), at + Vec3::Y * (y1 - 0.33), Quat::IDENTITY, band);
+        let (at, d) = layer((0.086, 0.065));
+        border.add(&Mesh::cube(), at + lozenge, turned, Vec3::new(0.5, 0.5, d));
+        let border = self.shape(border);
+        let tassel = [
+            (0.0, 0.0),
+            (0.022, 0.0),
+            (0.03, 0.03),
+            (0.024, 0.07),
+            (0.012, 0.085),
+            (0.016, 0.1),
+            (0.008, 0.12),
+            (0.0, 0.12),
+        ];
+        let tassel = self.shape(Mesh::lathe(&profile(&tassel), 12));
+        // The rod with a knob at each end, on brackets from the wall; it stays put.
+        let mut rod = Mesh::default();
+        let reach = w * 0.5 + 0.12;
+        let along = Quat::from_rotation_z(FRAC_PI_2);
+        rod.add(
+            &Mesh::cylinder(12),
+            Vec3::ZERO,
+            along,
+            Vec3::new(0.044, 2.0 * reach, 0.044),
+        );
+        for s in [-1.0f32, 1.0] {
+            rod.add(
+                &Mesh::sphere(12),
+                Vec3::X * s * reach,
+                Quat::IDENTITY,
+                Vec3::splat(0.06),
+            );
+            let bracket = Vec3::new(s * (w * 0.5 + 0.03), -0.0075, 0.04 - ROD);
+            rod.add(&Mesh::cube(), bracket, Quat::IDENTITY, Vec3::new(0.05, 0.085, 0.08));
+        }
+        let rod = self.shape(rod);
+        let wall = wall_rot(side);
+        let pivot = side.at3(c, FACE - ROD, top);
+        let gilt = rgba(GILT, 1.0);
+        self.decor(rod.at(pivot, wall, kind::METAL, gilt));
+        // Swinging about the rod, a turn about `lift` taking its foot off the wall: two
+        // swings a little out of time, one riding the other, so it stirs now and then
+        // and hangs nearly still between. Laid down lifted as far as they swing
+        // together, so it swings between hanging flat and twice that.
+        let lift = -side.across3();
+        let (amp, period) = (0.01 + 0.003 * (k % 3) as f32, 9.0 + 1.7 * (k % 4) as f32);
+        let swing = |period: f32| Motion::Swing {
+            axis: lift,
+            amp,
+            period,
+        };
+        let draught = self.mover(pivot, swing(period * 1.17), k as f32 * 5.1, None);
+        let m = self.mover(pivot, swing(period), k as f32 * 2.3, Some(draught));
+        let rot = Quat::from_axis_angle(lift, 2.0 * amp) * wall;
+        self.moving(m, border.at(pivot, rot, kind::CLOTH, rgba(BORDER, 1.0)));
+        let fill = colour.map(|v| v * 0.6);
+        self.moving(m, field.at(pivot, rot, kind::CLOTH, rgba(fill, 1.0)));
+        let (at, d) = layer((0.09, 0.07));
+        let size = Vec3::new(0.24, 0.24, d);
+        let cloth = rgba(colour, 1.0);
+        self.moving(
+            m,
+            Inst::new(pivot + rot * (at + lozenge), rot * turned, size, kind::CLOTH, cloth, 0),
+        );
+        let foot = pivot + rot * Vec3::new(0.0, tip - 0.1, 0.069 - ROD);
+        self.moving(m, tassel.at(foot, rot, kind::METAL, gilt));
     }
 
     /// Beams under the ceiling over the gallery (or the walk under it) on side `si` of
@@ -903,22 +1024,67 @@ impl Library {
         }
     }
 
-    /// A lamp on a post standing in a gallery's railing at `foot`: a lantern of
-    /// glass between gilt corner posts.
+    /// A lamp on a post standing in a gallery's railing at `foot`: over the handrail a
+    /// turned column, a gilt font with a flame in a glass chimney, and a gilt crown
+    /// round the chimney's mouth.
     fn lamp_standard(&mut self, foot: Vec3) {
-        let gilt = |lib: &mut Self, at: Vec3, size: Vec3| lib.decor(Inst::aabox(foot + at, size, kind::METAL, GILT));
-        for (x, z) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-            gilt(self, Vec3::new(x * 0.08, 1.72, z * 0.08), Vec3::new(0.03, 0.24, 0.03));
-        }
-        for (y, w, h) in [(1.58, 0.2, 0.04), (1.865, 0.22, 0.05), (1.935, 0.06, 0.09)] {
-            gilt(self, Vec3::Y * y, Vec3::new(w, h, w));
-        }
-        let glass = Vec3::new(0.15, 0.24, 0.15);
-        let mut glow = Inst::aabox(foot + Vec3::Y * 1.72, glass, kind::EMISSIVE, [1.0, 0.62, 0.26]);
-        glow.color[3] = 1.5;
-        self.decor(glow);
-        let post = Vec3::new(0.11, 1.56, 0.11);
-        self.decor(Inst::aabox(foot + Vec3::Y * 0.78, post, kind::WOOD, WALNUT));
+        let column = [
+            (0.0, 0.0),
+            (0.06, 0.0),
+            (0.06, 0.03),
+            (0.044, 0.05),
+            (0.04, 0.08),
+            (0.056, 0.15),
+            (0.05, 0.22),
+            (0.03, 0.3),
+            (0.034, 0.33),
+            (0.05, 0.345),
+            (0.05, 0.36),
+            (0.0, 0.36),
+        ];
+        let font = [
+            (0.0, 0.0),
+            (0.032, 0.0),
+            (0.036, 0.015),
+            (0.07, 0.04),
+            (0.08, 0.06),
+            (0.074, 0.075),
+            (0.052, 0.08),
+            (0.0, 0.08),
+        ];
+        // Open at both ends.
+        let chimney = [
+            (0.05, 0.0),
+            (0.06, 0.02),
+            (0.075, 0.08),
+            (0.072, 0.13),
+            (0.05, 0.2),
+            (0.042, 0.27),
+        ];
+        let crown = [
+            (0.04, 0.0),
+            (0.056, 0.0),
+            (0.058, 0.035),
+            (0.05, 0.05),
+            (0.04, 0.035),
+            (0.04, 0.0),
+        ];
+        let [column, font, chimney, crown] = [&column[..], &font, &chimney, &crown].map(profile);
+        let column = self.shape(Mesh::lathe(&column, 24));
+        let font = self.shape(Mesh::lathe(&font, 24));
+        let chimney = self.shape(Mesh::lathe(&chimney, 24));
+        let crown = self.shape(Mesh::lathe(&crown, 24));
+        let flame = self.shape(flame()).sized(Vec3::new(0.035, 0.085, 0.035));
+        let up = |h: f32| foot + Vec3::Y * h;
+        let gilt = rgba(GILT, 1.0);
+        let post = Vec3::new(0.11, 1.16, 0.11);
+        self.decor(Inst::aabox(up(0.58), post, kind::WOOD, WALNUT));
+        let id = Quat::IDENTITY;
+        self.decor(column.at(up(1.16), id, kind::WOOD, rgba(WALNUT, 1.0)));
+        self.decor(font.at(up(1.52), id, kind::METAL, gilt));
+        self.decor(crown.at(up(1.85), id, kind::METAL, gilt));
+        self.translucent(chimney.at(up(1.6), id, kind::CLEAR, [1.0, 0.9, 0.75, 0.08]));
+        self.translucent(flame.at(up(1.615), id, kind::FIRE, [1.0, 0.6, 0.25, 4.0]));
     }
 
     /// The stone frame round the door from the atrium into department `dept`'s room
@@ -945,10 +1111,34 @@ impl Library {
             kind: LabelKind::Department(dept),
             level,
         });
+        // The gems, cut with a table and facets, each in a gilt collet; drawn each frame
+        // (`door_gems`), brightening as the department nears done.
+        let gem = [
+            (0.0, 0.0),
+            (0.5, 0.0),
+            (0.5, 0.1),
+            (0.36, 0.26),
+            (0.22, 0.31),
+            (0.0, 0.31),
+        ];
+        let gem = self.shape(Mesh::lathe(&profile(&gem), 8));
+        let gem = gem.sized(Vec3::new(0.22, 0.07, 0.22));
+        let collet = [
+            (0.105, 0.0),
+            (0.14, 0.0),
+            (0.14, 0.03),
+            (0.12, 0.05),
+            (0.105, 0.04),
+            (0.105, 0.0),
+        ];
+        let collet = self.shape(Mesh::lathe(&profile(&collet), 24));
+        // Turned so a facet lies level along its top.
+        let rot = out_of_wall(side) * Quat::from_rotation_y(PI / 8.0);
         for s in [-1.0f32, 1.0] {
-            let at = (d + s * 2.05, y + 4.42);
-            let (o, gem) = ((FACE - 0.2, FACE - 0.15), (kind::CRYSTAL, rgba(dcol, 0.8)));
-            self.decor(in_wall(side, at, o, (0.24, 0.24), FRAC_PI_4, gem));
+            let at = side.at3(d + s * 2.05, FACE - 0.15, y + 4.42);
+            self.decor(collet.at(at, rot, kind::METAL, rgba(GILT, 1.0)));
+            self.door_gems
+                .push((dept, gem.at(at, rot, kind::CRYSTAL, rgba(dcol, 0.8))));
         }
         // A stone `a` across from the door, `depth` off the wall, `ys` up from the floor.
         let stone = |lib: &mut Self, (a0, a1): Span, depth: f32, (y0, y1): Span, rgb: [f32; 3]| {
@@ -1102,31 +1292,31 @@ impl Library {
                 Vec3::new(v + 0.025, SKY, inner),
             );
         }
-        // The boss, an octagon of two squares, and a drop under it.
-        let boss = Vec3::new(0.0, SKY - 0.6, 0.0);
-        let size = Vec3::new(1.0, 0.3, 1.0);
-        self.decor(Inst::aabox(boss, size, kind::METAL, GILT));
-        let turned = Quat::from_rotation_y(FRAC_PI_4);
-        self.decor(Inst::new(
-            boss - Vec3::Y * 0.01,
-            turned,
-            size,
-            kind::METAL,
-            rgba(GILT, 1.0),
-            0,
-        ));
-        self.decor(Inst::aabox(
-            boss - Vec3::Y * 0.275,
-            Vec3::new(0.3, 0.25, 0.3),
-            kind::METAL,
-            GILT,
-        ));
-        self.decor(Inst::aabox(
-            boss - Vec3::Y * 0.46,
-            Vec3::new(0.14, 0.12, 0.14),
-            kind::METAL,
-            GILT,
-        ));
+        // The boss: a gilt rose under the ribs' meeting, and a turned drop under it,
+        // made from the drop's point up.
+        let boss = [
+            (0.0, 0.0),
+            (0.03, 0.02),
+            (0.06, 0.07),
+            (0.075, 0.12),
+            (0.06, 0.17),
+            (0.03, 0.2),
+            (0.03, 0.23),
+            (0.07, 0.25),
+            (0.07, 0.28),
+            (0.04, 0.3),
+            (0.05, 0.33),
+            (0.18, 0.36),
+            (0.32, 0.4),
+            (0.43, 0.46),
+            (0.5, 0.53),
+            (0.53, 0.6),
+            (0.53, 0.68),
+            (0.0, 0.68),
+        ];
+        let boss = self.shape(Mesh::lathe(&profile(&boss), 32));
+        let foot = Vec3::new(0.0, SKY - 1.13, 0.0);
+        self.decor(boss.at(foot, Quat::IDENTITY, kind::METAL, rgba(GILT, 1.0)));
         // Two panes of clear glass, the night through them, the moon in one.
         self.decor(Inst::minmax(
             Vec3::new(-5.4, SKY - 0.008, -3.6),
@@ -1134,22 +1324,21 @@ impl Library {
             kind::EMISSIVE,
             [0.03, 0.045, 0.11],
         ));
+        // The moon, and darker seas on it.
+        let disc = self.shape(Mesh::cylinder(48));
         let moon = Vec3::new(-4.5, SKY - 0.012, -2.7);
-        for (k, turn) in [0.0f32, 30.0, 60.0].into_iter().enumerate() {
-            let at = moon - Vec3::Y * (k as f32 * 0.002);
-            let rot = Quat::from_rotation_y(turn.to_radians());
-            let size = Vec3::new(0.8, 0.002, 0.8);
-            self.decor(Inst::new(at, rot, size, kind::EMISSIVE, [0.92, 0.94, 1.0, 2.6], 0));
-        }
+        let size = Vec3::new(0.95, 0.002, 0.95);
+        let light = [0.92, 0.94, 1.0, 2.6];
+        self.decor(disc.sized(size).inst(moon, Quat::IDENTITY, kind::EMISSIVE, light));
         for (dx, dz, w, turn) in [
-            (0.12f32, -0.1f32, 0.22f32, 20.0f32),
-            (-0.15, 0.08, 0.16, 50.0),
-            (0.06, 0.2, 0.12, 10.0),
+            (0.14f32, -0.12f32, 0.26f32, 20.0f32),
+            (-0.17, 0.09, 0.19, 50.0),
+            (0.07, 0.23, 0.14, 10.0),
         ] {
-            let at = moon + Vec3::new(dx, -0.008, dz);
+            let at = moon + Vec3::new(dx, -0.004, dz);
             let rot = Quat::from_rotation_y(turn.to_radians());
-            let size = Vec3::new(w, 0.002, w * 0.8);
-            self.decor(Inst::new(at, rot, size, kind::EMISSIVE, [0.6, 0.64, 0.76, 2.6], 0));
+            let sea = disc.sized(Vec3::new(w, 0.002, w * 0.8));
+            self.decor(sea.inst(at, rot, kind::EMISSIVE, [0.6, 0.64, 0.76, 2.6]));
         }
         for (x, z) in [
             (-3.2f32, -3.1f32),
@@ -1179,41 +1368,54 @@ impl Library {
     }
 
     /// A round window of moonlit glass in the lantern wall on `side`, centred at `c`
-    /// across and `y` up: a ring of stones, and tracery spokes to a hub.
+    /// across and `y` up: a moulded ring of stone, and tracery spokes to a boss.
     fn rose_window(&mut self, side: Side, c: f32, y: f32) {
         let (ri, ro) = (0.6, 0.74);
-        // A stone centred `at`, standing `proud` off the wall, turned `angle`.
-        let stone = |lib: &mut Self, at, proud: f32, size, angle, rgb: [f32; 3]| {
-            let look = (kind::STONE, rgba(rgb, 1.0));
-            lib.decor(in_wall(side, at, (WELL - proud, WELL), size, angle, look));
-        };
-        let n = 10;
-        let step = TAU / n as f32;
-        for k in 0..n {
-            let t = (k as f32 + 0.5) * step;
-            let rm = (ri + ro) * 0.5;
-            let at = (c + rm * libm::cosf(t), y + rm * libm::sinf(t));
-            let size = (2.0 * ro * libm::tanf(step * 0.5), ro - ri);
-            let proud = 0.08 + 0.01 * (k % 2) as f32;
-            stone(self, at, proud, size, t - FRAC_PI_2, DRESSED);
-        }
+        let at = side.at3(c, WELL, y);
+        let stone = rgba(DRESSED, 1.0);
+        // The ring's section, (radius, off the wall): chamfered inside, rolled outside.
+        let ring = [
+            (ri, 0.0),
+            (ro, 0.0),
+            (ro, 0.04),
+            (ro - 0.03, 0.085),
+            (ri + 0.05, 0.085),
+            (ri, 0.05),
+            (ri, 0.0),
+        ];
+        let ring = self.shape(Mesh::lathe(&profile(&ring), 64));
+        self.decor(ring.at(at, out_of_wall(side), kind::STONE, rgba(PALE, 1.0)));
+        let boss = [
+            (0.0, 0.0),
+            (0.09, 0.0),
+            (0.09, 0.04),
+            (0.065, 0.08),
+            (0.03, 0.095),
+            (0.0, 0.1),
+        ];
+        let boss = self.shape(Mesh::lathe(&profile(&boss), 24));
+        self.decor(boss.at(at, out_of_wall(side), kind::STONE, rgba(PALE, 1.0)));
         for k in 0..4 {
             let (proud, angle) = (0.05 + 0.004 * k as f32, k as f32 * FRAC_PI_4);
-            stone(self, (c, y), proud, (2.0 * ri + 0.04, 0.05), angle, DRESSED);
+            let look = (kind::STONE, stone);
+            self.decor(in_wall(
+                side,
+                (c, y),
+                (WELL - proud, WELL),
+                (2.0 * ri + 0.04, 0.05),
+                angle,
+                look,
+            ));
         }
-        stone(self, (c, y), 0.08, (0.16, 0.16), FRAC_PI_4, PALE);
-        // The glass, three squares turned to make a round, a little apart so they
-        // don't flicker.
-        for (k, turn) in [0.0f32, 30.0, 60.0].into_iter().enumerate() {
-            let look = (kind::GLASS, [0.32, 0.42, 0.85, 1.1]);
-            let back = WELL - 0.002 - 0.002 * k as f32;
-            let (o, size) = ((back - 0.01, back), (2.0 * ri, 2.0 * ri));
-            self.decor(in_wall(side, (c, y), o, size, turn.to_radians(), look));
-        }
+        let glass = self.shape(Mesh::prism(&round(ri + 0.02, 48), 0.01));
+        let at = side.at3(c, WELL - 0.007, y);
+        self.decor(glass.at(at, wall_rot(side), kind::GLASS, [0.32, 0.42, 0.85, 1.1]));
     }
 
     /// Lanterns floating in the air of the well with nothing holding them up, each
-    /// bobbing in its own time, two of them lighting the galleries round them.
+    /// bobbing in its own time, two of them lighting the galleries round them: a globe
+    /// of clear glass in a gilt cage with a flame floating in it, a domed cap with a
+    /// ring, and a turned drop under it.
     fn floating_lanterns(&mut self) {
         const SPOTS: [(f32, f32, f32); 6] = [
             (0.4, 5.0, 10.6),
@@ -1223,6 +1425,65 @@ impl Library {
             (4.6, 5.1, 12.3),
             (5.65, 4.3, 14.6),
         ];
+        // Made about the lantern's middle, y up. The glass is whole but for its mouth,
+        // under the cap, so the flame shows from below.
+        let globe = [
+            (0.0, -0.2),
+            (0.07, -0.19),
+            (0.14, -0.15),
+            (0.18, -0.08),
+            (0.19, 0.0),
+            (0.175, 0.08),
+            (0.12, 0.16),
+        ];
+        let drop = [
+            (0.0, -0.36),
+            (0.02, -0.34),
+            (0.034, -0.3),
+            (0.024, -0.26),
+            (0.034, -0.23),
+            (0.04, -0.21),
+            (0.0, -0.195),
+        ];
+        let cap = [
+            (0.0, 0.15),
+            (0.135, 0.15),
+            (0.15, 0.17),
+            (0.12, 0.21),
+            (0.07, 0.25),
+            (0.045, 0.27),
+            (0.05, 0.3),
+            (0.035, 0.33),
+            (0.0, 0.35),
+        ];
+        let [globe_p, drop, cap] = [&globe[..], &drop, &cap].map(profile);
+        let glass = self.shape(Mesh::lathe(&globe_p, 32));
+        let drop = self.shape(Mesh::lathe(&drop, 16));
+        let cap = self.shape(Mesh::lathe(&cap, 24));
+        // A ring at the top, 9 cm across (the torus is made 2.25 across).
+        let ring = self.shape(Mesh::torus(0.25, 16, 6)).scaled(0.04);
+        let flame = self.shape(flame()).sized(Vec3::new(0.07, 0.17, 0.07));
+        // The cage: a collar round the foot of the glass, and four ribs from it up the
+        // glass to the cap, just outside it.
+        let mut cage = Mesh::default();
+        let collar = Vec3::splat(0.17 / 2.25);
+        cage.add(&Mesh::torus(0.25, 24, 6), Vec3::Y * -0.19, Quat::IDENTITY, collar);
+        let rod = round(1.0, 8);
+        for q in 0..4 {
+            let a = q as f32 * FRAC_PI_2;
+            let dir = Vec3::new(libm::cosf(a), 0.0, libm::sinf(a));
+            let path: Vec<Vec3> = (globe[1..].iter())
+                .map(|&(r, y)| dir * (r + 0.006) + Vec3::Y * y)
+                .collect();
+            cage.add(
+                &Mesh::sweep(&path, &[0.007], &rod, true),
+                Vec3::ZERO,
+                Quat::IDENTITY,
+                Vec3::ONE,
+            );
+        }
+        let cage = self.shape(cage);
+        let gilt = rgba(GILT, 1.0);
         for (k, &(t, r, y)) in SPOTS.iter().enumerate() {
             let c = Vec3::new(libm::cosf(t) * r, y, libm::sinf(t) * r);
             let rot = Quat::from_rotation_y(t * 2.3 + k as f32);
@@ -1232,31 +1493,13 @@ impl Library {
                 rock: 0.04,
             };
             let m = self.mover(c, bob, k as f32 * 2.1, None);
-            let part = |lib: &mut Self, off: Vec3, size: Vec3, kind: u32, rgba: [f32; 4]| {
-                lib.moving(m, Inst::new(c + rot * off, rot, size, kind, rgba, 0));
-            };
-            let gilt = rgba(GILT, 1.0);
-            part(
-                self,
-                Vec3::ZERO,
-                Vec3::new(0.3, 0.5, 0.3),
-                kind::EMISSIVE,
-                [1.0, 0.6, 0.24, 2.2],
-            );
-            part(self, Vec3::Y * 0.28, Vec3::new(0.4, 0.06, 0.4), kind::METAL, gilt);
-            part(self, Vec3::Y * 0.37, Vec3::new(0.2, 0.12, 0.2), kind::METAL, gilt);
-            part(self, Vec3::Y * 0.48, Vec3::new(0.04, 0.12, 0.14), kind::METAL, gilt);
-            part(self, -Vec3::Y * 0.28, Vec3::new(0.36, 0.06, 0.36), kind::METAL, gilt);
-            part(self, -Vec3::Y * 0.36, Vec3::new(0.12, 0.1, 0.12), kind::METAL, gilt);
-            for (x, z) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-                part(
-                    self,
-                    Vec3::new(x, 0.0, z) * 0.16,
-                    Vec3::new(0.035, 0.5, 0.035),
-                    kind::METAL,
-                    gilt,
-                );
+            for part in [drop, cap, cage] {
+                self.moving(m, part.at(c, rot, kind::METAL, gilt));
             }
+            let upright = rot * Quat::from_rotation_x(FRAC_PI_2);
+            self.moving(m, ring.inst(c + Vec3::Y * 0.39, upright, kind::METAL, gilt));
+            self.moving(m, flame.at(c - Vec3::Y * 0.13, rot, kind::FIRE, [1.0, 0.62, 0.26, 6.0]));
+            self.moving(m, glass.at(c, rot, kind::CLEAR, [1.0, 0.86, 0.62, 0.1]));
             if k % 3 == 0 {
                 self.light_riding(m, c, 7.0, [1.0, 0.7, 0.4], 0.9, LightKind::Static);
             }
