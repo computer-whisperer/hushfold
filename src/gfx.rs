@@ -16,6 +16,8 @@ pub mod crane;
 
 pub mod kind {
     pub const PLAIN: u32 = 0;
+    /// Its grain runs along the piece's longest side; round on a round mesh (a ring, a
+    /// wheel, a squat turning: two sides alike and the third shorter).
     pub const WOOD: u32 = 1;
     /// A book, its box the envelope of boards, spine and page block; drawn in a
     /// pipeline of its own (`fs_book`) from the library's book table (`books`). The
@@ -26,12 +28,18 @@ pub mod kind {
     /// Seeker's Lens). Bit 31 is the shader's own: set for books modelled in the round.
     pub const BOOK: u32 = 2;
     pub const FLOOR: u32 = 3;
-    /// Dressed stone. param: 0 ashlar, 1 polished marble, 2 brick.
+    /// Dressed stone, its courses laid in world space (so neighbouring pieces line up);
+    /// the colour is the stone's. param: 0 ashlar in dark mortar, 1 polished marble in
+    /// big slabs, clouded and veined, the room dimly in it, 2 brick in pale mortar (a
+    /// brick red, each brick its own fired tone).
     pub const STONE: u32 = 4;
     pub const EMISSIVE: u32 = 5;
     pub const GHOST: u32 = 6;
     pub const RUG: u32 = 7;
     pub const PLAQUE: u32 = 8;
+    /// A leaded window, the moonlit night beyond it (lit by it, not by the room): color
+    /// the glass's glow, and in w how bright. param 1: a skylight (laid flat, still),
+    /// the real night sky through it with the moon and stars, seen along the eye's ray.
     pub const GLASS: u32 = 9;
     pub const VEIL: u32 = 10;
     pub const SHAFT: u32 = 11;
@@ -50,6 +58,7 @@ pub mod kind {
     /// bigger a mass of foliage. Light behind shines through.
     pub const LEAF: u32 = 15;
     /// Gems and glass: color.w is how brightly it glows from inside (0 for plain glass).
+    /// A box's edges are bevelled; a mesh is cut in facets.
     pub const CRYSTAL: u32 = 16;
     /// Maps, charts, scrolls; the colour is the paper's. param picks the ink on its
     /// broad faces: 0 writing, 1 a map, 2 a star chart, 3 none, 4 sheet music, 5 a coat
@@ -64,17 +73,31 @@ pub mod kind {
     /// lights' highlights, more at grazing angles. color: its tint, and in w how much of
     /// what is behind it it hides (0.05 to 0.3).
     pub const CLEAR: u32 = 19;
-    /// Flames, drawn in the translucent pass (`Library::translucent`): tongues licking
-    /// up the piece's local y, flickering. color: the flame's colour, w its brightness.
-    /// param: 0 a candle's or a lamp's flame, 1 a hearth's or a brazier's fire.
+    /// Flames, drawn in the translucent pass (`Library::translucent`) as light only, so
+    /// they bloom; up the piece's local y, filling its box (a box, or any mesh round
+    /// it), soft where they meet what is in them. color: the flame's colour (amber,
+    /// say 1.0, 0.6, 0.28), w its brightness (2 to 4). param: 0 a candle's or a lamp's
+    /// flame, a teardrop the same from every side, a blue foot and a gold heart, its tip
+    /// swaying (a box about 2.5 x 6 x 2.5 cm, its foot on the wick); 1 a hearth's or a
+    /// brazier's fire, tongues rising from the box's floor and thinning to tips,
+    /// fullest in its middle (a box over the logs, a little taller than wide). Light
+    /// the room with a `LightKind::Flicker` light by it.
     pub const FIRE: u32 = 20;
     /// Smoke, steam, cloud and rain, drawn in the translucent pass
-    /// (`Library::translucent`): soft, see-through, stirring in itself. color: its
-    /// colour, w its density. param: 0 smoke or steam rising, 1 cloud, 2 rain falling.
+    /// (`Library::translucent`): soft, see-through, stirring in itself, soft where it
+    /// meets what is behind or in it, lit by the room and its lights. color: its colour,
+    /// w its density (0.3 to 1). param: 0 smoke or steam rising, the ellipsoid in the
+    /// box, thinning as it goes up (a tall box over the cup or chimney); 1 cloud, the
+    /// ellipsoid in the box billowing slowly, darker underneath (puffs of a few boxes or
+    /// spheres overlapping make a cloud); 2 rain falling, streaks through the whole box.
     pub const MIST: u32 = 21;
-    /// A thin flat piece cut through in a pattern, the holes see-through: leaves on a
-    /// spray, a grille, fretwork. Its broad faces carry the pattern. color: its colour.
-    /// param: 0 a spray of leaves, 1 a grille of bars, 2 scrolled fretwork, 3 a lattice.
+    /// A thin flat piece cut through in a pattern, the holes cut out (a pipeline of its
+    /// own), across the plane of its two longer sides, at a fixed size in metres (so a
+    /// bigger piece has more of it). color: its colour; grilles, and bright pieces of
+    /// the others (brass, gilt), are metal. param: 0 a spray of leaves on winding stems
+    /// (light through them; no frame), 1 a grille of upright bars 4.5 cm apart with
+    /// rails, 2 scrolled fretwork (interlaced rings, 10 cm), 3 a lattice of diagonal
+    /// laths; all but the leaves in a frame round the edge.
     #[allow(dead_code)] // TEMP: for the round-4 area agents; remove at merge if unused.
     pub const FRET: u32 = 22;
 
@@ -420,6 +443,9 @@ pub struct Renderer {
     trans_pipe: wgpu::RenderPipeline,
     beam_pipe: wgpu::RenderPipeline,
     glass_pipe: wgpu::RenderPipeline,
+    fx_pipe: wgpu::RenderPipeline,
+    fret_pipe: wgpu::RenderPipeline,
+    sky_pipe: wgpu::RenderPipeline,
     /// Lettering on signs and labels, and the glyph atlas it is cut from.
     text_pipe: wgpu::RenderPipeline,
     text_bg: wgpu::BindGroup,
@@ -437,6 +463,11 @@ pub struct Renderer {
     /// Every mesh instances are drawn as (the box among them).
     meshes: mesh::Meshes,
     static_batch: mesh::Batch,
+    /// Fretwork, fixed and moving, drawn apart from the rest (see `fret_pipe`).
+    static_fret: mesh::Batch,
+    dyn_fret: mesh::Batch,
+    /// Skylights (`kind::GLASS` param 1), drawn with `sky_pipe`.
+    static_sky: mesh::Batch,
     text_buf: GrowBuf<Glyph>,
     dyn_batch: mesh::Batch,
     /// Books on the move, drawn apart from the other dynamic things (see `book_pipe`).
@@ -444,6 +475,8 @@ pub struct Renderer {
     trans_batch: mesh::Batch,
     /// Clear glass, drawn apart from the other translucent things (see `glass_pipe`).
     glass_batch: mesh::Batch,
+    /// Flames and mist (see `fx_pipe`).
+    fx_batch: mesh::Batch,
     /// Moonbeams, drawn apart from the other translucent things (see `beam_pipe`).
     beam_buf: GrowBuf,
     /// The lists the frame's instances are sorted into: dynamic books and the rest,
@@ -615,13 +648,14 @@ impl Renderer {
                 ],
             },
         ];
+        // `cut`: holes cut out of it (`fs_fret`), its edges smoothed by the samples covered.
         let make_scene = |label: &str,
                           layout: &wgpu::PipelineLayout,
                           (vs, buffers): (&str, &[wgpu::VertexBufferLayout]),
                           fs: &str,
                           blend: Option<wgpu::BlendState>,
                           (write, compare): (bool, wgpu::CompareFunction),
-                          cull: bool| {
+                          (cull, cut): (bool, bool)| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
@@ -644,6 +678,7 @@ impl Renderer {
                 }),
                 multisample: wgpu::MultisampleState {
                     count: MSAA,
+                    alpha_to_coverage_enabled: cut,
                     ..Default::default()
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -662,7 +697,9 @@ impl Renderer {
         };
         use wgpu::CompareFunction::{Always, Less};
         let boxes = ("vs_main", &vb_layouts[..]);
-        let scene_pipe = make_scene("scene", &scene_layout, boxes, "fs_main", None, (true, Less), true);
+        let solid = (true, false);
+        let both_sides = (false, false);
+        let scene_pipe = make_scene("scene", &scene_layout, boxes, "fs_main", None, (true, Less), solid);
         let trans_pipe = make_scene(
             "trans",
             &trans_layout,
@@ -670,7 +707,7 @@ impl Renderer {
             "fs_trans",
             Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             (false, Less),
-            false,
+            both_sides,
         );
         // Moonbeams test the depth themselves (`fs_beam`): standing in one, the haze
         // between the eye and a wall must stay where the shaft's far side is behind it.
@@ -681,7 +718,7 @@ impl Renderer {
             "fs_beam",
             Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             (false, Always),
-            false,
+            both_sides,
         );
         let glass_pipe = make_scene(
             "glass",
@@ -690,8 +727,31 @@ impl Renderer {
             "fs_glass",
             Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             (false, Less),
-            false,
+            both_sides,
         );
+        // Flames and mist are volumes the eye looks through, so they too test the depth
+        // themselves (`fs_fx`), as the moonbeams do.
+        let fx_pipe = make_scene(
+            "flames and mist",
+            &trans_layout,
+            boxes,
+            "fs_fx",
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            (false, Always),
+            both_sides,
+        );
+        // Fretwork's holes are cut out (`fs_fret` discards), which costs a pipeline its
+        // early depth test: apart, the rest of the scene keeps it.
+        let fret_pipe = make_scene(
+            "fretwork",
+            &scene_layout,
+            boxes,
+            "fs_fret",
+            None,
+            (true, Less),
+            (true, true),
+        );
+        let sky_pipe = make_scene("sky", &scene_layout, boxes, "fs_sky", None, (true, Less), solid);
 
         // Fragment shaders' textures and samplers.
         let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
@@ -859,7 +919,7 @@ impl Renderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&book_layout)],
             immediate_size: 0,
         });
-        let book_pipe = make_scene("books", &book_pl, boxes, "fs_book", None, (true, Less), true);
+        let book_pipe = make_scene("books", &book_pl, boxes, "fs_book", None, (true, Less), solid);
         let model_layouts = [
             wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<books::ModelVertex>() as u64,
@@ -875,7 +935,7 @@ impl Renderer {
             "fs_book",
             None,
             (true, Less),
-            true,
+            solid,
         );
         let book_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("book materials"),
@@ -1029,11 +1089,15 @@ impl Renderer {
 
         Self {
             static_batch: mesh::Batch::new(&device, "static", 1024),
+            static_fret: mesh::Batch::new(&device, "fretwork", 64),
+            dyn_fret: mesh::Batch::new(&device, "moving fretwork", 64),
+            static_sky: mesh::Batch::new(&device, "skylights", 16),
             text_buf: GrowBuf::new(&device, "lettering", 1024),
             dyn_batch: mesh::Batch::new(&device, "dynamic", 16384),
             dyn_books_buf: GrowBuf::new(&device, "dynamic books", 1024),
             trans_batch: mesh::Batch::new(&device, "trans", 16384),
             glass_batch: mesh::Batch::new(&device, "glass", 256),
+            fx_batch: mesh::Batch::new(&device, "flames and mist", 256),
             beam_buf: GrowBuf::new(&device, "beams", 64),
             split: Default::default(),
             held_buf: GrowBuf::new(&device, "held", 256),
@@ -1055,6 +1119,9 @@ impl Renderer {
             trans_pipe,
             beam_pipe,
             glass_pipe,
+            fx_pipe,
+            fret_pipe,
+            sky_pipe,
             text_pipe,
             text_bg,
             down_first_pipe,
@@ -1244,7 +1311,14 @@ impl Renderer {
     /// The library's fixed instances, and its own meshes (`mesh::LIBRARY` on).
     pub fn set_static(&mut self, insts: &[Inst], meshes: &[mesh::Mesh]) {
         self.meshes.set_library(&self.device, &self.queue, meshes);
-        self.static_batch.upload(&self.device, &self.queue, insts);
+        let fret = |i: &&Inst| i.kind == kind::FRET;
+        let sky = |i: &&Inst| i.kind == kind::GLASS && i.param == 1;
+        self.static_batch
+            .upload(&self.device, &self.queue, insts.iter().filter(|i| !fret(i) && !sky(i)));
+        self.static_fret
+            .upload(&self.device, &self.queue, insts.iter().filter(fret));
+        self.static_sky
+            .upload(&self.device, &self.queue, insts.iter().filter(sky));
     }
 
     /// The library's lettering.
@@ -1317,12 +1391,18 @@ impl Renderer {
         sort(f.dynamic, kind::BOOK, books, others);
         sort(f.trans, kind::SHAFT, beams, rest);
         self.dyn_books_buf.upload(&self.device, &self.queue, books);
-        self.dyn_batch.upload(&self.device, &self.queue, others.iter());
+        let fret = |i: &&Inst| i.kind == kind::FRET;
+        self.dyn_batch
+            .upload(&self.device, &self.queue, others.iter().filter(|i| !fret(i)));
+        self.dyn_fret
+            .upload(&self.device, &self.queue, others.iter().filter(fret));
         let clear = |i: &&Inst| i.kind == kind::CLEAR;
+        let fx = |i: &&Inst| matches!(i.kind, kind::FIRE | kind::MIST);
         self.trans_batch
-            .upload(&self.device, &self.queue, rest.iter().filter(|i| !clear(i)));
+            .upload(&self.device, &self.queue, rest.iter().filter(|i| !clear(i) && !fx(i)));
         self.glass_batch
             .upload(&self.device, &self.queue, rest.iter().filter(clear));
+        self.fx_batch.upload(&self.device, &self.queue, rest.iter().filter(fx));
         self.beam_buf.upload(&self.device, &self.queue, beams);
         self.held_buf.upload(&self.device, &self.queue, f.held);
         let m = &mut self.models;
@@ -1405,6 +1485,11 @@ impl Renderer {
             draw_boxes(&mut rp, &self.dyn_books_buf);
             rp.set_pipeline(&self.scene_pipe);
             self.meshes.draw(&mut rp, &self.dyn_batch);
+            rp.set_pipeline(&self.fret_pipe);
+            self.meshes.draw(&mut rp, &self.static_fret);
+            self.meshes.draw(&mut rp, &self.dyn_fret);
+            rp.set_pipeline(&self.sky_pipe);
+            self.meshes.draw(&mut rp, &self.static_sky);
             if self.text_buf.len > 0 {
                 rp.set_pipeline(&self.text_pipe);
                 rp.set_bind_group(1, &self.text_bg, &[]);
@@ -1443,6 +1528,10 @@ impl Renderer {
                 draw_boxes(&mut rp, &self.chunks[i].trans);
             }
             self.meshes.draw(&mut rp, &self.trans_batch);
+            // Before the glass, which may stand in front of them (a jar's cloud, a
+            // lamp's flame in its chimney).
+            rp.set_pipeline(&self.fx_pipe);
+            self.meshes.draw(&mut rp, &self.fx_batch);
             rp.set_pipeline(&self.glass_pipe);
             self.meshes.draw(&mut rp, &self.glass_batch);
             if self.beam_buf.len > 0 {
