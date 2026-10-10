@@ -612,9 +612,9 @@ fn lectern(lib: &mut Library, f: &RoomFrame, a: f32, words: bool) {
         let t = i as f32 / words.len() as f32;
         let p = desk
             + Vec3::new(
-                (t * 7.0).sin() * 0.22 * t + 0.05,
+                libm::sinf(t * 7.0) * 0.22 * t + 0.05,
                 0.12 + t * 1.5,
-                (t * 7.0).cos() * 0.15 * t,
+                libm::cosf(t * 7.0) * 0.15 * t,
             );
         // Each turned and tipped a little, but all toward the reader.
         let q = at.q * Quat::from_rotation_y(r.gen_range(-0.6..0.6)) * Quat::from_rotation_z(r.gen_range(-0.4..0.4));

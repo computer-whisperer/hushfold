@@ -90,7 +90,7 @@ impl Game {
                 let into = (Vec2::new(mid.x - r.door.x, mid.y - r.door.z)).normalize_or_zero();
                 let step = if self.dept_open(d) { 1.0 } else { -1.2 };
                 let at = r.door + Vec3::new(into.x, 0.0, into.y) * step;
-                (at, into.x.atan2(-into.y))
+                (at, libm::atan2f(into.x, -into.y))
             }
         };
         self.player.pos = at;

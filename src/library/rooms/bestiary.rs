@@ -115,7 +115,7 @@ fn cage(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) -> Vec<(Vec3, Vec3
     let lintel = |e: f32| frame.at(s * (MOUTH - 0.05), o + e * edge, 3.32);
     rod(lib, lintel(-1.0), lintel(1.0), 0.07, 0.07, kind::METAL, IRON);
     // The roof: ribs arched across, and bars along.
-    let arch = |x: f32, t: f32| frame.at(s * x, o - edge * t.cos(), top + 0.02 + 1.0 * t.sin());
+    let arch = |x: f32, t: f32| frame.at(s * x, o - edge * libm::cosf(t), top + 0.02 + 1.0 * libm::sinf(t));
     let steps = 6;
     for k in 0..5 {
         let x = MOUTH + 0.1 + k as f32 * (back + 0.02 - MOUTH - 0.1) / 4.0;
@@ -588,8 +588,8 @@ fn egg(lib: &mut Library, frame: &RoomFrame) {
     for k in 0..14 {
         let t = k as f32 / 14.0 * TAU;
         let r = rng.gen_range(0.25..0.36f32);
-        let p = c + Vec3::new(t.cos(), 0.0, t.sin()) * r + Vec3::Y * rng.gen_range(0.02..0.1f32);
-        let d = Vec3::new(-t.sin(), rng.gen_range(-0.2..0.2f32), t.cos()) * 0.22;
+        let p = c + Vec3::new(libm::cosf(t), 0.0, libm::sinf(t)) * r + Vec3::Y * rng.gen_range(0.02..0.1f32);
+        let d = Vec3::new(-libm::sinf(t), rng.gen_range(-0.2..0.2f32), libm::cosf(t)) * 0.22;
         rod(lib, p - d, p + d, 0.025, 0.025, kind::WOOD, [0.3, 0.22, 0.12, 1.0]);
     }
     let shell = [0.08, 0.26, 0.18, 0.35];

@@ -827,9 +827,9 @@ fn spinning_wheel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let segs = 14;
     for k in 0..segs {
         let th = 0.1 + k as f32 / segs as f32 * TAU;
-        let radial = frame.out() * th.cos() + Vec3::Y * th.sin();
+        let radial = frame.out() * libm::cosf(th) + Vec3::Y * libm::sinf(th);
         let rot = Quat::from_mat3(&Mat3::from_cols(radial, axis.cross(radial), axis));
-        let len = 2.0 * r * (TAU / segs as f32 * 0.5).tan() + 0.01;
+        let len = 2.0 * r * libm::tanf(TAU / segs as f32 * 0.5) + 0.01;
         lib.decor(Inst::new(
             hub + radial * r,
             rot,
@@ -873,9 +873,9 @@ fn barrel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let segs = 8;
     for k in 0..segs {
         let th = 0.2 + k as f32 / segs as f32 * TAU;
-        let radial = frame.across() * th.cos() + frame.out() * th.sin();
+        let radial = frame.across() * libm::cosf(th) + frame.out() * libm::sinf(th);
         let q = Quat::from_mat3(&Mat3::from_cols(radial, Vec3::Y, radial.cross(Vec3::Y)));
-        let stave = 2.0 * r * (TAU / segs as f32 * 0.5).tan() + 0.02;
+        let stave = 2.0 * r * libm::tanf(TAU / segs as f32 * 0.5) + 0.02;
         lib.decor(Inst::new(
             frame.at(a, o, 0.45) + radial * r,
             q,

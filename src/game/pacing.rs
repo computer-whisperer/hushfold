@@ -393,7 +393,7 @@ impl Bot {
             for (k, &b) in aside.iter().enumerate() {
                 self.moved_by.insert(b, "set aside");
                 let a = k as f32 * 2.4;
-                let from = self.pos + Vec3::new(a.cos() * 0.15, 1.0, a.sin() * 0.15);
+                let from = self.pos + Vec3::new(libm::cosf(a) * 0.15, 1.0, libm::sinf(a) * 0.15);
                 self.g.loose.throw(b, from, Vec3::ZERO, Quat::IDENTITY, Vec3::ZERO, 0.0);
             }
             self.t += 1.0;
@@ -618,7 +618,9 @@ impl Bot {
         let lv = g.lib.world.level_at(hub);
         for k in 0..8 {
             let a = k as f32 * std::f32::consts::TAU / 8.0;
-            let c = g.nav.standable_near(hub + Vec3::new(a.cos(), 0.0, a.sin()) * 3.0);
+            let c = g
+                .nav
+                .standable_near(hub + Vec3::new(libm::cosf(a), 0.0, libm::sinf(a)) * 3.0);
             if others.iter().any(|o| o.distance(c) < 4.0) || !g.nav.open_at(c) {
                 continue;
             }

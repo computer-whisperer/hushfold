@@ -500,7 +500,12 @@ bells and glints where something magical happens. Everything is synthesised;
   toss charging.
 
 ## Persistence
-Deterministic world from a seed; save = seed + shelved/held/in-flight ids +
+Deterministic world from a seed, the same on every platform: world code does its
+float maths with the `libm` crate (and glam with its `libm` feature), not the
+platform's maths library, which rounds sines and powers differently in the last
+bit on Windows and from one glibc to the next; the Great Library's heaps settled
+those bits into books centimetres apart. `clippy.toml` forbids the std calls
+outside audio. Save = seed + shelved/held/in-flight ids +
 lumens + upgrade levels by name + the poses of loose books that moved from where
 they were generated (books in the air are saved where they are and fall on
 load), JSON in $XDG_DATA_HOME/hushfold/save.json (%APPDATA% on Windows),
@@ -511,7 +516,8 @@ generation starts fresh, kept aside as *.old.json, as does one in another save
 format (`SAVE_VERSION`); nothing older is migrated. Each generation is bumped
 whenever where its books go changes. The Hall's (pinned by
 `hall_generates_as_before`) was 0, as 0.1.x saves have it, until the titles were
-rewritten: 1. The Great Library's was 2 after the visual pass, 3 after the
-titles. Titles are drawn from the same random values as before, so every series
+rewritten: 1 (kept when the maths moved to libm, which moved 176 loose books by
+at most 3 µm). The Great Library's was 2 after the visual pass, 3 after the
+titles, 4 after the move to libm (46 loose books moved more than a centimetre). Titles are drawn from the same random values as before, so every series
 keeps its volumes, colour and sizes; only the alphabetical order, and so the
 shelving, changed (the Great Library's shelves now fit one more series).

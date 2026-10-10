@@ -554,7 +554,7 @@ fn press_table(lib: &mut Library, frame: &RoomFrame, o: f32, rng: &mut StdRng) {
     let n = 12;
     for k in 0..n {
         let (t0, t1) = (k as f32 / n as f32 * TAU, (k + 1) as f32 / n as f32 * TAU);
-        let p = |t: f32| lens + Vec3::new(t.cos(), 0.0, t.sin()) * 0.07;
+        let p = |t: f32| lens + Vec3::new(libm::cosf(t), 0.0, libm::sinf(t)) * 0.07;
         rod(lib, p(t0), p(t1), 0.012, 0.012, kind::METAL, brass);
     }
     rod(

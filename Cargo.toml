@@ -14,7 +14,9 @@ winit = "0.30.13"
 egui = "0.34"
 egui-wgpu = "0.34"
 egui-winit = "0.34"
-glam = { version = "0.30", features = ["bytemuck"] }
+# libm: glam's sines and roots come out the same on every platform, as ours do.
+glam = { version = "0.30", features = ["bytemuck", "libm"] }
+libm = "0.2"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 rand = "0.8"

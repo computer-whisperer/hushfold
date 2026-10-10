@@ -202,7 +202,7 @@ impl Library {
         for (r, y, n, len) in [(1.3f32, 0.0f32, 12, 0.72f32), (0.7, 0.55, 8, 0.58)] {
             for k in 0..n {
                 let a = (k as f32 + 0.5) / n as f32 * TAU;
-                let dir = Vec3::new(a.cos(), 0.0, a.sin());
+                let dir = Vec3::new(libm::cosf(a), 0.0, libm::sinf(a));
                 let p = ch + dir * r + Vec3::Y * y;
                 self.decor(Inst::new(
                     p,
@@ -227,7 +227,7 @@ impl Library {
                 if r > 1.0 {
                     // A crystal drop between this candle and the next.
                     let b = (k as f32 + 1.0) / n as f32 * TAU;
-                    let q = ch + Vec3::new(b.cos(), 0.0, b.sin()) * (r * (TAU / n as f32 * 0.5).cos());
+                    let q = ch + Vec3::new(libm::cosf(b), 0.0, libm::sinf(b)) * (r * libm::cosf(TAU / n as f32 * 0.5));
                     self.decor(Inst::new(
                         q - Vec3::Y * 0.12,
                         Quat::from_rotation_y(b + TAU / 8.0),
@@ -264,7 +264,7 @@ impl Library {
         for k in 0..3 {
             let a = k as f32 / 3.0 * TAU;
             let top = ch + Vec3::Y * 1.4;
-            let bottom = ch + Vec3::new(a.cos(), 0.0, a.sin()) * 1.25;
+            let bottom = ch + Vec3::new(libm::cosf(a), 0.0, libm::sinf(a)) * 1.25;
             let d = top - bottom;
             self.decor(Inst::new(
                 (top + bottom) * 0.5,

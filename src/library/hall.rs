@@ -216,7 +216,7 @@ impl Library {
             let rise = GIRDER_Y - 0.05 - SPRINGING;
             let r = (span * span * 0.25 + rise * rise) / (2.0 * rise);
             let centre = Vec3::new(sx, GIRDER_Y - 0.05 - r, (z0 + z1) * 0.5);
-            let half = (span * 0.5 / r).asin();
+            let half = libm::asinf(span * 0.5 / r);
             let n = if span > 10.0 { 14 } else { 8 };
             self.arc(
                 centre,
@@ -255,10 +255,10 @@ impl Library {
         let step = (a1 - a0) / n as f32;
         let normal = u.cross(v);
         // Long enough that neighbours meet at the outer edge.
-        let len = 2.0 * (r + w * 0.5) * (step * 0.5).abs().tan();
+        let len = 2.0 * (r + w * 0.5) * libm::tanf((step * 0.5).abs());
         for k in 0..n {
             let a = a0 + (k as f32 + 0.5) * step;
-            let radial = u * a.cos() + v * a.sin();
+            let radial = u * libm::cosf(a) + v * libm::sinf(a);
             let rot = Quat::from_mat3(&Mat3::from_cols(radial, normal, radial.cross(normal)));
             self.decor(Inst::new(c + radial * r, rot, Vec3::new(w, d, len), kind, color, 0));
         }
@@ -278,7 +278,7 @@ impl Library {
             _ => 8,
         };
         let step = PI / n as f32;
-        let w = 2.0 * r * (step * 0.5).sin() * 1.08;
+        let w = 2.0 * r * libm::sinf(step * 0.5) * 1.08;
         for k in 0..n {
             let spin = (k as f32 + 0.5) * step;
             self.mounted(m, off, Vec3::new(2.0 * r, w, d), spin, kind, color);
@@ -427,7 +427,7 @@ impl Library {
                 let mut pts = vec![Vec2::new(r.gen_range(x0..x1), r.gen_range(z0..z1))];
                 for _ in 1..r.gen_range(4..7) {
                     let (p, a) = (pts[pts.len() - 1], r.gen_range(0.0..TAU));
-                    let q = (p + Vec2::new(a.cos(), a.sin()) * r.gen_range(0.5..0.9))
+                    let q = (p + Vec2::new(libm::cosf(a), libm::sinf(a)) * r.gen_range(0.5..0.9))
                         .clamp(Vec2::new(x0, z0), Vec2::new(x1, z1));
                     if q.distance(p) > 0.3 {
                         pts.push(q);
@@ -448,7 +448,7 @@ impl Library {
                 for w in pts.windows(2) {
                     let d = w[1] - w[0];
                     let mid = (w[0] + w[1]) * 0.5;
-                    let rot = Quat::from_rotation_y((-d.y).atan2(d.x));
+                    let rot = Quat::from_rotation_y(libm::atan2f(-d.y, d.x));
                     let line = Vec3::new(d.length() - 0.12, 0.004, 0.018);
                     self.decor(Inst::new(
                         Vec3::new(mid.x, y + 0.001, mid.y),
@@ -607,7 +607,7 @@ impl Library {
                     let mid = (p + q) * 0.5;
                     let pleat = Inst::new(
                         m.at(Vec3::new(mid.x, mid.y, out)),
-                        m.rot(d.y.atan2(d.x)) * Quat::from_rotation_x(fold),
+                        m.rot(libm::atan2f(d.y, d.x)) * Quat::from_rotation_x(fold),
                         Vec3::new(d.length() + 0.04, w, 0.03),
                         kind::CLOTH,
                         velvet,
@@ -815,7 +815,7 @@ impl Library {
         let ink = rgba([0.17, 0.2, 0.18]);
         for k in 0..16 {
             let a = k as f32 * TAU / 16.0 + 0.02;
-            let d = Vec2::new(a.cos(), a.sin());
+            let d = Vec2::new(libm::cosf(a), libm::sinf(a));
             let reach = |p: f32, dir: f32, c: f32, half: f32| {
                 if dir.abs() < 1e-4 {
                     f32::MAX
@@ -917,7 +917,7 @@ impl Library {
         for s in [-1.0f32, 1.0] {
             let foot = Vec3::new(s * (w * 0.5 - 0.1), y + h * 0.5 + 0.06, 0.05);
             let d = hook - foot;
-            let spin = d.y.atan2(d.x);
+            let spin = libm::atan2f(d.y, d.x);
             let cord = Vec3::new(d.length(), 0.02, 0.02);
             self.mounted(m, (hook + foot) * 0.5, cord, spin, kind::CLOTH, rgba([0.35, 0.25, 0.1]));
         }
@@ -948,7 +948,7 @@ impl Library {
         for k in 0..12 {
             let a = FRAC_PI_2 - k as f32 * TAU / 12.0;
             let (len, wid) = if k % 3 == 0 { (0.24, 0.07) } else { (0.15, 0.04) };
-            let at = centre + Vec3::new(a.cos(), a.sin(), 0.0) * 1.0 + Vec3::Z * 0.12;
+            let at = centre + Vec3::new(libm::cosf(a), libm::sinf(a), 0.0) * 1.0 + Vec3::Z * 0.12;
             self.mounted(m, at, Vec3::new(len, wid, 0.01), a, kind::METAL, ink);
         }
         // Hands: the hour just short of twelve, the minute at ten to.
@@ -957,7 +957,7 @@ impl Library {
             (50.0 / 60.0, 1.0, 0.05, 0.14),
         ] {
             let a = FRAC_PI_2 - turn * TAU;
-            let at = centre + Vec3::new(a.cos(), a.sin(), 0.0) * len * 0.4 + Vec3::Z * z;
+            let at = centre + Vec3::new(libm::cosf(a), libm::sinf(a), 0.0) * len * 0.4 + Vec3::Z * z;
             self.mounted(m, at, Vec3::new(len, wid, 0.01), a, kind::METAL, ink);
         }
         self.disc(m, centre + Vec3::Z * 0.15, (0.07, 0.02), kind::METAL, gilt);
@@ -1184,7 +1184,7 @@ impl Library {
         }
         for k in 0..7 {
             let x = -0.45 + k as f32 * 0.15;
-            let h = 0.25 + 0.2 * ((k as f32 * 1.7).sin() * 0.5 + 0.5);
+            let h = 0.25 + 0.2 * (libm::sinf(k as f32 * 1.7) * 0.5 + 0.5);
             let mut flame = Inst::aabox(
                 fc + Vec3::new(x, 0.25 + h * 0.5, -0.75),
                 Vec3::new(0.09, h, 0.09),
@@ -1355,7 +1355,7 @@ impl Library {
             rgba(CREAM),
         );
         for (a, len) in [(1.9f32, 0.09f32), (0.5, 0.12)] {
-            let at = Vec3::new(0.0, 0.24, 0.022) + Vec3::new(a.cos(), a.sin(), 0.0) * len * 0.45;
+            let at = Vec3::new(0.0, 0.24, 0.022) + Vec3::new(libm::cosf(a), libm::sinf(a), 0.0) * len * 0.45;
             self.mounted(mantel, at, Vec3::new(len, 0.012, 0.004), a, kind::METAL, iron);
         }
         // The emblem over the mantel: a crescent moon over an open book, gilt on a
@@ -1467,7 +1467,7 @@ impl Library {
         );
         for k in 0..4 {
             let a = FRAC_PI_4 + k as f32 * FRAC_PI_2;
-            let d = Vec3::new(a.cos(), 0.0, a.sin());
+            let d = Vec3::new(libm::cosf(a), 0.0, libm::sinf(a));
             self.beam(
                 c + d * 0.3 + Vec3::Y * 0.08,
                 o + d * 0.52 - Vec3::Y * 0.02,
@@ -1488,7 +1488,7 @@ impl Library {
             (kind::METAL, brass),
         );
         let lat = 0.9f32;
-        let pole = Vec3::Y * lat.sin() - along * lat.cos();
+        let pole = Vec3::Y * libm::sinf(lat) - along * libm::cosf(lat);
         let across = pole.cross(x).normalize();
         self.arc(
             o,
@@ -1607,7 +1607,7 @@ impl Library {
         for k in 0..11 {
             let up = 0.1 + k as f32 * 0.07;
             let a = k as f32 * 2.4;
-            let at = book + Vec3::new(a.cos() * 0.14, up, a.sin() * 0.1);
+            let at = book + Vec3::new(libm::cosf(a) * 0.14, up, libm::sinf(a) * 0.1);
             let s = r.gen_range(0.012..0.022);
             let rot = Quat::from_rotation_y(a) * Quat::from_rotation_x(FRAC_PI_4);
             let glow = r.gen_range(1.5..3.0) * (1.0 - k as f32 * 0.06);

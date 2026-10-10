@@ -68,7 +68,7 @@ fn wading(depth: f32) -> f32 {
 /// FOV never drops below `v_deg` × 85/70 (85° at the default 70°).
 fn vfov(aspect: f32, v_deg: f32) -> f32 {
     let min_h = (v_deg * 85.0 / 70.0).to_radians();
-    let from_h = 2.0 * ((min_h * 0.5).tan() / aspect).atan();
+    let from_h = 2.0 * libm::atanf(libm::tanf(min_h * 0.5) / aspect);
     v_deg.to_radians().max(from_h).min(110f32.to_radians())
 }
 
@@ -507,17 +507,17 @@ pub struct Player {
 
 impl Player {
     pub fn eye(&self) -> Vec3 {
-        self.pos + Vec3::Y * (EYE + (self.bob * 2.0).sin().abs() * 0.025)
+        self.pos + Vec3::Y * (EYE + libm::sinf(self.bob * 2.0).abs() * 0.025)
     }
     pub fn forward(&self) -> Vec3 {
         Vec3::new(
-            self.yaw.sin() * self.pitch.cos(),
-            self.pitch.sin(),
-            -self.yaw.cos() * self.pitch.cos(),
+            libm::sinf(self.yaw) * libm::cosf(self.pitch),
+            libm::sinf(self.pitch),
+            -libm::cosf(self.yaw) * libm::cosf(self.pitch),
         )
     }
     pub fn right(&self) -> Vec3 {
-        Vec3::new(self.yaw.cos(), 0.0, self.yaw.sin())
+        Vec3::new(libm::cosf(self.yaw), 0.0, libm::sinf(self.yaw))
     }
 }
 
@@ -528,11 +528,12 @@ const SAVE_VERSION: u32 = 2;
 /// Which generation of its library a save was made in: saves name books by index,
 /// so one made in another generation would put the wrong books on the shelves. The
 /// Hall's is pinned (`hall_generates_as_before`). Bump either whenever where its
-/// books go changes.
+/// books go changes (which book has which index, its slot, or a visible move of
+/// where loose books lie).
 fn generation(layout: Layout) -> u32 {
     match layout {
         Layout::Hall => 1,
-        Layout::Great => 3,
+        Layout::Great => 4,
     }
 }
 
@@ -1007,7 +1008,7 @@ impl Game {
             } else {
                 0.3 * self.category_shelved[c] as f32 / self.lib.category_books[c].max(1) as f32
             };
-            self.lantern_glow[c] += (target - self.lantern_glow[c]) * (1.0 - (-dt * 1.5).exp());
+            self.lantern_glow[c] += (target - self.lantern_glow[c]) * (1.0 - libm::expf(-dt * 1.5));
         }
         for (f, &open) in self.gate_fade.iter_mut().zip(self.lib.world.gates_open()) {
             if open {
@@ -1051,7 +1052,7 @@ impl Game {
         let (yaw, pitch) = (self.player.yaw + input.look.x, self.player.pitch - input.look.y);
         self.player.yaw = yaw;
         self.player.pitch = pitch.clamp(-1.45, 1.45);
-        let fwd = Vec3::new(yaw.sin(), 0.0, -yaw.cos());
+        let fwd = Vec3::new(libm::sinf(yaw), 0.0, -libm::cosf(yaw));
         let right = self.player.right();
         let mut wish = fwd * input.forward + right * input.strafe;
         if wish.length_squared() > 1.0 {
@@ -1068,7 +1069,7 @@ impl Game {
         let in_heap = here > HEAP_WALL || (self.player.in_heap && here > HEAP_WALL - HEAP_CLEAR);
         let base = [4.0, 5.5, 7.0][self.upg[upg_index(Upg::Slippers)] as usize] * wade;
         let speed = if input.sprint { base * (1.0 + 0.6 * wade) } else { base };
-        let k = 1.0 - (-dt * 10.0).exp();
+        let k = 1.0 - libm::expf(-dt * 10.0);
         let walk = Vec3::new(self.player.vel.x, 0.0, self.player.vel.z).lerp(wish * speed, k);
         let lv = &world.levels[level];
         let (lo, hi) = (lv.min + BODY_R + 0.1, lv.max - BODY_R - 0.1);
@@ -1549,7 +1550,7 @@ impl Game {
     #[cfg(test)]
     pub(super) fn aim_toss(&mut self, target: Vec3) -> f32 {
         let flat = Vec2::new(target.x - self.player.pos.x, target.z - self.player.pos.z);
-        self.player.yaw = flat.x.atan2(-flat.y);
+        self.player.yaw = libm::atan2f(flat.x, -flat.y);
         let mut best = (f32::INFINITY, 0.0, 0.0);
         let mut arc = Vec::new();
         for pi in 0..16 {
@@ -1607,7 +1608,7 @@ impl Game {
                 continue;
             }
             let info = &self.lib.books[b as usize];
-            let jitter = ((b as f32 * 12.9898).sin() * 43758.5).fract() - 0.5;
+            let jitter = (libm::sinf(b as f32 * 12.9898) * 43758.5).fract() - 0.5;
             let mut p = base + u * (y + info.size.x * 0.5) + r * (jitter * 0.03);
             if i == self.active {
                 p += -r * 0.06 - f * 0.02;
@@ -1666,13 +1667,13 @@ impl Game {
                 t * t * (3.0 - 2.0 * t)
             };
             self.pos[b] = match f.dest {
-                Dest::Hand => f.from_pos.lerp(to_pos, e) + Vec3::Y * 0.35 * (PI * e).sin(),
+                Dest::Hand => f.from_pos.lerp(to_pos, e) + Vec3::Y * 0.35 * libm::sinf(PI * e),
                 // A cubic curve with both inner points at the front of the slot: the
                 // book lines up there, then goes in straight.
                 Dest::Shelf => {
                     let front = self.lib.slot_front(f.book);
                     let (a, c) = (f.from_pos.lerp(front, e), front.lerp(to_pos, e));
-                    a.lerp(front, e).lerp(front.lerp(c, e), e) + Vec3::Y * 0.25 * (PI * e).sin()
+                    a.lerp(front, e).lerp(front.lerp(c, e), e) + Vec3::Y * 0.25 * libm::sinf(PI * e)
                 }
             };
             self.rot[b] = f.from_rot.slerp(to_rot, e);
@@ -1894,8 +1895,8 @@ impl Game {
     fn look_at(&mut self, from: Vec3, target: Vec3) {
         self.player.pos = from;
         let d = (target - self.player.eye()).normalize();
-        self.player.yaw = d.x.atan2(-d.z);
-        self.player.pitch = d.y.asin();
+        self.player.yaw = libm::atan2f(d.x, -d.z);
+        self.player.pitch = libm::asinf(d.y);
     }
 
     /// Stand beside the nearest reachable pile and look at its top.
@@ -2034,7 +2035,8 @@ impl Game {
             match l.kind {
                 LightKind::Static => push(&mut list, l.pos, l.radius, l.color, l.intensity),
                 LightKind::Flicker => {
-                    let f = 0.88 + 0.08 * (t * 7.3 + li as f32 * 1.7).sin() + 0.05 * (t * 13.1 + li as f32).sin();
+                    let f =
+                        0.88 + 0.08 * libm::sinf(t * 7.3 + li as f32 * 1.7) + 0.05 * libm::sinf(t * 13.1 + li as f32);
                     push(&mut list, l.pos, l.radius, l.color, l.intensity * f);
                 }
                 LightKind::Lantern(c) => {
@@ -2239,7 +2241,7 @@ impl Game {
                 let r = 0.25 + 0.35 * self.toss_charge;
                 for k in 0..16 {
                     let a = k as f32 / 16.0 * std::f32::consts::TAU + self.time * 0.6;
-                    let p = land + Vec3::new(a.cos() * r, 0.03, a.sin() * r);
+                    let p = land + Vec3::new(libm::cosf(a) * r, 0.03, libm::sinf(a) * r);
                     dyn_insts.push(Inst::new(
                         p,
                         Quat::from_rotation_y(-a),
@@ -2262,7 +2264,7 @@ impl Game {
             let fade = (1.0 - t / 2.0).max(0.0);
             for k in 0..n {
                 let a = k as f32 / n as f32 * std::f32::consts::TAU;
-                let p = self.echo_from + Vec3::new(a.cos() * r, 0.05, a.sin() * r);
+                let p = self.echo_from + Vec3::new(libm::cosf(a) * r, 0.05, libm::sinf(a) * r);
                 dyn_insts.push(Inst::new(
                     p,
                     Quat::from_rotation_y(-a),
@@ -2285,7 +2287,7 @@ impl Game {
             let n = (r * 30.0).clamp(16.0, 96.0) as usize;
             for k in 0..n {
                 let a = k as f32 / n as f32 * std::f32::consts::TAU + self.time * 0.6;
-                let xz = Vec2::new(s.at.x + a.cos() * r, s.at.z + a.sin() * r);
+                let xz = Vec2::new(s.at.x + libm::cosf(a) * r, s.at.z + libm::sinf(a) * r);
                 // On the pile's surface, or level with the aim where that falls away.
                 let h = self.loose.height_at(s.lv, xz);
                 let y = if (h - s.at.y).abs() < 1.0 { h } else { s.at.y };
@@ -2303,7 +2305,12 @@ impl Game {
         let eye = self.player.eye();
         for (i, &(base, ph)) in self.motes.iter().enumerate() {
             let t = self.time * 0.05 + ph;
-            let mut p = base + Vec3::new((t * 1.3).sin() * 0.8, (t * 0.7).sin() * 0.6, (t * 1.1).cos() * 0.8);
+            let mut p = base
+                + Vec3::new(
+                    libm::sinf(t * 1.3) * 0.8,
+                    libm::sinf(t * 0.7) * 0.6,
+                    libm::cosf(t * 1.1) * 0.8,
+                );
             // Motes stay put in the air; those left behind wrap round into a box about
             // the player, 24 m across and from just under their feet to 4.2 m over
             // their eyes, fading in at its top.
@@ -2312,7 +2319,7 @@ impl Game {
             p.z = eye.z + (rel.z + 12.0).rem_euclid(24.0) - 12.0;
             p.y = eye.y - 1.8 + (rel.y + 1.8).rem_euclid(6.0);
             let top = (eye.y + 4.2 - p.y).min(1.0);
-            let tw = 0.5 + 0.5 * (self.time * 0.8 + i as f32).sin();
+            let tw = 0.5 + 0.5 * libm::sinf(self.time * 0.8 + i as f32);
             dyn_insts.push(Inst::new(
                 p,
                 Quat::IDENTITY,
@@ -2693,8 +2700,10 @@ mod tests {
         }
         assert_eq!(g.lib.books.len(), 11690);
         // Generation 1, since the titles were rewritten: the same books, reshelved in the
-        // new order. A change here needs a new generation.
-        assert_eq!(h, 16481460485559855951, "hall fingerprint");
+        // new order. Retaken when world maths moved to libm (the same on every
+        // platform): every book and slot as it was, 176 loose books moved by at most
+        // 3 µm, so still generation 1. Any other change needs a new generation.
+        assert_eq!(h, 11306621379046694680, "hall fingerprint");
     }
 
     /// Every slot's approach (the aisle in front of it) is a walk away from the start,
@@ -3216,7 +3225,7 @@ mod tests {
             g.player.vel = Vec3::ZERO;
             g.player.grounded = true;
             let to = c - start;
-            g.player.yaw = to.x.atan2(-to.z);
+            g.player.yaw = libm::atan2f(to.x, -to.z);
             let hop = Input {
                 forward: 1.0,
                 jump: true,
@@ -3376,7 +3385,7 @@ mod tests {
         // Heading for the middle from every side.
         for k in 0..8 {
             let yaw = k as f32 * PI / 4.0;
-            let from = Vec3::new(yaw.sin(), 0.0, -yaw.cos()) * -6.0;
+            let from = Vec3::new(libm::sinf(yaw), 0.0, -libm::cosf(yaw)) * -6.0;
             stand(&mut g, from, yaw);
             let mut most = 0.0f32;
             for _ in 0..60 * 4 {

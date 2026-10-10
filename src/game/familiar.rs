@@ -209,7 +209,7 @@ impl Familiar {
     /// game time `t`: `speed` is how fast familiars fly, `(eye, yaw)` the player's.
     fn animate(&mut self, i: usize, dt: f32, speed: f32, (eye, yaw): (Vec3, f32), t: f32) {
         let (cruise, (short, long)) = self.role.wingbeat();
-        let ease = |rate: f32| 1.0 - (-dt * rate).exp();
+        let ease = |rate: f32| 1.0 - libm::expf(-dt * rate);
         let v = self.vel;
         let l = &mut self.look;
         let accel = (v - l.was) / dt.max(1e-4);
@@ -231,11 +231,11 @@ impl Familiar {
         let target = if riding {
             yaw
         } else if level > 0.3 {
-            v.x.atan2(-v.z)
+            libm::atan2f(v.x, -v.z)
         } else if perched {
             let to = eye - self.pos;
             if to.length() < 8.0 {
-                to.x.atan2(-to.z) + if hash(i, 0) < 0.5 { 0.9 } else { -0.9 }
+                libm::atan2f(to.x, -to.z) + if hash(i, 0) < 0.5 { 0.9 } else { -0.9 }
             } else {
                 hash(i, (t / 6.0) as u32) * TAU
             }
@@ -262,7 +262,7 @@ impl Familiar {
         let pitch = if hovering {
             0.3
         } else if flying {
-            v.y.atan2(level) * 0.6 + 0.35 * flare
+            libm::atan2f(v.y, level) * 0.6 + 0.35 * flare
         } else {
             0.0
         };
@@ -386,9 +386,9 @@ impl Look {
 fn stroke(phase: f32) -> f32 {
     let p = phase.rem_euclid(1.0);
     if p < DOWNSTROKE {
-        (PI * p / DOWNSTROKE).cos()
+        libm::cosf(PI * p / DOWNSTROKE)
     } else {
-        -(PI * (p - DOWNSTROKE) / (1.0 - DOWNSTROKE)).cos()
+        -libm::cosf(PI * (p - DOWNSTROKE) / (1.0 - DOWNSTROKE))
     }
 }
 
@@ -707,8 +707,8 @@ impl Game {
                 let f = &mut self.familiars[i];
                 let side = if riders % 2 == 0 { 1.0 } else { -1.0 };
                 let slot = eye + right * side * (0.55 + 0.2 * (riders / 2) as f32) - fwd * 0.25 + Vec3::Y * 0.12;
-                let bob = Vec3::Y * (f.phase * 0.25).sin() * 0.04;
-                f.pos = f.pos.lerp(slot + bob, 1.0 - (-dt * 8.0).exp());
+                let bob = Vec3::Y * libm::sinf(f.phase * 0.25) * 0.04;
+                f.pos = f.pos.lerp(slot + bob, 1.0 - libm::expf(-dt * 8.0));
                 f.vel = Vec3::ZERO;
                 riders += 1;
                 continue;
@@ -742,7 +742,7 @@ impl Game {
                 let last = f.path.len() == 1;
                 let slow = if last { (to.length() / 0.8).min(1.0) } else { 1.0 };
                 let desired = to.normalize_or_zero() * speed * slow.max(0.15);
-                f.vel = f.vel.lerp(desired, 1.0 - (-dt * 10.0).exp());
+                f.vel = f.vel.lerp(desired, 1.0 - libm::expf(-dt * 10.0));
                 f.pos += f.vel * dt;
                 let d = f.pos.distance(next);
                 let after = f.path.len().checked_sub(2).map(|k| f.path[k]);
@@ -857,7 +857,7 @@ impl Game {
     fn carry_dangle(&mut self, i: usize) {
         let f = &self.familiars[i];
         for (k, &b) in f.carry.iter().enumerate() {
-            let sway = (f.phase * 0.5 + k as f32).sin() * 0.1;
+            let sway = libm::sinf(f.phase * 0.5 + k as f32) * 0.1;
             self.pos[b as usize] = f.pos - Vec3::Y * (0.18 + k as f32 * 0.05);
             self.rot[b as usize] =
                 Quat::from_rotation_y(f.phase * 0.05 + k as f32) * Quat::from_rotation_z(PI * 0.5 + sway);
@@ -932,7 +932,7 @@ impl Game {
         let t = self.time;
         let spin = Quat::from_rotation_y(t * 0.8) * Quat::from_rotation_x(FRAC_PI_4) * Quat::from_rotation_z(FRAC_PI_4);
         out.push(Inst::new(
-            at + Vec3::Y * (TRAY + 0.36 + 0.02 * (t * 1.3).sin()),
+            at + Vec3::Y * (TRAY + 0.36 + 0.02 * libm::sinf(t * 1.3)),
             spin,
             Vec3::splat(0.035),
             kind::EMISSIVE,
@@ -1000,7 +1000,7 @@ mod tests {
         g.loose.take(books);
         for (k, &b) in books.iter().enumerate() {
             let a = k as f32 * 2.4;
-            let p = at + Vec3::new(a.cos(), 0.0, a.sin()) * 0.5 + Vec3::Y * 0.8;
+            let p = at + Vec3::new(libm::cosf(a), 0.0, libm::sinf(a)) * 0.5 + Vec3::Y * 0.8;
             g.loose.throw(b, p, Vec3::ZERO, Quat::IDENTITY, Vec3::ZERO, 0.0);
         }
     }
@@ -1186,7 +1186,7 @@ mod tests {
         assert!(g.familiars[1].post.is_none());
         // Let it settle on its perch, then look at it and take it back.
         run(&mut g, 3.0);
-        g.player.pitch = ((g.familiars[0].pos.y - g.player.eye().y) / at.distance(g.player.pos)).atan();
+        g.player.pitch = libm::atanf((g.familiars[0].pos.y - g.player.eye().y) / at.distance(g.player.pos));
         g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
         assert_eq!(g.aim, Aim::Familiar(0));
         g.update(1.0 / 60.0, &g_key, &mut audio, true);

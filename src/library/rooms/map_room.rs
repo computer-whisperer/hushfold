@@ -277,7 +277,7 @@ fn wall_map(lib: &mut Library, at: Spot, (w, h): (f32, f32), y: f32, seed: u64) 
             .map(|i| {
                 let t = i as f32 / n as f32 * TAU;
                 let k = r.gen_range(0.65..1.15);
-                Vec2::new(cx + t.cos() * rad.x * k, cy + t.sin() * rad.y * k)
+                Vec2::new(cx + libm::cosf(t) * rad.x * k, cy + libm::sinf(t) * rad.y * k)
             })
             .collect();
         for i in 0..n {
@@ -307,7 +307,7 @@ fn stroke(lib: &mut Library, at: &Spot, p: Vec2, q: Vec2, z: f32, ink: [f32; 4])
         lib,
         Vec3::new(mid.x, mid.y, z),
         Vec3::new(d.length() + 0.012, 0.012, 0.004),
-        Quat::from_rotation_z(d.y.atan2(d.x)),
+        Quat::from_rotation_z(libm::atan2f(d.y, d.x)),
         kind::PLAIN,
         ink,
     );
@@ -522,7 +522,7 @@ fn compass_rose(lib: &mut Library, f: &RoomFrame) {
             let t = k as f32 / n as f32 * TAU;
             spot.part(
                 lib,
-                Vec3::new(t.cos() * r, y * 0.5, t.sin() * r),
+                Vec3::new(libm::cosf(t) * r, y * 0.5, libm::sinf(t) * r),
                 Vec3::new(0.05, y, len),
                 Quat::from_rotation_y(-t),
                 kind::METAL,
@@ -534,7 +534,7 @@ fn compass_rose(lib: &mut Library, f: &RoomFrame) {
         let t = k as f32 / 8.0 * TAU;
         let main = k % 2 == 0;
         let (len, half) = if main { (3.3f32, 0.34f32) } else { (2.3, 0.22) };
-        let dir = Vec2::new(t.cos(), t.sin());
+        let dir = Vec2::new(libm::cosf(t), libm::sinf(t));
         let side = Vec2::new(-dir.y, dir.x);
         let tip = dir * len;
         let foot = dir * 0.95;
@@ -555,7 +555,7 @@ fn line_on_floor(lib: &mut Library, spot: &Spot, p: Vec2, q: Vec2, w: f32, h: f3
         lib,
         Vec3::new(m.x, h * 0.5, m.y),
         Vec3::new(d.length(), h, w),
-        Quat::from_rotation_y(-d.y.atan2(d.x)),
+        Quat::from_rotation_y(-libm::atan2f(d.y, d.x)),
         kind::METAL,
         BRASS_RGBA,
     );
@@ -608,7 +608,7 @@ fn globe(lib: &mut Library, f: &RoomFrame) {
         let rr = 0.98;
         spot.part(
             lib,
-            Vec3::new(t.cos() * rr, hc, t.sin() * rr),
+            Vec3::new(libm::cosf(t) * rr, hc, libm::sinf(t) * rr),
             Vec3::new(0.13, 0.035, TAU * rr / n as f32 + 0.01),
             Quat::from_rotation_y(-t),
             kind::METAL,
@@ -623,7 +623,7 @@ fn globe(lib: &mut Library, f: &RoomFrame) {
         let rr = r + 0.13;
         spot.part(
             lib,
-            centre + tilt * Vec3::new(t.cos() * rr, t.sin() * rr, 0.0),
+            centre + tilt * Vec3::new(libm::cosf(t) * rr, libm::sinf(t) * rr, 0.0),
             Vec3::new(0.045, TAU * rr / n as f32 + 0.01, 0.06),
             tilt * Quat::from_rotation_z(t),
             kind::METAL,
@@ -864,7 +864,7 @@ fn flat_stroke(lib: &mut Library, chart: &Spot, p: Vec2, q: Vec2, y: f32, ink: [
         lib,
         Vec3::new(m.x, y, m.y),
         Vec3::new(d.length() + 0.012, 0.003, 0.014),
-        Quat::from_rotation_y(-d.y.atan2(d.x)),
+        Quat::from_rotation_y(-libm::atan2f(d.y, d.x)),
         kind::PLAIN,
         ink,
     );

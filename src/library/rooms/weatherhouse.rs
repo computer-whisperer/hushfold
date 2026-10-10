@@ -218,7 +218,7 @@ fn near_wall(lib: &mut Library, frame: &RoomFrame) {
             let segs = 12;
             let at = |k: usize| {
                 let t = k as f32 / segs as f32 * TAU;
-                (cu + r * t.cos(), cv + r * 0.75 * t.sin())
+                (cu + r * libm::cosf(t), cv + r * 0.75 * libm::sinf(t))
             };
             for k in 0..segs {
                 let (p, q) = (at(k), at(k + 1));
@@ -233,8 +233,8 @@ fn near_wall(lib: &mut Library, frame: &RoomFrame) {
     for k in 0..7 {
         let u = -1.5 + k as f32 * 0.45;
         let (p, q) = (
-            sheet(u, -0.75 + 0.18 * (u * 1.3).sin()),
-            sheet(u + 0.45, -0.75 + 0.18 * ((u + 0.45) * 1.3).sin()),
+            sheet(u, -0.75 + 0.18 * libm::sinf(u * 1.3)),
+            sheet(u + 0.45, -0.75 + 0.18 * libm::sinf((u + 0.45) * 1.3)),
         );
         rod_flat(lib, p, q, n, 0.016, rgba([0.2, 0.25, 0.6], 1.0));
         let mid = (p + q) * 0.5 + Vec3::Y * 0.05;
@@ -343,10 +343,10 @@ fn disc(lib: &mut Library, c: Vec3, n: Vec3, r: f32, t: f32, kind: u32, col: [f3
     let step = TAU / segs as f32;
     for k in 0..segs {
         let th = 0.05 + k as f32 * step;
-        let radial = side * th.cos() + Vec3::Y * th.sin();
+        let radial = side * libm::cosf(th) + Vec3::Y * libm::sinf(th);
         let q = Quat::from_mat3(&Mat3::from_cols(radial, n.cross(radial), n));
         let off = if k % 2 == 0 { 0.0 } else { 0.002 };
-        let size = Vec3::new(r, 2.0 * r * (step * 0.5).sin() * 1.08, t);
+        let size = Vec3::new(r, 2.0 * r * libm::sinf(step * 0.5) * 1.08, t);
         lib.decor(Inst::new(c + radial * (r * 0.5) + n * off, q, size, kind, col, 0));
     }
 }
@@ -405,9 +405,9 @@ fn wind_rose(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let segs = 24;
     for k in 0..segs {
         let th = 0.05 + k as f32 / segs as f32 * TAU;
-        let radial = frame.across() * th.cos() + frame.out() * th.sin();
+        let radial = frame.across() * libm::cosf(th) + frame.out() * libm::sinf(th);
         let q = Quat::from_mat3(&Mat3::from_cols(radial, Vec3::Y, radial.cross(Vec3::Y)));
-        let len = 2.0 * r * (TAU / segs as f32 * 0.5).tan() + 0.01;
+        let len = 2.0 * r * libm::tanf(TAU / segs as f32 * 0.5) + 0.01;
         lib.decor(Inst::new(
             c + radial * r + Vec3::Y * 0.016,
             q,
@@ -420,7 +420,7 @@ fn wind_rose(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     // Eight points, each tapering in three steps; north's red.
     for k in 0..8 {
         let th = 0.01 + k as f32 / 8.0 * TAU;
-        let radial = frame.across() * th.cos() + frame.out() * th.sin();
+        let radial = frame.across() * libm::cosf(th) + frame.out() * libm::sinf(th);
         let long = k % 2 == 0;
         let (len, w) = if long { (r * 1.25, 0.26) } else { (r * 0.75, 0.16) };
         let q = Quat::from_mat3(&Mat3::from_cols(radial.cross(Vec3::Y), Vec3::Y, -radial));
@@ -510,9 +510,9 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     ));
     for k in 0..8 {
         let th = 0.2 + (k as f32 + 0.5) / 8.0 * TAU;
-        let radial = Vec3::new(th.cos(), 0.0, th.sin());
+        let radial = Vec3::new(libm::cosf(th), 0.0, libm::sinf(th));
         let q = Quat::from_rotation_arc(Vec3::Z, radial);
-        let pane = 2.0 * r * (TAU / 16.0).tan();
+        let pane = 2.0 * r * libm::tanf(TAU / 16.0);
         lib.static_trans.push(Inst::new(
             base + Vec3::Y * (0.06 + h * 0.5) + radial * r,
             q,
@@ -682,7 +682,7 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     rod(lib, on(0.0, -0.75, 0.0), hub, 0.025, 0.025, kind::METAL, gilt);
     for k in 0..4 {
         let th = 0.3 + k as f32 * TAU / 4.0;
-        let radial = frame.across() * th.cos() + frame.out() * th.sin();
+        let radial = frame.across() * libm::cosf(th) + frame.out() * libm::sinf(th);
         let tip = hub + radial * 0.22;
         rod(lib, hub, tip, 0.012, 0.012, kind::METAL, gilt);
         let tangent = Vec3::Y.cross(radial);
@@ -783,7 +783,7 @@ fn wind_chime(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     ));
     for k in 0..6 {
         let th = 0.4 + k as f32 * TAU / 6.0;
-        let p = frame.at(a + 0.13 * th.cos(), o + 0.13 * th.sin(), disc);
+        let p = frame.at(a + 0.13 * libm::cosf(th), o + 0.13 * libm::sinf(th), disc);
         let len = 0.35 + 0.07 * k as f32;
         lib.decor(Inst::aabox(
             p - Vec3::Y * (0.05 + len * 0.5),

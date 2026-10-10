@@ -66,7 +66,7 @@ pub fn install_fonts(ctx: &egui::Context) {
 }
 
 fn rgb(c: [f32; 3]) -> Color32 {
-    let f = |x: f32| (x.max(0.0).powf(1.0 / 2.2).min(1.0) * 255.0) as u8;
+    let f = |x: f32| (libm::powf(x.max(0.0), 1.0 / 2.2).min(1.0) * 255.0) as u8;
     Color32::from_rgb(f(c[0]), f(c[1]), f(c[2]))
 }
 
@@ -137,7 +137,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         let seen = facing && g.lib.world.line_of_sight(eye, l.pos);
         let Some(p) = project(&vp, l.pos, screen) else { continue };
         let size = (22.0 * 6.0 / to_eye.length().max(3.0)).clamp(16.0, 26.0);
-        let pulse = (0.8 + 0.2 * (g.time * 3.0).sin()) * if seen { 1.0 } else { 0.55 };
+        let pulse = (0.8 + 0.2 * libm::sinf(g.time * 3.0)) * if seen { 1.0 } else { 0.55 };
         painter.text(
             p,
             Align2::CENTER_CENTER,

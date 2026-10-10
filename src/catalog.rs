@@ -237,7 +237,7 @@ impl Look {
             edges,
             label: *labels[label],
             accent: *ACCENTS.choose(rng).expect("accents"),
-            age: 0.15 + 0.85 * rng.r#gen::<f32>().powf(1.3),
+            age: 0.15 + 0.85 * libm::powf(rng.r#gen::<f32>(), 1.3),
         }
     }
 }
@@ -394,7 +394,7 @@ fn hsv(h: f32, s: f32, v: f32) -> [f32; 3] {
     };
     let m = v - c;
     // Return linear-ish colour (square approximates sRGB->linear).
-    let lin = |u: f32| (u + m).powf(2.2);
+    let lin = |u: f32| libm::powf(u + m, 2.2);
     [lin(r), lin(g), lin(b)]
 }
 

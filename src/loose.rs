@@ -1742,7 +1742,7 @@ mod tests {
         for (i, &b) in books.iter().enumerate() {
             let a = i as f32 * 0.7;
             let speed = 2.0 + (i % 7) as f32 * 2.0;
-            let vel = Vec3::new(a.cos() * speed, 2.0 + (i % 3) as f32 * 2.0, a.sin() * speed);
+            let vel = Vec3::new(libm::cosf(a) * speed, 2.0 + (i % 3) as f32 * 2.0, libm::sinf(a) * speed);
             loose.throw(b, from, vel, Quat::IDENTITY, Vec3::new(3.0, 7.0, 1.0), i as f32 * 0.01);
         }
         let n = lib.books.len();

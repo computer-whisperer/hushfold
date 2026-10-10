@@ -305,7 +305,7 @@ fn pendulum(lib: &mut Library, top: Vec3, n: Vec3, len: f32, r: f32, t: f32) {
         let th = 0.3 + k as f32 * TAU / (2 * slabs) as f32;
         lib.decor(Inst::new(
             top - Vec3::Y * len,
-            on_plane(side * th.cos() + Vec3::Y * th.sin(), n),
+            on_plane(side * libm::cosf(th) + Vec3::Y * libm::sinf(th), n),
             Vec3::new(r * 2.0, r * 0.85, t + k as f32 * 0.006),
             kind::METAL,
             rgba(BRASS_LIT, 1.0),
@@ -374,7 +374,7 @@ fn gear(lib: &mut Library, c: Vec3, axis: Vec3, g: Wheel) {
     // The rim in half as many lengths as there are teeth.
     let segs = (teeth / 2).max(6);
     let seg = TAU / segs as f32;
-    let dir = |th: f32| u * th.cos() + v * th.sin();
+    let dir = |th: f32| u * libm::cosf(th) + v * libm::sinf(th);
     let mut put = |pos: Vec3, radial: Vec3, size: Vec3, col: [f32; 4]| {
         lib.decor(Inst::new(pos, on_plane(radial, axis), size, g.kind, col, 0));
     };
@@ -386,7 +386,7 @@ fn gear(lib: &mut Library, c: Vec3, axis: Vec3, g: Wheel) {
         put(
             c + dir(th) * mid,
             dir(th),
-            Vec3::new(rim, 2.0 * mid * (seg * 0.5).tan() + 0.01, t),
+            Vec3::new(rim, 2.0 * mid * libm::tanf(seg * 0.5) + 0.01, t),
             g.col,
         );
     }
@@ -430,7 +430,7 @@ fn dial(lib: &mut Library, c: Vec3, n: Vec3, r: f32, hour: u32, minute: f32) {
         8
     };
     let step = TAU / segs as f32;
-    let dir = |th: f32| side * th.cos() + up * th.sin();
+    let dir = |th: f32| side * libm::cosf(th) + up * libm::sinf(th);
     // The face: wedges from the middle, alternately a hair forward so none fight.
     for k in 0..segs {
         let radial = dir(0.05 + k as f32 * step);
@@ -438,7 +438,7 @@ fn dial(lib: &mut Library, c: Vec3, n: Vec3, r: f32, hour: u32, minute: f32) {
         lib.decor(Inst::new(
             c + radial * (r * 0.5) + n * off,
             on_plane(radial, n),
-            Vec3::new(r, 2.0 * r * (step * 0.5).sin() * 1.08, 0.02),
+            Vec3::new(r, 2.0 * r * libm::sinf(step * 0.5) * 1.08, 0.02),
             kind::PAPER,
             [0.0; 4],
             0,
@@ -540,7 +540,7 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
     let side = Vec3::Y.cross(n);
     for h in 0..12 {
         let th = h as f32 * TAU / 12.0;
-        let p = c + (side * th.sin() + Vec3::Y * th.cos()) * (r * 0.7) + n * 0.03;
+        let p = c + (side * libm::sinf(th) + Vec3::Y * libm::cosf(th)) * (r * 0.7) + n * 0.03;
         let gem = Inst::new(
             p,
             on_plane(side + Vec3::Y, n),

@@ -350,7 +350,7 @@ impl Game {
                 let from = Vec3::new(p.x, p.y.max(top + 0.6), p.z);
                 let mut j = || self.rng.gen_range(-1.0..1.0f32);
                 let a = j() * PI;
-                let out = Vec3::new(a.cos(), 0.0, a.sin()) * 2.2 * (j() * 0.5 + 0.5).sqrt();
+                let out = Vec3::new(libm::cosf(a), 0.0, libm::sinf(a)) * 2.2 * (j() * 0.5 + 0.5).sqrt();
                 self.state[b] = BookState::Loose;
                 self.loose.throw(s.book, from, out, self.rot[b], s.spin, 0.0);
                 continue;

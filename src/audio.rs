@@ -2,6 +2,10 @@
 //! each place, and generative music, mixed on the audio device's thread by
 //! `engine`. Nothing is loaded from disk; the clips are synthesised on a thread at
 //! startup, and effects asked for before they are ready are skipped.
+//!
+//! Sound is the one place the platform's float maths may be used (`clippy.toml`):
+//! nothing heard is saved or shapes the world.
+#![allow(clippy::disallowed_methods)]
 
 mod ambience;
 mod clips;

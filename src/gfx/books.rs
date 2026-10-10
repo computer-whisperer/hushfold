@@ -695,7 +695,7 @@ fn texel(x: u32, y: u32, n: u32) -> [u8; 4] {
     };
     let slub = (0.8 + 0.2 * hash(thread as i32, 0, 9)) * (0.7 + 0.3 * vnoise(along / 32.0, 0.0, 16, 3 + thread));
     let profile =
-        (std::f32::consts::PI * across / 4.0).sin() * (0.8 + 0.2 * (std::f32::consts::PI * cross / 4.0).sin());
+        libm::sinf(std::f32::consts::PI * across / 4.0) * (0.8 + 0.2 * libm::sinf(std::f32::consts::PI * cross / 4.0));
     let cloth = 0.2 + 0.8 * profile * slub;
     // Marbling, Stormont-like: clouds of colour (a place in a palette) under a lace of
     // fine veins (1), warped as the colours drifted on the size.

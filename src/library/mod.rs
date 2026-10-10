@@ -581,8 +581,8 @@ impl Library {
             self.drops.push((
                 b,
                 level,
-                center + Vec2::new(a.cos(), a.sin()) * r,
-                Vec2::new(yaw.cos(), yaw.sin()),
+                center + Vec2::new(libm::cosf(a), libm::sinf(a)) * r,
+                Vec2::new(libm::cosf(yaw), libm::sinf(yaw)),
             ));
         }
     }

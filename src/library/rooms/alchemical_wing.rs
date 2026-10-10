@@ -58,7 +58,7 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
 fn ring(lib: &mut Library, c: Vec3, u: Vec3, v: Vec3, r: f32, n: usize, w: f32, kind: u32, rgba: [f32; 4]) {
     let at = |k: usize| {
         let t = k as f32 / n as f32 * TAU;
-        c + (u * t.cos() + v * t.sin()) * r
+        c + (u * libm::cosf(t) + v * libm::sinf(t)) * r
     };
     for k in 0..n {
         let (p, q) = (at(k), at(k + 1));
@@ -291,7 +291,7 @@ fn great_work(lib: &mut Library, frame: &RoomFrame) {
     let r = 0.75;
     for k in 0..3 {
         let t = TAU / 4.0 + k as f32 * TAU / 3.0;
-        let p = |t: f32| c + (u * t.cos() + up * t.sin()) * r;
+        let p = |t: f32| c + (u * libm::cosf(t) + up * libm::sinf(t)) * r;
         rod(lib, p(t), p(t + TAU / 3.0), 0.018, 0.018, kind::PLAIN, ink);
     }
     for (k, rgb) in [
@@ -304,7 +304,7 @@ fn great_work(lib: &mut Library, frame: &RoomFrame) {
     .enumerate()
     {
         let t = TAU / 8.0 + k as f32 * TAU / 4.0;
-        let p = c + (u * t.cos() + up * t.sin()) * 1.02 + n * 0.005;
+        let p = c + (u * libm::cosf(t) + up * libm::sinf(t)) * 1.02 + n * 0.005;
         let rot = Quat::from_rotation_arc(Vec3::Z, n) * Quat::from_rotation_z(0.785);
         lib.decor(Inst::new(
             p,
@@ -706,10 +706,10 @@ fn circle(lib: &mut Library, frame: &RoomFrame) {
         lift = (lift + 0.002) % 0.008;
     };
     let r = 1.5;
-    let pt = |r: f32, t: f32| c + (u * t.cos() + v * t.sin()) * r;
+    let pt = |r: f32, t: f32| c + (u * libm::cosf(t) + v * libm::sinf(t)) * r;
     let q = std::f32::consts::FRAC_PI_4;
     // The square's own circle, which the triangle stands in, and the triangle's.
-    let (square, triangle) = (r * q.sin(), r * q.sin() * 0.5);
+    let (square, triangle) = (r * libm::sinf(q), r * libm::sinf(q) * 0.5);
     let n = 28;
     for k in 0..n {
         let (t0, t1) = (k as f32 / n as f32 * TAU, (k + 1) as f32 / n as f32 * TAU);

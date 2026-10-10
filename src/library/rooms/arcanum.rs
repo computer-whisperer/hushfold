@@ -310,7 +310,7 @@ fn crystals(lib: &mut Library, f: &RoomFrame) {
         crystal(
             lib,
             f,
-            Vec3::new(t.cos() * r, y, WARD + t.sin() * r),
+            Vec3::new(libm::cosf(t) * r, y, WARD + libm::sinf(t) * r),
             size,
             0.25 + k as f32 * 0.2,
         );
@@ -329,7 +329,7 @@ fn rune_circle(lib: &mut Library, f: &RoomFrame) {
             lib,
             Vec3::new(m.x, y * 0.5, m.y),
             Vec3::new(d.length(), y, w),
-            Quat::from_rotation_y(-d.y.atan2(d.x)),
+            Quat::from_rotation_y(-libm::atan2f(d.y, d.x)),
             kind::EMISSIVE,
             RUNE,
         );

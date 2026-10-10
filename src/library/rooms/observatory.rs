@@ -34,7 +34,7 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
 fn ring(lib: &mut Library, c: Vec3, u: Vec3, v: Vec3, r: f32, n: usize, w: f32, kind: u32, rgba: [f32; 4]) {
     let at = |k: usize| {
         let t = k as f32 / n as f32 * TAU;
-        c + (u * t.cos() + v * t.sin()) * r
+        c + (u * libm::cosf(t) + v * libm::sinf(t)) * r
     };
     for k in 0..n {
         // A touch long, so the rods close at the joints.
@@ -273,7 +273,7 @@ fn sky(lib: &mut Library, frame: &RoomFrame) {
     ring(lib, centre, u, v, 5.9, 48, 0.035, kind::METAL, gold);
     for k in 0..12 {
         let t = k as f32 / 12.0 * TAU;
-        let dir = u * t.cos() + v * t.sin();
+        let dir = u * libm::cosf(t) + v * libm::sinf(t);
         rod(
             lib,
             centre + dir * 5.9,
@@ -485,7 +485,7 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
         (3.4, 1.52, 1.32, 0.14, [0.86, 0.76, 0.5]),
     ];
     for (k, &(t, r, h, s, rgb)) in planets.iter().enumerate() {
-        let dir = Vec3::new(t.cos(), 0.0, t.sin());
+        let dir = Vec3::new(libm::cosf(t), 0.0, libm::sinf(t));
         let hub = base + up * h;
         let tip = hub + dir * r;
         rod(lib, hub, tip, 0.022, 0.022, kind::METAL, BRASS_BRIGHT);
@@ -494,7 +494,7 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
         ball(lib, p, s, kind::METAL, [rgb[0], rgb[1], rgb[2], 1.0]);
         if k == 2 {
             // The earth's moon on its own little arm.
-            let m = p + Vec3::new(t.sin(), 0.0, -t.cos()) * 0.16;
+            let m = p + Vec3::new(libm::sinf(t), 0.0, -libm::cosf(t)) * 0.16;
             rod(lib, p, m, 0.01, 0.01, kind::METAL, BRASS_BRIGHT);
             ball(lib, m, 0.035, kind::METAL, [0.7, 0.7, 0.68, 1.0]);
         }

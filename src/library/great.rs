@@ -623,8 +623,8 @@ fn piece(side: Side, a: Span, o: Span, y: Span, kind: u32, rgb: [f32; 3]) -> Ins
 /// the wall, `size` (along, up), turned `angle` from level.
 fn in_wall(side: Side, at: (f32, f32), o: Span, size: (f32, f32), angle: f32, look: (u32, [f32; 4])) -> Inst {
     let across = side.across3();
-    let x = across * angle.cos() + Vec3::Y * angle.sin();
-    let up = Vec3::Y * angle.cos() - across * angle.sin();
+    let x = across * libm::cosf(angle) + Vec3::Y * libm::sinf(angle);
+    let up = Vec3::Y * libm::cosf(angle) - across * libm::sinf(angle);
     let rot = Quat::from_mat3(&Mat3::from_cols(x, up, x.cross(up)));
     let c = side.at3(at.0, (o.0 + o.1) * 0.5, at.1);
     Inst::new(c, rot, Vec3::new(size.0, size.1, (o.1 - o.0).abs()), look.0, look.1, 0)
@@ -768,8 +768,8 @@ impl Library {
             // prouder so the overlaps don't flicker.
             let proud = if key { 0.15 } else { 0.1 + 0.012 * (k % 2) as f32 };
             let rm = (r0 + r1) * 0.5;
-            let at = (c + rm * t.cos(), spring + rm * t.sin());
-            let size = (2.0 * r1 * (step * 0.5).tan(), r1 - r0);
+            let at = (c + rm * libm::cosf(t), spring + rm * libm::sinf(t));
+            let size = (2.0 * r1 * libm::tanf(step * 0.5), r1 - r0);
             let look = (kind::STONE, rgba(if key { PALE } else { DRESSED }, 1.0));
             self.decor(in_wall(side, at, (FACE - proud, FACE), size, t - FRAC_PI_2, look));
         }
@@ -822,7 +822,7 @@ impl Library {
             flat(self, span(x, 0.025), (0.08, 0.0), (top - 0.05, top + 0.035), gilt);
         }
         // The point: a square turned on its corner behind the foot of each layer.
-        let point = |inset: f32| (w - inset) * FRAC_PI_4.cos();
+        let point = |inset: f32| (w - inset) * libm::cosf(FRAC_PI_4);
         flat(self, inner, (0.08, 0.055), (y0, y1 - 0.1), cloth(field));
         turned(self, (c, y0), (0.079, 0.055), point(0.2), cloth(field));
         let tip = y0 - w * 0.5;
@@ -1196,8 +1196,8 @@ impl Library {
         for k in 0..n {
             let t = (k as f32 + 0.5) * step;
             let rm = (ri + ro) * 0.5;
-            let at = (c + rm * t.cos(), y + rm * t.sin());
-            let size = (2.0 * ro * (step * 0.5).tan(), ro - ri);
+            let at = (c + rm * libm::cosf(t), y + rm * libm::sinf(t));
+            let size = (2.0 * ro * libm::tanf(step * 0.5), ro - ri);
             let proud = 0.08 + 0.01 * (k % 2) as f32;
             stone(self, at, proud, size, t - FRAC_PI_2, DRESSED);
         }
@@ -1228,7 +1228,7 @@ impl Library {
             (5.65, 4.3, 14.6),
         ];
         for (k, &(t, r, y)) in SPOTS.iter().enumerate() {
-            let c = Vec3::new(t.cos() * r, y, t.sin() * r);
+            let c = Vec3::new(libm::cosf(t) * r, y, libm::sinf(t) * r);
             let rot = Quat::from_rotation_y(t * 2.3 + k as f32);
             let part = |lib: &mut Self, off: Vec3, size: Vec3, kind: u32, rgba: [f32; 4]| {
                 lib.decor(Inst::new(c + rot * off, rot, size, kind, rgba, 0));

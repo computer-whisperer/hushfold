@@ -266,7 +266,7 @@ fn horn(lib: &mut Library, h: &Hung) {
     let n = 10;
     for k in 0..n {
         let th = k as f32 / n as f32 * TAU + 0.1;
-        let at = [th.cos() * 0.17, th.sin() * 0.17, 0.0];
+        let at = [libm::cosf(th) * 0.17, libm::sinf(th) * 0.17, 0.0];
         h.put(lib, at, [0.035, 0.12, 0.035], th, kind::METAL, brass);
     }
     h.put(lib, [0.2, -0.12, 0.02], [0.1, 0.16, 0.06], 0.6, kind::METAL, brass);
@@ -343,7 +343,7 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
     };
     for k in -3i32..=3 {
         let a = k as f32 * 0.16;
-        pipe(a, 4.2 - 0.18 * (k.abs() as f32).powf(1.3), 0.06);
+        pipe(a, 4.2 - 0.18 * libm::powf(k.abs() as f32, 1.3), 0.06);
     }
     for s in [-1.0f32, 1.0] {
         for k in 0..4 {
@@ -891,7 +891,7 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
         0,
     ));
     for (r, y, segs) in [(1.0f32, 4.0f32, 12), (0.55, 4.45, 8)] {
-        let ring = |th: f32| frame.at(ca + r * th.cos(), co + r * th.sin(), y);
+        let ring = |th: f32| frame.at(ca + r * libm::cosf(th), co + r * libm::sinf(th), y);
         let step = TAU / segs as f32;
         for k in 0..segs {
             let th = 0.13 + k as f32 * step;
