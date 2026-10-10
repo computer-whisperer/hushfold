@@ -1126,7 +1126,7 @@ impl Library {
             (0.105, 0.0),
         ];
         let collet = self.shape(Mesh::lathe(&profile(&collet), 24));
-        // A facet's edge level.
+        // Turned so a facet lies level along its top.
         let rot = out_of_wall(side) * Quat::from_rotation_y(PI / 8.0);
         for s in [-1.0f32, 1.0] {
             let at = side.at3(d + s * 2.05, FACE - 0.15, y + 4.42);
@@ -1318,22 +1318,21 @@ impl Library {
             kind::EMISSIVE,
             [0.03, 0.045, 0.11],
         ));
+        // The moon, and darker seas on it.
+        let disc = self.shape(Mesh::cylinder(48));
         let moon = Vec3::new(-4.5, SKY - 0.012, -2.7);
-        for (k, turn) in [0.0f32, 30.0, 60.0].into_iter().enumerate() {
-            let at = moon - Vec3::Y * (k as f32 * 0.002);
-            let rot = Quat::from_rotation_y(turn.to_radians());
-            let size = Vec3::new(0.8, 0.002, 0.8);
-            self.decor(Inst::new(at, rot, size, kind::EMISSIVE, [0.92, 0.94, 1.0, 2.6], 0));
-        }
+        let size = Vec3::new(0.95, 0.002, 0.95);
+        let light = [0.92, 0.94, 1.0, 2.6];
+        self.decor(disc.sized(size).inst(moon, Quat::IDENTITY, kind::EMISSIVE, light));
         for (dx, dz, w, turn) in [
-            (0.12f32, -0.1f32, 0.22f32, 20.0f32),
-            (-0.15, 0.08, 0.16, 50.0),
-            (0.06, 0.2, 0.12, 10.0),
+            (0.14f32, -0.12f32, 0.26f32, 20.0f32),
+            (-0.17, 0.09, 0.19, 50.0),
+            (0.07, 0.23, 0.14, 10.0),
         ] {
-            let at = moon + Vec3::new(dx, -0.008, dz);
+            let at = moon + Vec3::new(dx, -0.004, dz);
             let rot = Quat::from_rotation_y(turn.to_radians());
-            let size = Vec3::new(w, 0.002, w * 0.8);
-            self.decor(Inst::new(at, rot, size, kind::EMISSIVE, [0.6, 0.64, 0.76, 2.6], 0));
+            let sea = disc.sized(Vec3::new(w, 0.002, w * 0.8));
+            self.decor(sea.inst(at, rot, kind::EMISSIVE, [0.6, 0.64, 0.76, 2.6]));
         }
         for (x, z) in [
             (-3.2f32, -3.1f32),
