@@ -118,6 +118,128 @@ pub struct Series {
     pub depth: f32,
     /// Thickness of each volume, in metres.
     pub thickness: Vec<f32>,
+    pub look: Look,
+}
+
+/// What a series is bound in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Binding {
+    /// Full leather over raised bands.
+    Leather = 0,
+    /// A leather spine and corners, marbled paper sides.
+    Half = 1,
+    /// Publisher's cloth, lettered by the stamp.
+    Cloth = 2,
+    /// Limp vellum, lettered by hand in ink.
+    Vellum = 3,
+    /// Paper over boards with printed paper labels.
+    Boards = 4,
+}
+
+/// How the text block's edges are finished.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Edges {
+    Plain = 0,
+    /// Fine flecks of the accent colour.
+    Sprinkled = 1,
+    /// Gold leaf on the head (on all three edges of leather).
+    Gilt = 2,
+    /// Marbled in the accent colour.
+    Marbled = 3,
+    /// Coloured with the accent colour.
+    Stained = 4,
+}
+
+/// A series' binding, beyond its colour, pattern and trim. Drawn from a random stream of
+/// its own (seeded from its title and category), never the generation's, so changing
+/// how books look never moves them.
+#[derive(Clone, Copy, Debug)]
+pub struct Look {
+    pub binding: Binding,
+    /// Raised bands across the spine; 0 for a smooth one.
+    pub bands: u32,
+    pub edges: Edges,
+    /// The spine label's leather (leather and half bindings).
+    pub label: [f32; 3],
+    /// The edges' sprinkle, stain or marbling, and the marbled sides' second colour.
+    pub accent: [f32; 3],
+    /// How worn it is, 0 to 1.
+    pub age: f32,
+}
+
+/// Leathers for spine labels, chosen to stand out from the binding.
+const LABELS: &[[f32; 3]] = &[
+    [0.30, 0.035, 0.025],
+    [0.018, 0.016, 0.014],
+    [0.025, 0.08, 0.035],
+    [0.32, 0.17, 0.06],
+    [0.025, 0.035, 0.11],
+];
+
+/// Sprinkles, stains and marbling.
+const ACCENTS: &[[f32; 3]] = &[
+    [0.42, 0.05, 0.03],
+    [0.05, 0.09, 0.22],
+    [0.40, 0.24, 0.05],
+    [0.06, 0.20, 0.10],
+    [0.18, 0.08, 0.03],
+];
+
+impl Look {
+    /// `shared`: the category's books share a binding (and label), as they share a
+    /// spine pattern, but for the odd one.
+    fn new(title: &str, category: usize, color: [f32; 3], height: f32, shared: bool) -> Self {
+        // FNV-1a of the title, then the category.
+        let h = (title.bytes().chain((category as u32).to_le_bytes())).fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+            (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+        });
+        let rng = &mut StdRng::seed_from_u64(h);
+        // Each category favours a binding of its own.
+        let favoured = category % 5;
+        let weights: Vec<u32> = (0..5)
+            .map(|b| [32, 14, 32, 8, 14][b] + if b == favoured { 30 } else { 0 })
+            .collect();
+        let bindings = [
+            Binding::Leather,
+            Binding::Half,
+            Binding::Cloth,
+            Binding::Vellum,
+            Binding::Boards,
+        ];
+        let binding = if shared && rng.gen_bool(0.85) {
+            bindings[favoured]
+        } else {
+            bindings[rand::distributions::WeightedIndex::new(&weights)
+                .expect("weights")
+                .sample(rng)]
+        };
+        let bands = match binding {
+            Binding::Leather => rng.gen_range(4..=5) + (height > 0.27) as u32,
+            Binding::Half if rng.gen_bool(0.5) => rng.gen_range(4..=5),
+            _ => 0,
+        };
+        use Edges::*;
+        let edges: &[(Edges, u32)] = match binding {
+            Binding::Leather => &[(Plain, 25), (Sprinkled, 30), (Gilt, 30), (Marbled, 15)],
+            Binding::Half => &[(Plain, 35), (Sprinkled, 30), (Marbled, 35)],
+            Binding::Cloth => &[(Plain, 45), (Sprinkled, 15), (Gilt, 15), (Stained, 25)],
+            Binding::Vellum => &[(Plain, 70), (Stained, 30)],
+            Binding::Boards => &[(Plain, 60), (Sprinkled, 25), (Stained, 15)],
+        };
+        let edges = edges.choose_weighted(rng, |e| e.1).expect("edges").0;
+        let far = |c: &[f32; 3]| -> f32 { c.iter().zip(color).map(|(a, b)| (a.sqrt() - b.sqrt()).powi(2)).sum() };
+        let mut labels: Vec<&[f32; 3]> = LABELS.iter().collect();
+        labels.sort_by(|a, b| far(b).total_cmp(&far(a)));
+        let label = if shared { category % 2 } else { rng.gen_range(0..3) };
+        Look {
+            binding,
+            bands,
+            edges,
+            label: *labels[label],
+            accent: *ACCENTS.choose(rng).expect("accents"),
+            age: 0.15 + 0.85 * rng.r#gen::<f32>().powf(1.3),
+        }
+    }
 }
 
 impl Series {
@@ -312,6 +434,7 @@ pub fn generate_series(
         let s = Series {
             category,
             sort_key: sort_key(&title),
+            look: Look::new(&title, category, color, height, cat.pattern.is_some()),
             title,
             volumes,
             color,

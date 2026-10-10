@@ -2089,6 +2089,7 @@ impl Game {
 
         let in_flight: std::collections::HashSet<u32> = self.flights.iter().map(|f| f.book).collect();
         let mut scene = std::mem::take(&mut self.scene);
+        scene.bind(&self.lib.series);
         // Books lying still are drawn from their chunks; books on the move each frame.
         for b in 0..self.lib.books.len() {
             let (st, bu) = (self.state[b], b as u32);

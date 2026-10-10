@@ -329,217 +329,11 @@ fn stone(base: vec3<f32>, w: vec3<f32>, n: vec3<f32>, fw: f32) -> Stone {
     return o;
 }
 
-fn digit_mask(d: u32) -> u32 {
-    switch d {
-        case 0u: { return 31599u; } // 111 101 101 101 111
-        case 1u: { return 11415u; } // 010 110 010 010 111
-        case 2u: { return 29671u; } // 111 001 111 100 111
-        case 3u: { return 29647u; } // 111 001 111 001 111
-        case 4u: { return 23497u; } // 101 101 111 001 001
-        case 5u: { return 31183u; } // 111 100 111 001 111
-        case 6u: { return 31215u; } // 111 100 111 101 111
-        case 7u: { return 29330u; } // 111 001 010 010 010
-        case 8u: { return 31727u; } // 111 101 111 101 111
-        default: { return 31695u; } // 111 101 111 001 111
-    }
-}
-
-// Returns 1 if the spine-space point (x across, y down from top of text) is on a glyph pixel.
-fn number_px(n: u32, x: f32, y: f32, ps: f32) -> f32 {
-    var digits = 1u;
-    if (n >= 10u) { digits = 2u; }
-    let w = f32(digits * 4u - 1u) * ps;
-    let gx = (x + w * 0.5) / ps;
-    let gy = y / ps;
-    if (gx < 0.0 || gy < 0.0 || gy >= 5.0 || gx >= f32(digits * 4u - 1u)) {
-        return 0.0;
-    }
-    let cell = u32(gx) / 4u;
-    let px = u32(gx) % 4u;
-    if (px == 3u) { return 0.0; }
-    var d = n % 10u;
-    if (digits == 2u && cell == 0u) { d = n / 10u; }
-    let bit = 14u - (u32(gy) * 3u + px);
-    return f32((digit_mask(d) >> bit) & 1u);
-}
-
-fn trim_color(t: u32, base: vec3<f32>) -> vec3<f32> {
-    switch t {
-        case 1u: { return vec3<f32>(0.85, 0.52, 0.16); }
-        case 2u: { return vec3<f32>(0.62, 0.64, 0.68); }
-        case 3u: { return vec3<f32>(0.02, 0.018, 0.015); }
-        default: { return vec3<f32>(0.80, 0.70, 0.48); }
-    }
-}
-
 // Distance (in metres) from a point on a box face to the nearest edge of that face.
 fn box_edge(local: vec3<f32>, scale: vec3<f32>, lnormal: vec3<f32>) -> f32 {
     let e = (vec3<f32>(0.5) - abs(local)) * scale;
     let n = abs(lnormal);
     return select(select(min(e.x, e.y), min(e.x, e.z), n.y > 0.5), min(e.y, e.z), n.x > 0.5);
-}
-
-struct Surf {
-    albedo: vec3<f32>,
-    spec: f32,
-    gloss: f32,
-    emit: vec3<f32>,
-};
-
-fn book_surface(i: VOut) -> Surf {
-    var s: Surf;
-    s.spec = 0.05;
-    s.gloss = 24.0;
-    s.emit = vec3<f32>(0.0);
-    let base = i.color.rgb;
-    let pattern = i.param & 15u;
-    let trim = (i.param >> 4u) & 3u;
-    let volume = (i.param >> 8u) & 255u;
-    let flags = i.param >> 16u;
-    let m = i.local * i.scale;
-    let ln = i.lnormal;
-    let paper = vec3<f32>(0.66, 0.58, 0.42);
-    let cover_t = 0.0025;
-    let tc = trim_color(trim, base);
-    let is_metal = trim == 1u || trim == 2u;
-
-    if (ln.z > 0.5) {
-        // Spine.
-        let h = i.scale.y;
-        let v = m.y;
-        let top = h * 0.5 - v; // distance from top
-        let bot = v + h * 0.5; // distance from bottom
-        var col = base;
-        var metal = 0.0;
-        var band = 0.0;
-        switch pattern {
-            case 0u: {
-                band = f32(abs(top - 0.028) < 0.0025 || abs(bot - 0.028) < 0.0025);
-            }
-            case 1u: {
-                band = f32(top > 0.02 && top < 0.05);
-                band = max(band, f32(bot > 0.018 && bot < 0.026));
-            }
-            case 2u: {
-                let panel = top > 0.04 && top < 0.11;
-                if (panel) { col = base * 0.35; }
-                band = f32(abs(top - 0.04) < 0.002 || abs(top - 0.11) < 0.002);
-            }
-            case 3u: {
-                for (var k = 0; k < 3; k = k + 1) {
-                    let o = 0.018 + f32(k) * 0.009;
-                    band = max(band, f32(abs(top - o) < 0.0018 || abs(bot - o) < 0.0018));
-                }
-            }
-            case 4u: {
-                let c = top - 0.07;
-                let dia = abs(m.x) / max(i.scale.x * 0.5, 0.001) * 0.02 + abs(c);
-                band = f32(dia < 0.022 && dia > 0.016);
-                band = max(band, f32(dia < 0.008));
-            }
-            case 5u: {
-                if (top < h * 0.33) { col = base * 0.5; }
-                band = f32(abs(top - h * 0.33) < 0.002);
-            }
-            case 6u: {
-                let row = abs(top - 0.035) < 0.004;
-                let dots = fract(m.x / 0.008 + 0.5) < 0.5;
-                band = f32(row && dots);
-                band = max(band, f32(abs(bot - 0.02) < 0.002));
-            }
-            default: {
-                band = f32(abs(m.x) < i.scale.x * 0.12 && top > 0.02 && bot > 0.07);
-            }
-        }
-        if (band > 0.5) {
-            col = tc;
-            metal = 1.0;
-        }
-        // Volume number near the bottom.
-        if (volume > 0u) {
-            var ps = 0.0032;
-            var digits = 1.0;
-            if (volume >= 10u) { digits = 2.0; }
-            ps = min(ps, i.scale.x * 0.8 / (digits * 4.0 - 1.0));
-            // Text block sits 3cm above the tail; glyph rows grow downward.
-            let y_text = (0.03 + 5.0 * ps) - bot;
-            let on = number_px(volume, m.x, y_text, ps);
-            if (on > 0.5) {
-                col = tc;
-                metal = 1.0;
-            }
-        }
-        // Rounded spine.
-        let r = abs(i.local.x) * 2.0;
-        col *= 1.0 - 0.35 * r * r;
-        s.albedo = col;
-        if (metal > 0.5 && is_metal) {
-            s.spec = 0.9;
-            s.gloss = 40.0;
-        } else {
-            s.spec = 0.06;
-            s.gloss = 18.0;
-        }
-        // Leather/cloth grain.
-        s.albedo *= 0.9 + 0.2 * vnoise(m * 900.0);
-    } else if (abs(ln.x) > 0.5) {
-        // Front/back cover.
-        var col = base * 0.85;
-        let ez = 0.5 * i.scale.z - abs(m.z);
-        let ey = 0.5 * i.scale.y - abs(m.y);
-        let frame = min(ez, ey);
-        if (trim != 0u && frame > 0.010 && frame < 0.0135) {
-            col = tc;
-            if (is_metal) { s.spec = 0.6; s.gloss = 36.0; }
-        }
-        s.albedo = col * (0.9 + 0.2 * vnoise(m * 700.0));
-    } else {
-        // Paper (fore-edge, head, tail) with covers framing it.
-        let edge_x = 0.5 * i.scale.x - abs(m.x);
-        let spine_side = 0.5 * i.scale.z - m.z;
-        var is_cover = edge_x < cover_t;
-        if (abs(ln.y) > 0.5 && spine_side < 0.004) {
-            is_cover = true;
-        }
-        if (is_cover) {
-            s.albedo = base * 0.8;
-        } else {
-            let lines = 0.9 + 0.1 * sin(m.x * 2600.0);
-            // Pages are slightly shadowed near the covers.
-            let shadow = smoothstep(0.0, 0.01, edge_x - cover_t);
-            s.albedo = paper * lines * (0.6 + 0.4 * shadow);
-        }
-    }
-    // Book flags: 1 active, 2 loose, bits 2..6 department, 7..14 category; the
-    // series id rides in color.a.
-    let lens = u32(g.lens.x);
-    if (lens != 0u && (flags & 2u) != 0u) {
-        // The Seeker's Lens: loose books of the group sought glow, the rest fade.
-        var key = u32(round(i.color.a));
-        if (lens == 1u) {
-            key = (flags >> 2u) & 31u;
-        } else if (lens == 2u) {
-            key = (flags >> 7u) & 255u;
-        }
-        if (key == u32(round(g.lens.y))) {
-            let sig = base / max(max(base.r, base.g), max(base.b, 1e-3));
-            let rim = 1.0 - smoothstep(0.002, 0.006, box_edge(i.local, i.scale, ln));
-            let pulse = 0.5 + 0.5 * sin(g.cam_pos.w * 3.0);
-            s.emit = sig * (0.25 + 0.1 * pulse + rim * 1.4);
-        } else {
-            s.albedo = s.albedo * 0.22;
-        }
-    }
-    if ((flags & 1u) != 0u) {
-        // The active book in hand: a bright rim along every edge, readable on any cover
-        // colour, over a faint warm wash.
-        let t = g.cam_pos.w;
-        let rim_edge = box_edge(i.local, i.scale, ln);
-        let rim = 1.0 - smoothstep(0.0015, 0.0035, rim_edge);
-        let pulse = 0.5 + 0.5 * sin(t * 4.0);
-        s.emit = vec3<f32>(1.0, 0.82, 0.5) * (rim * (1.3 + 0.7 * pulse) + 0.1 + 0.08 * pulse);
-    }
-    return s;
 }
 
 fn rug_albedo(base: vec3<f32>, second: vec3<f32>, m: vec3<f32>, s: vec3<f32>) -> vec3<f32> {
@@ -965,21 +759,510 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
     return vec4<f32>(apply_fog(col, i.world), 1.0);
 }
 
+// ---------------------------------------------------------------- books
+
+// The book table (gfx::books): a header, the glyph atlas's cells, volume numbers set
+// roman and arabic, a record per series and the glyphs its lettering points into.
+@group(1) @binding(3) var<storage, read> book_table: array<u32>;
+// Binding materials tiling every BOOK_TILE metres: r leather grain, g cloth weave,
+// b marbling, a mottle.
+@group(1) @binding(4) var book_tex: texture_2d<f32>;
+@group(1) @binding(5) var book_sampler: sampler;
+const BOOK_TILE: f32 = 0.064;
+// Words per series (gfx::books::RECORD).
+const RECORD: u32 = 10u;
+// Raised bands run from this far below the head to as far above the tail; half a
+// band's width.
+const BAND_END: f32 = 0.045;
+const BAND_W: f32 = 0.0026;
+// Lines of capitals, and of mixed case, apart in ems.
+const PITCH_CAPS: f32 = 1.2;
+const PITCH: f32 = 1.25;
+// The joint's groove on the covers, in from the spine's edge.
+const JOINT: f32 = 0.0065;
+
+// An sRGB-ish colour packed in a word's low bytes (`gfx::books::rgb8`).
+fn unpack_rgb(w: u32) -> vec3<f32> {
+    let c = vec3<f32>(f32(w & 255u), f32((w >> 8u) & 255u), f32((w >> 16u) & 255u)) / 255.0;
+    return c * c;
+}
+
+// Coverage of a block of lettering (a word of the book table: its glyphs' first index,
+// count and lines) at `p`, in ems from the middle of its capitals, its lines `pitch` ems
+// apart; `texels` is atlas pixels to a screen pixel. Letters too small to read fade
+// out, as signs' do.
+fn lettering(block: u32, p: vec2<f32>, pitch: f32, texels: f32) -> f32 {
+    let count = (block >> 22u) & 127u;
+    let lines = f32(block >> 29u);
+    if (count == 0u || texels > GLYPH_EM / 4.0 || abs(p.y) > 0.5 * lines * pitch + 0.6) {
+        return 0.0;
+    }
+    let first = book_table[3] + (block & 0x3fffffu);
+    let cells = book_table[0];
+    // The line the point is on, and the point in atlas pixels from its baseline.
+    let l = clamp(round(0.5 * (lines - 1.0) - p.y / pitch), 0.0, lines - 1.0);
+    let base = (0.5 * (lines - 1.0) - l) * pitch - 0.5 * bitcast<f32>(book_table[4]);
+    let q = vec2<f32>(p.x, p.y - base) * GLYPH_EM;
+    let key = u32(l) << 16u | u32(clamp(p.x * 1024.0 + 32768.0, 0.0, 65535.0));
+    // The last glyph whose pen is at or before the point (else the first).
+    var lo = first;
+    var hi = first + count;
+    while (hi - lo > 1u) {
+        let mid = (lo + hi) / 2u;
+        if ((book_table[mid] >> 14u) <= key) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let lod = clamp(log2(texels), 0.0, 3.0);
+    let dims = vec2<f32>(textureDimensions(glyph_atlas));
+    var d = -GLYPH_PAD;
+    // That glyph and the next, whose cells overlap.
+    for (var k = lo; k < min(lo + 2u, first + count); k = k + 1u) {
+        let gw = book_table[k];
+        if ((gw >> 30u) != u32(l)) {
+            continue;
+        }
+        let c = cells + (gw & 0x3fffu) * 2u;
+        let c1 = book_table[c + 1u];
+        let size = vec2<f32>(f32(c1 & 255u), f32((c1 >> 8u) & 255u));
+        let pen = f32((gw >> 14u) & 0xffffu) / 1024.0 - 32.0;
+        let at = q - vec2<f32>(pen * GLYPH_EM, 0.0) - vec2<f32>(f32((c1 >> 16u) & 255u), f32(c1 >> 24u)) + 128.0;
+        if (all(at >= vec2<f32>(0.0)) && all(at <= size)) {
+            let c0 = book_table[c];
+            let uv = (vec2<f32>(f32(c0 & 0xffffu), f32(c0 >> 16u)) + vec2<f32>(at.x, size.y - at.y)) / dims;
+            d = max(d, (textureSampleLevel(glyph_atlas, glyph_sampler, uv, lod).r * 255.0 - 128.0) * GLYPH_PAD / 127.0);
+        }
+    }
+    // Small letters a little bolder, as signs' are.
+    let bold = 0.35 * smoothstep(GLYPH_EM / 30.0, GLYPH_EM / 10.0, texels);
+    let fade = 1.0 - smoothstep(GLYPH_EM / 7.0, GLYPH_EM / 4.0, texels);
+    return clamp(d / max(texels, 1e-3) + 0.5 + bold, 0.0, 1.0) * fade;
+}
+
+// A spine's tooling by its pattern (gold, or blind with trim 3), at `a` from the head
+// and `b` from the tail, `x` across. Each pattern keeps a shape that reads from across
+// a room: the Great Library's categories are told apart by it. With raised bands, the
+// lozenges sit in the panels below the title's and the number's.
+fn spine_tooling(pattern: u32, a: f32, b: f32, x: f32, sc: vec3<f32>, bands: u32, fw: f32) -> f32 {
+    // Half a fillet's (a gilt rule's) width.
+    let fl = 0.00042;
+    let e = min(a, b);
+    var t = 0.0;
+    switch pattern {
+        case 0u: {
+            t = max(line_aa(abs(e - 0.020), fl, fw), line_aa(abs(e - 0.025), fl, fw));
+        }
+        case 1u: {
+            // A roll: hatching between fillets near the head; a fillet near the tail.
+            let roll = 1.0 - smoothstep(0.0075 - 0.5 * fw, 0.0075 + 0.5 * fw, abs(a - 0.025));
+            let hatch = 0.45 + 0.55 * line_aa(abs(fract((a + x) / 0.0028) - 0.5) * 0.0028, 0.0006, fw);
+            t = max(roll * hatch, line_aa(abs(b - 0.024), fl, fw));
+            t = max(t, max(line_aa(abs(a - 0.0158), fl, fw), line_aa(abs(a - 0.0342), fl, fw)));
+        }
+        case 3u: {
+            for (var k = 0; k < 3; k = k + 1) {
+                t = max(t, line_aa(abs(e - 0.017 - f32(k) * 0.005), fl, fw));
+            }
+        }
+        case 4u: {
+            var at = 0.065;
+            var size = 0.017;
+            if (bands > 1u) {
+                let span = (sc.y - 2.0 * BAND_END) / f32(bands - 1u);
+                let k = clamp(floor((a - BAND_END) / span), 2.0, max(f32(bands) - 2.0, 2.0));
+                at = BAND_END + span * (k + 0.5);
+                size = min(size, 0.36 * span);
+            }
+            let dia = abs(x) / (0.5 * sc.x) * size + abs(a - at);
+            t = max(line_aa(abs(dia - size), 0.0009, fw), line_aa(dia, 0.27 * size, fw));
+        }
+        case 5u: {
+            t = line_aa(abs(a - sc.y / 3.0), 1.5 * fl, fw);
+        }
+        case 6u: {
+            let dot = length(vec2<f32>((fract(x / 0.004 + 0.5) - 0.5) * 0.004, a - 0.033));
+            t = max(line_aa(dot, 0.0011, fw), line_aa(abs(b - 0.02), fl, fw));
+        }
+        default: {
+            // 2 and 7: their labels (the dark panel, the inlay) are the pattern.
+        }
+    }
+    return t;
+}
+
+// Marbled paper from the materials' marbling `mb`: stones in shades of the binding's
+// colour (so a book keeps its colour in a pile), touched with the accent and a pale
+// mix, in a net of dark veins.
+fn marbled(mb: f32, base: vec3<f32>, acc: vec3<f32>) -> vec3<f32> {
+    var c = mix(base * 0.42, mix(base, acc, 0.35) * 0.9, smoothstep(0.2, 0.5, mb));
+    c = mix(c, mix(base, vec3<f32>(0.6, 0.54, 0.42), 0.45) * 0.85, 0.8 * smoothstep(0.6, 0.78, mb));
+    return mix(c, base * 0.12, smoothstep(0.86, 0.95, mb));
+}
+
+// The colour of gold tooling: old gold, bright gold, or silver (trim 3 is blind).
+fn tool_color(trim: u32) -> vec3<f32> {
+    switch trim {
+        case 0u: {
+            return vec3<f32>(0.78, 0.56, 0.24);
+        }
+        case 1u: {
+            return vec3<f32>(1.0, 0.70, 0.28);
+        }
+        default: {
+            return vec3<f32>(0.78, 0.80, 0.84);
+        }
+    }
+}
+
+// A book (kind BOOK; see `gfx::kind::BOOK` and `gfx::books`). The box is the book's
+// envelope: the rounded spine and its bands, the joints, the boards' rounded edges and
+// the page block sunk between them are drawn on its faces. `tex` is the binding
+// materials at this point of the face. Returns how much of the room's light reaches it.
+fn book(s: ptr<function, Mat>, i: VOut, fw: f32, tex: vec4<f32>) -> f32 {
+    let sid = u32(round(i.color.a));
+    let rec = book_table[2] + sid * RECORD;
+    let look = book_table[rec];
+    let binding = look & 7u;
+    let age = f32(look >> 24u) / 255.0;
+    let pattern = i.param & 15u;
+    let trim = (i.param >> 4u) & 3u;
+    let base = i.color.rgb;
+    let sc = i.scale;
+    let m = i.local * sc;
+    let ln = i.lnormal;
+    var n = ln;
+    // What the spine and the boards are covered in.
+    var cover = base * (0.62 + 0.62 * tex.r);
+    var spec = 0.13;
+    var gloss = 30.0;
+    if (binding == 2u || binding == 4u) {
+        cover = base * (0.6 + 0.6 * tex.g);
+        spec = 0.03;
+        gloss = 10.0;
+    } else if (binding == 3u) {
+        cover = mix(base, base * 1.5 + 0.03, 0.4) * (0.86 + 0.28 * tex.a);
+        spec = 0.1;
+        gloss = 16.0;
+    }
+    var col = cover;
+    // Coverage of tooling (gold, or blind with trim 3) and of ink.
+    var tool = 0.0;
+    var ink = 0.0;
+    // How rubbed it is (scaled by age at the end), and how shut in from the light.
+    var rub = 0.0;
+    var occl = 1.0;
+    if (ln.z > 0.5) {
+        // The spine: `a` down from the head, `b` up from the tail, `u` across.
+        let a = 0.5 * sc.y - m.y;
+        let b = sc.y - a;
+        let u = m.x / (0.5 * sc.x);
+        // Rounded: the normal turns across it, the box's face standing for its crown.
+        n = vec3<f32>(0.8 * u, 0.0, 1.0);
+        rub = 0.6 * smoothstep(0.8, 1.0, abs(u)) + 1.0 - smoothstep(0.0, 0.006, min(a, b));
+        let bands = (look >> 3u) & 7u;
+        if (bands > 1u) {
+            let span = (sc.y - 2.0 * BAND_END) / f32(bands - 1u);
+            let k = clamp(round((a - BAND_END) / span), 0.0, f32(bands - 1u));
+            let dd = (a - BAND_END - k * span) / BAND_W;
+            if (abs(dd) < 1.0) {
+                // Over a band: leaning toward the head above its crest, the tail below.
+                n.y = n.y - 1.6 * dd;
+                rub = max(rub, 0.8 * (1.0 - abs(dd)));
+            } else {
+                occl = 0.72 + 0.28 * smoothstep(1.0, 1.9, abs(dd));
+            }
+        }
+        if (pattern == 5u && a < sc.y / 3.0) {
+            col = col * 0.5;
+        }
+        tool = spine_tooling(pattern, a, b, m.x, sc, bands, fw);
+        // The label the title sits on: leather, paper, or a strip of leather inlaid.
+        let label = (look >> 11u) & 3u;
+        if (label != 0u) {
+            let lg = unpack2x16float(book_table[rec + 5u]);
+            let half_w = select(0.5 * sc.x - 0.0024, 0.27 * sc.x, label == 3u);
+            let e = min(lg.x - abs(a - lg.y), half_w - abs(m.x));
+            if (e > 0.0) {
+                if (label == 2u) {
+                    col = mix(vec3<f32>(0.76, 0.69, 0.52), vec3<f32>(0.6, 0.5, 0.33), age * tex.a) * (0.9 + 0.15 * tex.a);
+                    ink = line_aa(abs(e - 0.0017), 0.0003, fw);
+                    spec = 0.03;
+                    gloss = 8.0;
+                } else {
+                    // Pattern 2's label is darker still.
+                    let lc = unpack_rgb(book_table[rec + 1u]) * select(1.0, 0.45, pattern == 2u);
+                    col = lc * (0.62 + 0.62 * tex.r);
+                    // Gilt fillets round it, the inlay's broad enough to read from afar.
+                    let fl = select(0.0004, 0.0007, label == 3u);
+                    tool = max(tool, line_aa(abs(e - 0.0005 - 2.0 * fl), fl, fw));
+                }
+                rub = 0.4 * rub;
+            } else {
+                occl = occl * (0.75 + 0.25 * smoothstep(0.0, 0.0008, -e));
+            }
+        }
+        // The title, and the volume's number.
+        let texel_m = fw * 0.7071 * GLYPH_EM;
+        let mode = (look >> 9u) & 3u;
+        let in_ink = label == 2u || binding == 3u;
+        if (mode != 0u) {
+            let tg = unpack2x16float(book_table[rec + 4u]);
+            var p = vec2<f32>(m.x, tg.y - a);
+            var pitch = PITCH_CAPS;
+            if (mode == 1u) {
+                p = vec2<f32>(a - tg.y, m.x);
+                pitch = PITCH;
+            }
+            let c = lettering(book_table[rec + 3u], p / tg.x, pitch, texel_m / tg.x);
+            ink = max(ink, select(0.0, c, in_ink));
+            tool = max(tool, select(c, 0.0, in_ink));
+        }
+        let numerals = (look >> 13u) & 3u;
+        if (numerals != 0u) {
+            let ng = unpack2x16float(book_table[rec + 8u]);
+            let volume = min((i.param >> 8u) & 255u, 63u);
+            let blk = book_table[book_table[1] + volume * 2u + numerals - 1u];
+            let c = lettering(blk, vec2<f32>(m.x, ng.y - a) / ng.x, PITCH_CAPS, texel_m / ng.x);
+            ink = max(ink, select(0.0, c, binding == 3u));
+            tool = max(tool, select(c, 0.0, binding == 3u));
+        }
+    } else if (abs(ln.x) > 0.5) {
+        // A cover: `fz` in from the fore-edge, `board` in from the joint, `ey` in from
+        // the head or tail.
+        let fz = 0.5 * sc.z + m.z;
+        let board = 0.5 * sc.z - m.z - JOINT;
+        let ey = 0.5 * sc.y - abs(m.y);
+        let e = min(min(fz, ey), board);
+        // The joint's groove, and the boards' edges rounded over.
+        let groove = line_aa(abs(board), 0.0011, fw);
+        n.z = n.z + clamp(board / 0.0011, -1.0, 1.0) * 0.7 * groove;
+        n.y = n.y + sign(m.y) * 0.9 * (1.0 - smoothstep(0.0, 0.0016, ey));
+        n.z = n.z - 0.9 * (1.0 - smoothstep(0.0, 0.0016, fz));
+        occl = 1.0 - 0.35 * groove;
+        rub = 0.6 * (1.0 - smoothstep(0.0, 0.0018, min(fz, ey)));
+        // The fore-edge's corners: bumped round and rubbed through.
+        let cd = length(max(vec2<f32>(0.011 - fz, 0.011 - ey), vec2<f32>(0.0)));
+        rub = max(rub, smoothstep(0.0045, 0.009, cd + 0.003 * tex.a));
+        switch binding {
+            case 0u: {
+                // A double fillet round the board, gold on bright-gold books, else blind.
+                let f = max(line_aa(abs(e - 0.009), 0.0004, fw), line_aa(abs(e - 0.0115), 0.0004, fw));
+                if (trim == 1u) {
+                    tool = f;
+                } else {
+                    col = col * (1.0 - 0.45 * f);
+                }
+            }
+            case 1u: {
+                // Leather over the spine and the corners, marbled paper between.
+                let strip = board - 0.14 * sc.z;
+                let corner = 0.2 * sc.z - (fz + ey);
+                if (max(-strip, corner) < 0.0) {
+                    let lod = clamp(log2(fw * 2800.0), 0.0, 8.0);
+                    let mb = textureSampleLevel(book_tex, book_sampler, vec2<f32>(m.z, m.y) / (2.0 * BOOK_TILE), lod).b;
+                    col = marbled(mb, base, unpack_rgb(book_table[rec + 2u])) * (0.9 + 0.2 * tex.a);
+                    spec = 0.04;
+                    gloss = 12.0;
+                    rub = 0.5 * rub;
+                }
+                tool = max(line_aa(abs(strip), 0.0004, fw), line_aa(abs(corner) * 0.7071, 0.0004, fw));
+            }
+            case 2u: {
+                // A frame pressed in blind.
+                col = col * (1.0 - 0.35 * line_aa(abs(e - 0.007), 0.0006, fw));
+            }
+            case 4u: {
+                // Paper over the boards, cloth over the spine.
+                if (board > 0.12 * sc.z) {
+                    col = base * (0.78 + 0.34 * tex.a);
+                }
+                occl = occl * (1.0 - 0.3 * line_aa(abs(board - 0.12 * sc.z), 0.0004, fw));
+            }
+            default: {}
+        }
+        // The front cover's title: stamped in gold on cloth, printed on a paper label
+        // on boards.
+        let blk = book_table[rec + 6u];
+        if (ln.x > 0.5 && blk != 0u) {
+            let cg = unpack2x16float(book_table[rec + 7u]);
+            let at = vec2<f32>(-0.5 * JOINT, 0.5 * sc.y - cg.y);
+            let c = lettering(blk, vec2<f32>(at.x - m.z, m.y - at.y) / cg.x, PITCH_CAPS, fw * 0.7071 * GLYPH_EM / cg.x);
+            if (binding == 4u) {
+                let lines = f32(blk >> 29u);
+                let half = vec2<f32>(0.33 * sc.z, cg.x * (0.5 * (lines - 1.0) * PITCH_CAPS + 1.0));
+                let le = min(half.x - abs(m.z - at.x), half.y - abs(m.y - at.y));
+                if (le > 0.0) {
+                    col = mix(vec3<f32>(0.76, 0.69, 0.52), vec3<f32>(0.6, 0.5, 0.33), age * tex.a) * (0.9 + 0.15 * tex.a);
+                    ink = max(c, line_aa(abs(le - 0.0025), 0.0003, fw));
+                    rub = 0.3 * rub;
+                }
+            } else {
+                tool = max(tool, c);
+            }
+        }
+    } else {
+        // Head, tail or fore-edge: the boards' edges either side of the page block.
+        let inner = 0.5 * sc.x - clamp(0.07 * sc.x, 0.0015, 0.003);
+        let fore = ln.z < -0.5;
+        if (abs(m.x) > inner) {
+            col = cover * 0.8;
+            rub = 0.7;
+        } else if (!fore && m.z > 0.5 * sc.z - 0.0016) {
+            // The spine's covering, end on.
+            col = cover * 0.7;
+            rub = 0.9;
+        } else {
+            // The page block, sunk between the boards: shaded where the eye's ray meets
+            // it. The fore-edge is hollowed to match a rounded spine.
+            let vd = qrot_inv(i.rot, i.world - g.cam_pos.xyz);
+            let into = max(-dot(vd, ln), 1e-4 * length(vd));
+            let sq = clamp(0.011 * sc.y, 0.0022, 0.0038);
+            var hit = m + vd * (sq / into);
+            if (fore && binding != 3u) {
+                let r = hit.x / inner;
+                hit = m + vd * ((sq + 0.06 * sc.x * (1.0 - r * r)) / into);
+            }
+            if (abs(hit.x) > inner) {
+                // The ray meets the inside of a board first.
+                col = cover * 0.3;
+                occl = 0.45;
+            } else if (!fore && hit.z > 0.5 * sc.z - 0.0042) {
+                // The headband: silk worked in two colours over a core.
+                let h = hash1(f32(sid) * 0.37);
+                let c1 = select(vec3<f32>(0.45, 0.06, 0.05), vec3<f32>(0.08, 0.2, 0.1), h > 0.5);
+                let c2 = select(vec3<f32>(0.7, 0.62, 0.45), vec3<f32>(0.08, 0.1, 0.3), fract(h * 7.0) > 0.7);
+                let bead = 1.0 - abs(hit.z - (0.5 * sc.z - 0.003)) / 0.0013;
+                col = select(c1, c2, fract(hit.x / 0.0012) > 0.5) * (0.35 + 0.65 * clamp(bead, 0.0, 1.0));
+                spec = 0.15;
+                gloss = 20.0;
+                occl = 0.7;
+            } else {
+                // Paper, yellowing with age, its leaves' edges in fine lines.
+                let along = select(hit.z, hit.y, fore);
+                let lod = clamp(log2(fw * 0.7 * 2.0 * 512.0 / BOOK_TILE), 0.0, 9.0);
+                let leaves = textureSampleLevel(book_tex, book_sampler, vec2<f32>(2.0 * hit.x, 0.1 * along) / BOOK_TILE, lod).a;
+                let paper = mix(vec3<f32>(0.62, 0.55, 0.41), vec3<f32>(0.48, 0.39, 0.26), age * (0.5 + 0.5 * tex.a));
+                col = paper * (0.7 + 0.45 * leaves);
+                spec = 0.03;
+                gloss = 10.0;
+                let acc = unpack_rgb(book_table[rec + 2u]);
+                switch (look >> 6u) & 7u {
+                    case 1u: {
+                        // Sprinkled: flecks too small to see far off, so only a tint there.
+                        let cell = floor(vec2<f32>(hit.x, along) / 0.0007);
+                        let fleck = step(0.6, hash3(vec3<f32>(cell, f32(sid))));
+                        let near = 1.0 - smoothstep(0.0003, 0.0009, fw);
+                        col = mix(col, acc, mix(0.25, 0.85 * fleck, near));
+                    }
+                    case 2u: {
+                        // Gilt on the head; leather on every edge.
+                        if (ln.y > 0.5 || binding == 0u) {
+                            tool = 0.9 + 0.1 * leaves;
+                        }
+                    }
+                    case 3u: {
+                        let mb = textureSampleLevel(book_tex, book_sampler, vec2<f32>(hit.x, along) / BOOK_TILE, lod).b;
+                        col = marbled(mb, base, acc) * (0.85 + 0.25 * leaves);
+                    }
+                    case 4u: {
+                        col = mix(col, acc * (0.55 + 0.35 * leaves), 0.7);
+                    }
+                    default: {}
+                }
+                // Foxing, and dust settled on the head.
+                col = col * (1.0 - 0.3 * age * smoothstep(0.66, 0.74, tex.a));
+                if (ln.y > 0.5) {
+                    col = mix(col, vec3<f32>(0.36, 0.34, 0.31), 0.25 * age);
+                }
+                // Shaded under the boards' overhang.
+                occl = 0.55 + 0.45 * smoothstep(0.0, 0.004, inner - abs(hit.x));
+            }
+        }
+    }
+    // Vellum is ruled and lettered by hand.
+    if (binding == 3u) {
+        ink = max(ink, tool);
+        tool = 0.0;
+    }
+    // Rubbed with age, unevenly: leather to its flesh side, cloth to its threads, paper
+    // to the board beneath.
+    rub = clamp(rub * age * (0.4 + 1.2 * tex.a), 0.0, 1.0);
+    var worn = mix(base * 1.4, vec3<f32>(0.4, 0.29, 0.2), 0.45);
+    if (binding == 2u) {
+        worn = mix(base, vec3<f32>(0.55, 0.5, 0.42), 0.5);
+    } else if (binding >= 3u) {
+        worn = vec3<f32>(0.3, 0.26, 0.2);
+    }
+    col = mix(col, worn, rub);
+    col = mix(col, vec3<f32>(0.025, 0.02, 0.018), ink);
+    let nw = qrot(i.rot, normalize(n));
+    (*s).n = nw;
+    (*s).albedo = col;
+    (*s).spec = vec3<f32>(spec * (1.0 - 0.7 * rub));
+    (*s).gloss = gloss;
+    let gt = tool * (1.0 - rub);
+    if (gt > 0.002) {
+        if (trim == 3u) {
+            (*s).albedo = col * (1.0 - 0.55 * gt);
+        } else {
+            // Gold leaf: satin, keeping a glint of its own in the dimmest corner.
+            let gold = tool_color(trim);
+            let view = normalize(g.cam_pos.xyz - i.world);
+            (*s).albedo = mix(col, gold * 0.32, gt);
+            (*s).spec = mix((*s).spec, gold * 0.85, gt);
+            (*s).gloss = mix(gloss, 46.0, gt);
+            (*s).emit = (env(reflect(-view, nw), 0.55) * 0.45 + vec3<f32>(0.05)) * gold * gt;
+        }
+    }
+    // Book flags: 1 active, 2 loose, bits 2..6 department, 7..14 category.
+    let flags = i.param >> 16u;
+    let lens = u32(g.lens.x);
+    if (lens != 0u && (flags & 2u) != 0u) {
+        // The Seeker's Lens: loose books of the group sought glow, the rest fade.
+        var key = sid;
+        if (lens == 1u) {
+            key = (flags >> 2u) & 31u;
+        } else if (lens == 2u) {
+            key = (flags >> 7u) & 255u;
+        }
+        if (key == u32(round(g.lens.y))) {
+            let sig = base / max(max(base.r, base.g), max(base.b, 1e-3));
+            let rim = 1.0 - smoothstep(0.002, 0.006, box_edge(i.local, sc, ln));
+            let pulse = 0.5 + 0.5 * sin(g.cam_pos.w * 3.0);
+            (*s).emit = sig * (0.25 + 0.1 * pulse + rim * 1.4);
+        } else {
+            (*s).albedo = (*s).albedo * 0.22;
+        }
+    }
+    if ((flags & 1u) != 0u) {
+        // The active book in hand: a bright rim along every edge, readable on any cover
+        // colour, over a faint warm wash.
+        let rim = 1.0 - smoothstep(0.0015, 0.0035, box_edge(i.local, sc, ln));
+        let pulse = 0.5 + 0.5 * sin(g.cam_pos.w * 4.0);
+        (*s).emit = vec3<f32>(1.0, 0.82, 0.5) * (rim * (1.3 + 0.7 * pulse) + 0.1 + 0.08 * pulse);
+    }
+    return occl;
+}
+
 // Books (kind BOOK only), in a pipeline of their own: their material needs more than
 // the rest of the scene, and would otherwise cost every material its registers.
 @fragment
 fn fs_book(i: VOut) -> @location(0) vec4<f32> {
-    let b = book_surface(i);
+    // Derivatives first, in uniform control flow: the pixel's footprint, and the binding
+    // materials across the face, each book's tile set apart from its neighbours'.
+    let fw = length(fwidth(i.world));
+    let sid = round(i.color.a);
+    let place = fract(vec2<f32>(sid * 0.618034, sid * 0.7548777 + f32((i.param >> 8u) & 255u) * 0.5698403));
+    let tex = textureSample(book_tex, book_sampler, face_uv(i.lnormal, i.local * i.scale) / BOOK_TILE + place);
     var s: Mat;
-    s.albedo = b.albedo;
-    s.spec = vec3<f32>(b.spec);
-    s.gloss = b.gloss;
-    s.emit = b.emit;
-    s.n = qrot(i.rot, i.lnormal);
+    s.emit = vec3<f32>(0.0);
     s.back = 0.0;
-    let ao = mix(0.7, 1.0, mix(0.55, 1.0, smoothstep(0.0, 2.2, i.world.y)));
+    let occl = book(&s, i, fw, tex);
+    let ao = mix(0.7, 1.0, mix(0.55, 1.0, smoothstep(0.0, 2.2, i.world.y))) * occl;
     let amb = mix(g.ambient_bottom.rgb, g.ambient_top.rgb, s.n.y * 0.5 + 0.5) * ao;
-    let col = s.albedo * amb + s.emit + shade(s, i.world);
+    let col = s.albedo * amb + s.emit + shade(s, i.world) * (0.35 + 0.65 * occl);
     return vec4<f32>(apply_fog(col, i.world), 1.0);
 }
 

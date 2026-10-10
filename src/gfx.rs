@@ -1,6 +1,8 @@
 //! wgpu renderer: instanced boxes (opaque, translucent, moonbeams), lettering, bloom,
 //! tonemap, egui.
 
+pub mod books;
+
 use crate::text::{self, Glyph};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3, Vec4};
@@ -12,6 +14,13 @@ use winit::window::Window;
 pub mod kind {
     pub const PLAIN: u32 = 0;
     pub const WOOD: u32 = 1;
+    /// A book, its box the envelope of boards, spine and page block; drawn in a
+    /// pipeline of its own (`fs_book`) from the library's book table (`books`). The
+    /// colour is the series', w the series' index (its record in the table). param:
+    /// spine pattern in bits 0..3, trim (tooling: 0 old gold, 1 bright gold, 2 silver,
+    /// 3 blind) in 4..5, volume in 8..15, and from bit 16 flags: 1 the active book in
+    /// hand, 2 loose, then its department in bits 2..6 and category in 7..14 (for the
+    /// Seeker's Lens).
     pub const BOOK: u32 = 2;
     pub const FLOOR: u32 = 3;
     pub const STONE: u32 = 4;
@@ -220,6 +229,102 @@ struct ChunkGpu {
     max: Vec3,
 }
 
+/// What the book shader reads besides its instances (`book_pipe`'s group 1): the glyph
+/// atlas, the library's book table (`books::table`) and the binding materials.
+struct BookData {
+    layout: wgpu::BindGroupLayout,
+    atlas: wgpu::TextureView,
+    glyph_sampler: wgpu::Sampler,
+    materials: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+    table: wgpu::Buffer,
+    bg: wgpu::BindGroup,
+}
+
+impl BookData {
+    fn new(
+        device: &wgpu::Device,
+        layout: wgpu::BindGroupLayout,
+        (atlas, glyph_sampler): (wgpu::TextureView, wgpu::Sampler),
+        (materials, sampler): (wgpu::TextureView, wgpu::Sampler),
+    ) -> Self {
+        // Empty until the library's table arrives: no lettering, plain bindings.
+        let table = Self::table_buffer(device, 64);
+        let bg = Self::group(device, &layout, &atlas, &glyph_sampler, &materials, &sampler, &table);
+        Self {
+            layout,
+            atlas,
+            glyph_sampler,
+            materials,
+            sampler,
+            table,
+            bg,
+        }
+    }
+
+    fn table_buffer(device: &wgpu::Device, words: usize) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("book table"),
+            size: (words * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    fn group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        atlas: &wgpu::TextureView,
+        glyph_sampler: &wgpu::Sampler,
+        materials: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+        table: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("books"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(atlas),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(glyph_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: table.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(materials),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        })
+    }
+
+    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, words: &[u32]) {
+        if words.len() * 4 > self.table.size() as usize {
+            self.table = Self::table_buffer(device, words.len().next_power_of_two());
+            self.bg = Self::group(
+                device,
+                &self.layout,
+                &self.atlas,
+                &self.glyph_sampler,
+                &self.materials,
+                &self.sampler,
+                &self.table,
+            );
+        }
+        queue.write_buffer(&self.table, 0, bytemuck::cast_slice(words));
+    }
+}
+
 /// The planes of a view frustum (inside where `dot(xyz, p) + w >= 0`).
 fn frustum(view_proj: Mat4) -> [Vec4; 6] {
     let r = |i| view_proj.row(i);
@@ -263,6 +368,7 @@ pub struct Renderer {
     scene_pipe: wgpu::RenderPipeline,
     /// Books, drawn with a fragment shader of their own (`fs_book`).
     book_pipe: wgpu::RenderPipeline,
+    book_data: BookData,
     trans_pipe: wgpu::RenderPipeline,
     beam_pipe: wgpu::RenderPipeline,
     /// Lettering on signs and labels, and the glyph atlas it is cut from.
@@ -501,7 +607,6 @@ impl Renderer {
         };
         use wgpu::CompareFunction::{Always, Less};
         let scene_pipe = make_scene("scene", &scene_layout, "fs_main", None, (true, Less), true);
-        let book_pipe = make_scene("books", &scene_layout, "fs_book", None, (true, Less), true);
         let trans_pipe = make_scene(
             "trans",
             &trans_layout,
@@ -520,6 +625,24 @@ impl Renderer {
             (false, Always),
             false,
         );
+
+        // Fragment shaders' textures and samplers.
+        let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let samp_entry = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        };
 
         // ---- lettering: glyph quads cut from a distance-field atlas, over the surfaces
         // they are set on (so drawn after them, testing depth but not writing it).
@@ -553,32 +676,16 @@ impl Renderer {
         });
         let text_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("glyphs"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+            entries: &[tex_entry(1), samp_entry(2)],
         });
+        let atlas_view = atlas.create_view(&Default::default());
         let text_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("glyphs"),
             layout: &text_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&atlas.create_view(&Default::default())),
+                    resource: wgpu::BindingResource::TextureView(&atlas_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -639,36 +746,90 @@ impl Renderer {
             cache: None,
         });
 
+        // ---- books: a pipeline of their own (`fs_book`), which also reads the glyph
+        // atlas, the library's book table and a texture of binding materials.
+        let (tex_size, tex_levels) = books::material();
+        let materials = device.create_texture_with_data(
+            &queue,
+            &wgpu::TextureDescriptor {
+                label: Some("book materials"),
+                size: wgpu::Extent3d {
+                    width: tex_size,
+                    height: tex_size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: tex_levels.len() as u32,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::MipMajor,
+            &tex_levels.concat(),
+        );
+        let book_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("books"),
+            entries: &[
+                tex_entry(1),
+                samp_entry(2),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                tex_entry(4),
+                samp_entry(5),
+            ],
+        });
+        let book_pipe = make_scene(
+            "books",
+            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("books"),
+                bind_group_layouts: &[Some(&globals_layout), Some(&book_layout)],
+                immediate_size: 0,
+            }),
+            "fs_book",
+            None,
+            (true, Less),
+            true,
+        );
+        let book_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("book materials"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 8,
+            ..Default::default()
+        });
+        let book_data = BookData::new(
+            &device,
+            book_layout,
+            (atlas_view, glyph_sampler),
+            (materials.create_view(&Default::default()), book_sampler),
+        );
+
         // ---- post pipelines
         let post_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("post.wgsl").into()),
         });
-        let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        };
-        let samp_entry = wgpu::BindGroupLayoutEntry {
-            binding: 1,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            count: None,
-        };
         let chain_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("chain"),
-            entries: &[tex_entry(0), samp_entry],
+            entries: &[tex_entry(0), samp_entry(1)],
         });
         let tonemap_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tonemap"),
             entries: &[
                 tex_entry(0),
-                samp_entry,
+                samp_entry(1),
                 tex_entry(2),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
@@ -816,6 +977,7 @@ impl Renderer {
             config,
             scene_pipe,
             book_pipe,
+            book_data,
             trans_pipe,
             beam_pipe,
             text_pipe,
@@ -1015,8 +1177,13 @@ impl Renderer {
         self.text_buf.upload(&self.device, &self.queue, glyphs);
     }
 
-    /// Upload the scene chunks that have changed (and forget any beyond them).
-    pub fn sync_chunks(&mut self, chunks: &mut [crate::scene::Chunk]) {
+    /// Upload the scene chunks that have changed (and forget any beyond them), and the
+    /// library's book table when it is new.
+    pub fn sync_chunks(&mut self, chunks: &mut crate::scene::Chunks) {
+        if chunks.books_new {
+            self.book_data.upload(&self.device, &self.queue, &chunks.books);
+            chunks.books_new = false;
+        }
         self.chunks.truncate(chunks.len());
         while self.chunks.len() < chunks.len() {
             self.chunks.push(ChunkGpu {
@@ -1027,7 +1194,7 @@ impl Renderer {
             });
         }
         self.uploaded_chunks = 0;
-        for (g, c) in self.chunks.iter_mut().zip(chunks) {
+        for (g, c) in self.chunks.iter_mut().zip(chunks.iter_mut()) {
             if c.upload {
                 self.uploaded_chunks += 1;
                 g.opaque.upload(&self.device, &self.queue, &c.opaque);
@@ -1137,6 +1304,7 @@ impl Renderer {
             rp.set_pipeline(&self.scene_pipe);
             draw_boxes(&mut rp, &self.static_buf);
             rp.set_pipeline(&self.book_pipe);
+            rp.set_bind_group(1, &self.book_data.bg, &[]);
             for &(_, i) in &visible {
                 draw_boxes(&mut rp, &self.chunks[i].opaque);
             }
@@ -1217,6 +1385,7 @@ impl Renderer {
                 rp.set_vertex_buffer(0, self.box_vb.slice(..));
                 rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
                 rp.set_pipeline(&self.book_pipe);
+                rp.set_bind_group(1, &self.book_data.bg, &[]);
                 draw_boxes(&mut rp, &self.held_buf);
             }
         }

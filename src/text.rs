@@ -71,6 +71,8 @@ struct Cells {
     /// Height of a capital, in ems.
     cap: f32,
     cells: Vec<Cell>,
+    /// Kerning from each character to the next, by slot (`kern[a * n + b]`), in ems.
+    kern: Vec<f32>,
     height: u32,
 }
 
@@ -130,17 +132,25 @@ fn cells() -> &'static Cells {
             x += w + 1;
             row = row.max(h);
         }
+        let kern = (cells.iter())
+            .flat_map(|a| cells.iter().map(|b| font.kern_unscaled(a.id, b.id) / upem))
+            .collect();
         Cells {
             font,
             upem,
             cap,
             cells,
+            kern,
             height: (y + row).next_power_of_two(),
         }
     })
 }
 
 fn slot(c: char) -> usize {
+    // CHARS opens with printable ASCII in order.
+    if (' '..='~').contains(&c) {
+        return c as usize - ' ' as usize;
+    }
     CHARS.chars().position(|k| k == c).unwrap_or_else(|| slot('?'))
 }
 
@@ -174,25 +184,60 @@ fn outline(font: &FontArc, id: GlyphId, upem: f32) -> Vec<(Vec2, Vec2)> {
     segs
 }
 
-/// Set `text` on one line centred on `centre` (the middle of its capitals), reading
-/// along `right` with `up` up (both unit), shrunk to fit `width` if it is wider; its
-/// glyphs go to `out`.
-pub fn set_line(out: &mut Vec<Glyph>, text: &str, style: Style, centre: Vec3, right: Vec3, up: Vec3, width: f32) {
+/// Lay `text` out on one line: each character's slot in the atlas with where its pen
+/// stands, in ems from the start, and the line's width in ems.
+pub fn run(text: &str, tracking: f32) -> (Vec<(usize, f32)>, f32) {
     let c = cells();
+    let n = c.cells.len();
     let mut pen = 0.0;
     let mut prev = None;
     let mut placed = Vec::new();
     for ch in text.chars() {
         let i = slot(ch);
-        let id = c.cells[i].id;
         if let Some(p) = prev {
-            pen += c.font.kern_unscaled(p, id) / c.upem;
+            pen += c.kern[p * n + i];
         }
         placed.push((i, pen));
-        pen += c.cells[i].advance + style.tracking;
-        prev = Some(id);
+        pen += c.cells[i].advance + tracking;
+        prev = Some(i);
     }
-    let w = pen - if placed.is_empty() { 0.0 } else { style.tracking };
+    let w = pen - if placed.is_empty() { 0.0 } else { tracking };
+    (placed, w)
+}
+
+/// Height of a capital, in ems.
+pub fn cap_height() -> f32 {
+    cells().cap
+}
+
+/// Whether a character's glyph shows anything (a space does not).
+pub fn inked(slot: usize) -> bool {
+    cells().cells[slot].size[0] > 0
+}
+
+/// Where each character's glyph sits in the atlas, for shaders that cut glyphs out
+/// themselves: two words per slot, its top left (x | y << 16) and its size and offset
+/// from the pen on the baseline (w | h << 8 | (min x + 128) << 16 | (min y + 128) << 24),
+/// in atlas pixels.
+pub fn cell_words() -> Vec<u32> {
+    let bias = |v: i32| (v + 128).clamp(0, 255) as u32;
+    (cells().cells.iter())
+        .flat_map(|cell| {
+            let [w, h] = cell.size;
+            [
+                cell.atlas[0] | cell.atlas[1] << 16,
+                w.min(255) | h.min(255) << 8 | bias(cell.min[0]) << 16 | bias(cell.min[1]) << 24,
+            ]
+        })
+        .collect()
+}
+
+/// Set `text` on one line centred on `centre` (the middle of its capitals), reading
+/// along `right` with `up` up (both unit), shrunk to fit `width` if it is wider; its
+/// glyphs go to `out`.
+pub fn set_line(out: &mut Vec<Glyph>, text: &str, style: Style, centre: Vec3, right: Vec3, up: Vec3, width: f32) {
+    let c = cells();
+    let (placed, w) = run(text, style.tracking);
     let em = style.em.min(width / w.max(1e-6));
     let px = em / EM_PX;
     let origin = centre - right * (w * em * 0.5) - up * (c.cap * em * 0.5);
@@ -295,6 +340,8 @@ mod tests {
 
     #[test]
     fn every_character_has_a_glyph() {
+        assert!((' '..='~').zip(CHARS.chars()).all(|(a, b)| a == b));
+        assert_eq!(slot('–'), 95);
         let c = cells();
         for (ch, cell) in CHARS.chars().zip(&c.cells) {
             assert!(cell.advance > 0.0, "{ch:?} has no advance");
