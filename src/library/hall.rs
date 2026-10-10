@@ -317,20 +317,20 @@ impl Library {
     /// as they were.
     fn wing_names(&mut self, c: Vec3, r: f32) {
         const LETTERS: Style = Style {
-            em: 0.19,
+            em: 0.23,
             tracking: 0.12,
             lettering: Lettering::Gilt,
             color: GOLD_LEAF,
         };
         for (n, words) in [(-Vec3::X, ["EAST", "WING"]), (Vec3::X, ["WEST", "WING"])] {
             let right = Vec3::Y.cross(n);
-            for (word, u) in words.into_iter().zip([-0.85f32, 0.85]) {
+            for (word, u) in words.into_iter().zip([-0.95f32, 0.95]) {
                 // Along the arch's curve and up out of it, at `u` along the reading way.
                 let z = right.z * u;
                 let rise = libm::sqrtf(r * r - z * z);
                 let at = Vec3::new(c.x, c.y + rise, c.z + z) + n * (0.12 + 0.0015);
                 let along = (right + Vec3::Y * (-z / rise * right.z)).normalize();
-                text::set_line(&mut self.text, word, LETTERS, at, along, n.cross(along), 0.8);
+                text::set_line(&mut self.text, word, LETTERS, at, along, n.cross(along), 0.9);
             }
         }
     }
@@ -2003,9 +2003,9 @@ fn hearth_fire(lib: &mut Library, c: Vec3) {
     lib.decor(embers);
     // A broad sheet of flame along the logs, and tongues off it at either end.
     for (at, size, turn) in [
-        (Vec3::new(0.0, 0.62, 0.0), Vec3::new(1.0, 0.75, 0.32), 0.0f32),
-        (Vec3::new(-0.3, 0.5, 0.04), Vec3::new(0.45, 0.5, 0.22), 0.55),
-        (Vec3::new(0.32, 0.48, -0.03), Vec3::new(0.4, 0.45, 0.22), -0.45),
+        (Vec3::new(0.0, 0.62, 0.0), Vec3::new(1.2, 0.85, 0.34), 0.0f32),
+        (Vec3::new(-0.38, 0.5, 0.04), Vec3::new(0.5, 0.55, 0.24), 0.5),
+        (Vec3::new(0.4, 0.47, -0.03), Vec3::new(0.45, 0.5, 0.24), -0.4),
     ] {
         lib.translucent(Inst::new(
             c + at,
