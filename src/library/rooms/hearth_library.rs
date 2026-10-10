@@ -1245,7 +1245,7 @@ fn spinning_wheel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
 
 /// A barrel of ale by the door, iron-hooped, a tap in it.
 fn barrel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
-    let r = 0.335;
+    let r = 0.33;
     let body = turned(
         lib,
         &[
