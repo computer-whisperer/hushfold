@@ -217,6 +217,153 @@ fn frustum(view_proj: Mat4) -> [Vec4; 6] {
     [r(3) + r(0), r(3) - r(0), r(3) + r(1), r(3) - r(1), r(2), r(3) - r(2)]
 }
 
+/// TEMP(visual pass): a shader from the file named by `var`, to try changes without a build.
+fn shader_src(var: &str, built_in: &str) -> String {
+    std::env::var(var)
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_else(|| built_in.to_string())
+}
+
+/// TEMP(visual pass): rows of sample boxes of the new materials 2.8 m north of the eye
+/// (HUSHFOLD_MATERIALS=1), to look at them before anything is made of them.
+fn material_samples(eye: Vec3) -> Vec<Inst> {
+    let mut v = Vec::new();
+    let tilt = Quat::from_rotation_y(0.6) * Quat::from_rotation_x(0.35);
+    let at = |col: usize, row: usize| eye + Vec3::new(-1.35 + col as f32 * 0.54, -1.25 + row as f32 * 0.5, -2.8);
+    let metals = [
+        [0.78, 0.56, 0.24],
+        [0.9, 0.72, 0.35],
+        [0.32, 0.32, 0.34],
+        [0.8, 0.8, 0.82],
+        [0.8, 0.42, 0.25],
+        [0.45, 0.3, 0.15],
+    ];
+    for (c, m) in metals.iter().enumerate() {
+        let rot = if c % 2 == 0 { tilt } else { Quat::from_rotation_y(0.3) };
+        v.push(Inst::new(
+            at(c, 4),
+            rot,
+            Vec3::splat(0.3),
+            kind::METAL,
+            [m[0], m[1], m[2], 1.0],
+            0,
+        ));
+    }
+    let cloths: [([f32; 3], u32); 6] = [
+        ([0.5, 0.06, 0.08], 0),
+        ([0.08, 0.1, 0.35], 0),
+        ([0.12, 0.3, 0.12], 0),
+        ([0.5, 0.06, 0.08], 0x00c08a30),
+        ([0.25, 0.08, 0.32], 0x00c08a30),
+        ([0.6, 0.5, 0.3], 0),
+    ];
+    for (c, (col, p)) in cloths.iter().enumerate() {
+        let (rot, size) = if c < 3 {
+            (Quat::from_rotation_y(0.3), Vec3::splat(0.32))
+        } else {
+            (Quat::IDENTITY, Vec3::new(0.38, 0.46, 0.02))
+        };
+        v.push(Inst::new(
+            at(c, 3),
+            rot,
+            size,
+            kind::CLOTH,
+            [col[0], col[1], col[2], 1.0],
+            *p,
+        ));
+    }
+    let leaf = [0.16, 0.34, 0.1];
+    v.push(Inst::new(
+        at(0, 2),
+        tilt,
+        Vec3::splat(0.34),
+        kind::LEAF,
+        [leaf[0], leaf[1], leaf[2], 1.0],
+        0,
+    ));
+    for k in 0..5 {
+        let a = k as f32 * 1.25;
+        let rot = Quat::from_rotation_z(0.9 * (a.sin())) * Quat::from_rotation_y(a);
+        let p = at(1, 2) + Vec3::new(0.12 * a.cos(), 0.04 * k as f32 - 0.08, 0.12 * a.sin());
+        v.push(Inst::new(
+            p,
+            rot,
+            Vec3::new(0.16, 0.008, 0.06),
+            kind::LEAF,
+            [0.2, 0.4, 0.12, 1.0],
+            0,
+        ));
+    }
+    v.push(Inst::new(
+        at(2, 2),
+        Quat::IDENTITY,
+        Vec3::new(0.02, 0.4, 0.02),
+        kind::LEAF,
+        [0.25, 0.32, 0.12, 1.0],
+        0,
+    ));
+    v.push(Inst::new(
+        at(3, 2),
+        Quat::from_rotation_y(0.4),
+        Vec3::new(0.4, 0.3, 0.3),
+        kind::LEAF,
+        [0.1, 0.25, 0.12, 1.0],
+        0,
+    ));
+    v.push(Inst::new(
+        at(4, 2),
+        Quat::from_rotation_x(-1.1),
+        Vec3::new(0.2, 0.01, 0.32),
+        kind::LEAF,
+        [0.3, 0.42, 0.12, 1.0],
+        0,
+    ));
+    v.push(Inst::new(
+        at(5, 2),
+        tilt,
+        Vec3::splat(0.3),
+        kind::LEAF,
+        [0.42, 0.3, 0.1, 1.0],
+        0,
+    ));
+    let gems = [
+        [0.55, 0.3, 1.0, 0.0],
+        [0.55, 0.3, 1.0, 0.6],
+        [0.3, 0.85, 1.0, 1.5],
+        [1.0, 0.6, 0.25, 1.0],
+        [0.35, 1.0, 0.5, 3.0],
+        [0.7, 0.85, 1.0, 0.25],
+    ];
+    for (c, g) in gems.iter().enumerate() {
+        let size = if c == 5 {
+            Vec3::new(0.25, 0.4, 0.25)
+        } else {
+            Vec3::new(0.16, 0.3, 0.16)
+        };
+        v.push(Inst::new(at(c, 1), tilt, size, kind::CRYSTAL, *g, 0));
+    }
+    for c in 0..5 {
+        let rot = Quat::from_rotation_x(if c == 4 { 0.0 } else { 0.5 });
+        let size = if c == 4 {
+            Vec3::new(0.08, 0.08, 0.4)
+        } else {
+            Vec3::new(0.46, 0.34, 0.006)
+        };
+        let col = [0.86, 0.78, 0.6, 1.0];
+        v.push(Inst::new(at(c, 0), rot, size, kind::PARCHMENT, col, c as u32 % 4));
+    }
+    v.push(Inst::new(
+        at(5, 0),
+        Quat::from_rotation_x(0.5),
+        Vec3::new(0.46, 0.34, 0.006),
+        kind::PARCHMENT,
+        [0.7, 0.6, 0.42, 1.0],
+        1,
+    ));
+    v
+}
+
 fn box_visible(planes: &[Vec4; 6], min: Vec3, max: Vec3) -> bool {
     planes.iter().all(|p| {
         // The corner furthest along the plane's normal.
@@ -259,6 +406,8 @@ pub struct Renderer {
     dyn_buf: GrowBuf,
     trans_buf: GrowBuf,
     held_buf: GrowBuf,
+    /// TEMP(visual pass): see `material_samples`.
+    samples: Option<GrowBuf>,
     chunks: Vec<ChunkGpu>,
     timer: Option<Timer>,
     targets: Targets,
@@ -353,7 +502,7 @@ impl Renderer {
         // ---- scene pipelines
         let scene_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scene"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(shader_src("HUSHFOLD_SHADER", include_str!("shader.wgsl")).into()),
         });
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globals"),
@@ -452,7 +601,7 @@ impl Renderer {
         // ---- post pipelines
         let post_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("post.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(shader_src("HUSHFOLD_POST", include_str!("post.wgsl")).into()),
         });
         let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,
@@ -605,6 +754,7 @@ impl Renderer {
             dyn_buf: GrowBuf::new(&device, "dynamic", 16384),
             trans_buf: GrowBuf::new(&device, "trans", 16384),
             held_buf: GrowBuf::new(&device, "held", 256),
+            samples: std::env::var_os("HUSHFOLD_MATERIALS").map(|_| GrowBuf::new(&device, "samples", 64)),
             chunks: Vec::new(),
             timer,
             window,
@@ -840,6 +990,13 @@ impl Renderer {
         self.dyn_buf.upload(&self.device, &self.queue, f.dynamic);
         self.trans_buf.upload(&self.device, &self.queue, f.trans);
         self.held_buf.upload(&self.device, &self.queue, f.held);
+        if let Some(b) = &mut self.samples {
+            b.upload(
+                &self.device,
+                &self.queue,
+                &material_samples(Vec3::from_slice(&f.globals.cam_pos[..3])),
+            );
+        }
 
         // Chunks in view, nearest first (so near books hide far ones early).
         let planes = frustum(Mat4::from_cols_array_2d(&f.globals.view_proj));
@@ -896,7 +1053,11 @@ impl Renderer {
             rp.set_pipeline(&self.scene_pipe);
             // Walls and floors first: they hide whole rooms of books behind them.
             let opaque = visible.iter().map(|&(_, i)| &self.chunks[i].opaque);
-            for b in std::iter::once(&self.static_buf).chain(opaque).chain([&self.dyn_buf]) {
+            for b in std::iter::once(&self.static_buf)
+                .chain(opaque)
+                .chain([&self.dyn_buf])
+                .chain(&self.samples)
+            {
                 if b.len > 0 {
                     rp.set_vertex_buffer(1, b.buf.slice(..));
                     rp.draw_indexed(0..36, 0, 0..b.len);

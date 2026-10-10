@@ -94,6 +94,10 @@ fn fs_tonemap(i: FOut) -> @location(0) vec4<f32> {
     // Gentle warm grade.
     c = c * vec3<f32>(1.04, 1.0, 0.94);
     c = aces(c);
+    // Moonlit shadows: a touch of blue in the darks, leaving mid-tones (book colours)
+    // and the candlelit highlights as they are.
+    let lum = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+    c *= mix(vec3<f32>(1.0), vec3<f32>(0.93, 0.98, 1.12), (1.0 - smoothstep(0.0, 0.25, lum)) * 0.6);
     let d = i.uv - vec2<f32>(0.5);
     let vig = 1.0 - pp.vignette * dot(d, d) * 1.6;
     c = c * vig;
