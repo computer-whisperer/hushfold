@@ -31,7 +31,6 @@ pub enum Motion {
     Tick { axis: Vec3, steps: u32, period: f32 },
     /// Sliding out along `travel` and back once every `period`, resting at each end: a
     /// library ladder along its rail.
-    #[allow(dead_code)] // TEMP: for the round-4 area agents; remove at merge if unused.
     Slide { travel: Vec3, period: f32 },
 }
 

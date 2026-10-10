@@ -62,7 +62,6 @@ impl Shape {
     }
 
     /// It `k` times the size.
-    #[allow(dead_code)] // TEMP: for the round-4 area agents; remove at merge if unused.
     pub fn scaled(self, k: f32) -> Shape {
         self.sized(self.size * k)
     }
@@ -226,7 +225,6 @@ impl Mesh {
     }
 
     /// A cone about y, its point up.
-    #[allow(dead_code)] // TEMP: for the round-4 area agents; remove at merge if unused.
     pub fn cone(segs: usize) -> Mesh {
         let p = [(0.0, -0.5), (0.5, -0.5), (0.0, 0.5)];
         Mesh::lathe(&p.map(Vec2::from), segs)
@@ -256,7 +254,6 @@ impl Mesh {
 
     /// A ring about y whose round section is `tube` of its radius (to the section's
     /// middle) across.
-    #[allow(dead_code)] // TEMP: for the round-4 area agents; remove at merge if unused.
     pub fn torus(tube: f32, segs: usize, sides: usize) -> Mesh {
         let r = tube * 0.5;
         let mut p: Vec<Vec2> = (0..sides)
