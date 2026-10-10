@@ -2,12 +2,10 @@
 //! ghosts of empty slots are kept in chunks of space, each rebuilt and re-uploaded
 //! only when something in it changes. Books on the move are drawn per frame.
 
-use crate::catalog::Series;
 use crate::game::BookState;
-use crate::gfx::{Inst, books};
+use crate::gfx::Inst;
 use glam::Vec3;
 use std::collections::HashMap;
-use std::ops::{Deref, DerefMut};
 
 /// Chunk size: across, up, across.
 const SIZE: Vec3 = Vec3::new(8.0, 6.0, 8.0);
@@ -27,29 +25,6 @@ pub struct Chunk {
     pub upload: bool,
 }
 
-/// The chunks, and what the renderer draws every book with: the library's book table
-/// (`gfx::books::table`), sent once.
-#[derive(Default)]
-pub struct Chunks {
-    list: Vec<Chunk>,
-    pub books: Vec<u32>,
-    /// The table is new and wants uploading.
-    pub books_new: bool,
-}
-
-impl Deref for Chunks {
-    type Target = Vec<Chunk>;
-    fn deref(&self) -> &Vec<Chunk> {
-        &self.list
-    }
-}
-
-impl DerefMut for Chunks {
-    fn deref_mut(&mut self) -> &mut Vec<Chunk> {
-        &mut self.list
-    }
-}
-
 /// What a book's place in a chunk was decided from.
 #[derive(Clone, Copy, PartialEq)]
 struct Drawn {
@@ -60,7 +35,7 @@ struct Drawn {
 
 #[derive(Default)]
 pub struct Scene {
-    pub chunks: Chunks,
+    pub chunks: Vec<Chunk>,
     index: HashMap<(i32, i32, i32), u32>,
     drawn: Vec<Drawn>,
     /// The chunks holding each series' slots.
@@ -191,16 +166,8 @@ impl Scene {
         self.lit.get(&s).copied().unwrap_or((0, false))
     }
 
-    /// Make the library's book table from its series, the first time.
-    pub fn bind(&mut self, series: &[Series]) {
-        if self.chunks.books.is_empty() {
-            self.chunks.books = books::table(series);
-            self.chunks.books_new = true;
-        }
-    }
-
     pub fn redraw_all(&mut self) {
-        for c in self.chunks.iter_mut() {
+        for c in &mut self.chunks {
             c.rebuild = true;
         }
     }

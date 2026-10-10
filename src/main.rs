@@ -116,6 +116,7 @@ impl Running {
         );
         self.renderer.set_static(&self.game.lib.static_insts);
         self.renderer.set_text(&self.game.lib.text);
+        self.renderer.set_books(&self.game.lib.series);
         self.renderer.clear_chunks();
         // Fill its chunks now, so this frame doesn't draw an empty library.
         self.game.build_instances();
@@ -574,6 +575,7 @@ impl ApplicationHandler for App {
         );
         renderer.set_static(&game.lib.static_insts);
         renderer.set_text(&game.lib.text);
+        renderer.set_books(&game.lib.series);
         let egui_ctx = egui::Context::default();
         hud::install_fonts(&egui_ctx);
         egui_ctx.set_visuals(egui::Visuals::dark());

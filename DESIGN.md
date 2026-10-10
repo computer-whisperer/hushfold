@@ -429,7 +429,7 @@ instead (`gfx::books::model`, built each frame: two boards, the sunk page block,
 rounded spine with its bands standing out, grooved joints, all inside the box) and
 read by the same material as the points of the box they stand for. The material
 reads the library's book table (`gfx::books::table`; made once per library, ~40 ms
-for the Great Library, and handed to the renderer on the scene's chunks): each
+for the Great Library, and handed to the renderer with the lettering): each
 series' look and where its lettering goes, glyphs cut from the signs' distance-field
 atlas inside the shader by bisection over each line. So a title follows its book
 wherever it is drawn (shelved, piled, flying, held) with no work per book on the

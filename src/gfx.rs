@@ -1244,13 +1244,13 @@ impl Renderer {
         self.text_buf.upload(&self.device, &self.queue, glyphs);
     }
 
-    /// Upload the scene chunks that have changed (and forget any beyond them), and the
-    /// library's book table when it is new.
-    pub fn sync_chunks(&mut self, chunks: &mut crate::scene::Chunks) {
-        if chunks.books_new {
-            self.book_data.upload(&self.device, &self.queue, &chunks.books);
-            chunks.books_new = false;
-        }
+    /// The library's book table (`books::table`), which every book is drawn from.
+    pub fn set_books(&mut self, series: &[crate::catalog::Series]) {
+        self.book_data.upload(&self.device, &self.queue, &books::table(series));
+    }
+
+    /// Upload the scene chunks that have changed (and forget any beyond them).
+    pub fn sync_chunks(&mut self, chunks: &mut [crate::scene::Chunk]) {
         self.chunks.truncate(chunks.len());
         while self.chunks.len() < chunks.len() {
             self.chunks.push(ChunkGpu {
