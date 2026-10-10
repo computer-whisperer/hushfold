@@ -1,4 +1,4 @@
-//! wgpu renderer: one instanced box pipeline (opaque + translucent), bloom, tonemap, egui.
+//! wgpu renderer: instanced boxes (opaque, translucent, moonbeams), bloom, tonemap, egui.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3, Vec4};
@@ -20,19 +20,27 @@ pub mod kind {
     pub const VEIL: u32 = 10;
     pub const SHAFT: u32 = 11;
     pub const PAPER: u32 = 12;
-    /// Brass, iron, silver: the colour is the metal's.
+    /// Brass, iron, silver: the colour is the metal's. Grey metals come out rough,
+    /// bright or coloured ones polished. param 1: aged (verdigris on warm metals, rust
+    /// on grey ones).
     #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
     pub const METAL: u32 = 13;
-    /// Banners, upholstery, curtains.
+    /// Banners, upholstery, curtains. Thin upright pieces hang in folds, others are
+    /// stuffed like cushions. param: 0 plain, else a trim colour in the low 24 bits
+    /// (r | g << 8 | b << 16, like RUG) as a border band, and bits 24..25 a pattern in
+    /// it: 1 stripes, 2 diamonds.
     #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
     pub const CLOTH: u32 = 14;
-    /// Leaves and stems.
+    /// Leaves and stems: a thin flat box is a blade, a long thin one a stem, anything
+    /// bigger a mass of foliage. Light behind shines through.
     #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
     pub const LEAF: u32 = 15;
-    /// Gems and glass that glow from inside: color.w is how brightly.
+    /// Gems and glass: color.w is how brightly it glows from inside (0 for plain glass).
     #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
     pub const CRYSTAL: u32 = 16;
-    /// Maps, charts, scrolls.
+    /// Maps, charts, scrolls; the colour is the paper's. param picks the ink on its
+    /// broad faces: 0 writing, 1 a map, 2 a star chart, 3 none. A thick box shows a
+    /// rolled scroll's turns at its ends.
     #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
     pub const PARCHMENT: u32 = 17;
 }
@@ -233,6 +241,8 @@ struct Targets {
     /// bind groups sampling: [resolved, bloom0, bloom1, ...]
     chain_bgs: Vec<wgpu::BindGroup>,
     tonemap_bg: wgpu::BindGroup,
+    /// The depth target, for translucent things to read.
+    depth_bg: wgpu::BindGroup,
 }
 
 pub struct Renderer {
@@ -243,12 +253,14 @@ pub struct Renderer {
     pub config: wgpu::SurfaceConfiguration,
     scene_pipe: wgpu::RenderPipeline,
     trans_pipe: wgpu::RenderPipeline,
+    beam_pipe: wgpu::RenderPipeline,
     down_first_pipe: wgpu::RenderPipeline,
     down_pipe: wgpu::RenderPipeline,
     up_pipe: wgpu::RenderPipeline,
     tonemap_pipe: wgpu::RenderPipeline,
     chain_layout: wgpu::BindGroupLayout,
     tonemap_layout: wgpu::BindGroupLayout,
+    depth_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     globals_buf: wgpu::Buffer,
     globals_bg: wgpu::BindGroup,
@@ -258,6 +270,10 @@ pub struct Renderer {
     static_buf: GrowBuf,
     dyn_buf: GrowBuf,
     trans_buf: GrowBuf,
+    /// Moonbeams, drawn apart from the other translucent things (see `beam_pipe`), and
+    /// the lists the frame's translucent instances are sorted into.
+    beam_buf: GrowBuf,
+    split: [Vec<Inst>; 2],
     held_buf: GrowBuf,
     chunks: Vec<ChunkGpu>,
     timer: Option<Timer>,
@@ -387,6 +403,26 @@ impl Renderer {
             bind_group_layouts: &[Some(&globals_layout)],
             immediate_size: 0,
         });
+        // Translucent things also read the opaque scene's depth: moonbeams are lit only as
+        // far as the eye can see into them.
+        let depth_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scene depth"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: true,
+                },
+                count: None,
+            }],
+        });
+        let trans_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("trans"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&depth_layout)],
+            immediate_size: 0,
+        });
         let vb_layouts = [
             wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<Vertex>() as u64,
@@ -401,10 +437,15 @@ impl Renderer {
                 ],
             },
         ];
-        let make_scene = |label: &str, fs: &str, blend: Option<wgpu::BlendState>, write: bool, cull: bool| {
+        let make_scene = |label: &str,
+                          layout: &wgpu::PipelineLayout,
+                          fs: &str,
+                          blend: Option<wgpu::BlendState>,
+                          (write, compare): (bool, wgpu::CompareFunction),
+                          cull: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
-                layout: Some(&scene_layout),
+                layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: &scene_shader,
                     entry_point: Some("vs_main"),
@@ -418,7 +459,7 @@ impl Renderer {
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH,
                     depth_write_enabled: Some(write),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    depth_compare: Some(compare),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
@@ -440,12 +481,24 @@ impl Renderer {
                 cache: None,
             })
         };
-        let scene_pipe = make_scene("scene", "fs_main", None, true, true);
+        use wgpu::CompareFunction::{Always, Less};
+        let scene_pipe = make_scene("scene", &scene_layout, "fs_main", None, (true, Less), true);
         let trans_pipe = make_scene(
             "trans",
+            &trans_layout,
             "fs_trans",
             Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            (false, Less),
             false,
+        );
+        // Moonbeams test the depth themselves (`fs_beam`): standing in one, the haze
+        // between the eye and a wall must stay where the shaft's far side is behind it.
+        let beam_pipe = make_scene(
+            "beams",
+            &trans_layout,
+            "fs_beam",
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            (false, Always),
             false,
         );
 
@@ -569,7 +622,15 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let targets = Self::make_targets(&device, &config, &chain_layout, &tonemap_layout, &sampler, &post_buf);
+        let targets = Self::make_targets(
+            &device,
+            &config,
+            &chain_layout,
+            &tonemap_layout,
+            &depth_layout,
+            &sampler,
+            &post_buf,
+        );
         let timer = device.features().contains(wgpu::Features::TIMESTAMP_QUERY).then(|| {
             let buf = |label, usage| {
                 device.create_buffer(&wgpu::BufferDescriptor {
@@ -604,6 +665,8 @@ impl Renderer {
             static_buf: GrowBuf::new(&device, "static", 1024),
             dyn_buf: GrowBuf::new(&device, "dynamic", 16384),
             trans_buf: GrowBuf::new(&device, "trans", 16384),
+            beam_buf: GrowBuf::new(&device, "beams", 64),
+            split: Default::default(),
             held_buf: GrowBuf::new(&device, "held", 256),
             chunks: Vec::new(),
             timer,
@@ -614,12 +677,14 @@ impl Renderer {
             config,
             scene_pipe,
             trans_pipe,
+            beam_pipe,
             down_first_pipe,
             down_pipe,
             up_pipe,
             tonemap_pipe,
             chain_layout,
             tonemap_layout,
+            depth_layout,
             sampler,
             globals_buf,
             globals_bg,
@@ -644,6 +709,7 @@ impl Renderer {
         config: &wgpu::SurfaceConfiguration,
         chain_layout: &wgpu::BindGroupLayout,
         tonemap_layout: &wgpu::BindGroupLayout,
+        depth_layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
         post_buf: &wgpu::Buffer,
     ) -> Targets {
@@ -669,7 +735,7 @@ impl Renderer {
         let rt = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let rts = rt | wgpu::TextureUsages::TEXTURE_BINDING;
         let msaa_color = tex("msaa color", w, h, HDR, MSAA, rt);
-        let depth = tex("depth", w, h, DEPTH, MSAA, rt);
+        let depth = tex("depth", w, h, DEPTH, MSAA, rts);
         let resolved = tex("resolved", w, h, HDR, 1, rts);
         let mut bloom = Vec::new();
         let (mut bw, mut bh) = (w, h);
@@ -720,6 +786,14 @@ impl Renderer {
                 },
             ],
         });
+        let depth_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scene depth"),
+            layout: depth_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&depth),
+            }],
+        });
         Targets {
             msaa_color,
             depth,
@@ -727,6 +801,7 @@ impl Renderer {
             bloom,
             chain_bgs,
             tonemap_bg,
+            depth_bg,
         }
     }
 
@@ -742,6 +817,7 @@ impl Renderer {
             &self.config,
             &self.chain_layout,
             &self.tonemap_layout,
+            &self.depth_layout,
             &self.sampler,
             &self.post_buf,
         );
@@ -838,7 +914,18 @@ impl Renderer {
             .write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(f.globals));
         self.queue.write_buffer(&self.post_buf, 0, bytemuck::bytes_of(&f.post));
         self.dyn_buf.upload(&self.device, &self.queue, f.dynamic);
-        self.trans_buf.upload(&self.device, &self.queue, f.trans);
+        let [beams, rest] = &mut self.split;
+        beams.clear();
+        rest.clear();
+        for inst in f.trans {
+            if inst.kind == kind::SHAFT {
+                beams.push(*inst);
+            } else {
+                rest.push(*inst);
+            }
+        }
+        self.trans_buf.upload(&self.device, &self.queue, rest);
+        self.beam_buf.upload(&self.device, &self.queue, beams);
         self.held_buf.upload(&self.device, &self.queue, f.held);
 
         // Chunks in view, nearest first (so near books hide far ones early).
@@ -886,7 +973,7 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: stamp(Some(0), Some(1)),
+                timestamp_writes: stamp(Some(0), None),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -902,6 +989,34 @@ impl Renderer {
                     rp.draw_indexed(0..36, 0, 0..b.len);
                 }
             }
+        }
+        {
+            // Translucent things in a pass of their own, with the depth read-only, so they
+            // can also read it.
+            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("trans"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &t.msaa_color,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &t.depth,
+                    depth_ops: None,
+                    stencil_ops: None,
+                }),
+                timestamp_writes: stamp(None, Some(1)),
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            rp.set_bind_group(0, &self.globals_bg, &[]);
+            rp.set_bind_group(1, &t.depth_bg, &[]);
+            rp.set_vertex_buffer(0, self.box_vb.slice(..));
+            rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
             rp.set_pipeline(&self.trans_pipe);
             let ghosts = visible.iter().rev().map(|&(_, i)| &self.chunks[i].trans);
             for b in ghosts.chain([&self.trans_buf]) {
@@ -909,6 +1024,11 @@ impl Renderer {
                     rp.set_vertex_buffer(1, b.buf.slice(..));
                     rp.draw_indexed(0..36, 0, 0..b.len);
                 }
+            }
+            if self.beam_buf.len > 0 {
+                rp.set_pipeline(&self.beam_pipe);
+                rp.set_vertex_buffer(1, self.beam_buf.buf.slice(..));
+                rp.draw_indexed(0..36, 0, 0..self.beam_buf.len);
             }
         }
         {
