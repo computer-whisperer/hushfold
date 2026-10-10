@@ -463,8 +463,9 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
     );
     rod(lib, base + up * 0.94, base + up * 1.78, 0.07, kind::METAL, BRASS_BRIGHT);
     let sun = base + up * 1.9;
-    ball(lib, sun, 0.24, kind::CRYSTAL, [1.0, 0.72, 0.3, 1.4]);
-    lib.light(sun, 5.5, [1.0, 0.7, 0.35], 0.9, LightKind::Static);
+    ball(lib, sun, 0.24, kind::CRYSTAL, [1.0, 0.72, 0.3, 1.0]);
+    // Its light a little above it, so it lights the court rather than flooding itself.
+    lib.light(sun + up * 0.7, 5.5, [1.0, 0.7, 0.35], 0.9, LightKind::Static);
     // The sun's armillary ring, tipped to the ecliptic.
     let tilt = Quat::from_rotation_x(0.41);
     ring(
