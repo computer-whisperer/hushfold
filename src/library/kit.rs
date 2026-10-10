@@ -25,6 +25,19 @@ const STILE_PROUD: f32 = 0.025;
 const FRIEZE_Y: f32 = 2.98;
 const CASE_FIELD: [f32; 3] = [0.25, 0.12, 0.05];
 const CASE_TRIM: [f32; 3] = [0.12, 0.06, 0.028];
+/// A range-end plaque's board (across, up, thick), on the upper field of a case's
+/// end, and how high its middle is: at eye height.
+const END_BOARD: Vec3 = Vec3::new(0.66, 0.5, 0.03);
+const END_Y: f32 = 1.55;
+/// A category's name on a range-end plaque, and its filing keys under it.
+const END_NAME: Style = Style {
+    em: 0.065,
+    ..SIGN_LETTERS
+};
+const END_KEYS: Style = Style {
+    em: 0.045,
+    ..SIGN_LETTERS
+};
 const LEATHER: [f32; 3] = [0.05, 0.1, 0.06];
 /// A shelf's label holder: brass, glowing a little (color.w is its brightness).
 const LABEL_GLOW: [f32; 4] = [1.0, 0.7, 0.3, 0.3];
@@ -557,6 +570,46 @@ impl Library {
         );
         self.collide(a.min(b), a.max(b), Stops::ALL);
         (at + normal * d, normal)
+    }
+
+    /// A plaque on the end of a double-sided case, at eye height, telling what is
+    /// shelved down either side of the range it ends, as a library's range guides do:
+    /// `c` is the case's centre at floor level and `out` the way along it to that end;
+    /// `sides`, the faces down each side (by index: one category's, in reading order).
+    /// For each, its category's name, its filing keys there, and an arrow round to it:
+    /// the side on the left above, the side on the right below.
+    pub(super) fn range_end(&mut self, c: Vec3, out: Vec3, mut sides: [Range<usize>; 2]) {
+        let right = Vec3::Y.cross(out);
+        sides.sort_by_key(|s| self.faces[s.start].normal.dot(right) > 0.0);
+        let rot = Quat::from_mat3(&Mat3::from_cols(right, Vec3::Y, out));
+        let at = c + out * (STILE_OUT + 0.015 + END_BOARD.z * 0.5) + Vec3::Y * END_Y;
+        let ccol = catalog::category_color(&self.catalog.categories[self.faces[sides[0].start].category]);
+        self.decor(Inst::new(at, rot, END_BOARD, kind::PLAQUE, rgba(ccol, 0.08), 0));
+        let front = at + out * (END_BOARD.z * 0.5);
+        // Brass standing a hair proud of the board: a rule between the sides, and the
+        // arrows (made pointing left).
+        let brass = rgba(BRASS, 1.0);
+        let proud = front + out * 0.003;
+        self.decor(Inst::new(
+            proud,
+            rot,
+            Vec3::new(0.5, 0.006, 0.006),
+            kind::METAL,
+            brass,
+            0,
+        ));
+        let tip = [Vec2::new(-0.03, 0.0), Vec2::new(0.025, -0.04), Vec2::new(0.025, 0.04)];
+        let arrow = self.shape(Mesh::prism(&tip, 0.006));
+        for (side, e, y) in [(&sides[0], -1.0f32, 0.105), (&sides[1], 1.0, -0.115)] {
+            let turn = rot * Quat::from_rotation_z(if e < 0.0 { 0.0 } else { std::f32::consts::PI });
+            self.decor(arrow.inst(proud + right * (e * 0.235) + Vec3::Y * y, turn, kind::METAL, brass));
+            let name = self.catalog.categories[self.faces[side.start].category].name.clone();
+            let mid = front - right * (e * 0.045) + Vec3::Y * y;
+            self.inscribe(&name, END_NAME, mid + Vec3::Y * 0.045, out, 0.45);
+            if let Some(keys) = self.faces_keys(side.clone()) {
+                self.inscribe(&keys, END_KEYS, mid - Vec3::Y * 0.045, out, 0.45);
+            }
+        }
     }
 
     /// Whether a wall case's back (`at`, facing `normal`) stands free, nothing that

@@ -109,7 +109,14 @@ flames, mist, fretwork, marble, brick, music, arms and a night sky real.
   rests long at each end. Wall cases standing free of a wall have a panelled back
   like their ends (the rooms' own boards hide all of them so far). Signs carry their
   names in gold leaf (category boards over the middle case, department boards over
-  the doors). Reading tables have green leather tops on turned legs, chairs with
+  the doors). A category whose cases stand in parts more than 6 m apart, middle to
+  middle (across a nave, a doorway or a window, not a gate or a corner, where one
+  sign stays in view), has a board over the middle of each part, the part's range of
+  filing keys under the name; its light stays one, from over its middle case, since
+  more would crowd others out of the nearest the renderer draws. The Observatory's
+  ranges have a plaque on each half's nave end at eye height (`kit::range_end`), as
+  libraries' range guides do: each face's category and its keys there, with a brass
+  arrow round to it. Reading tables have green leather tops on turned legs, chairs with
   turned front legs, and a turned brass candlestick, its candle in a glass chimney.
   Sconces are one piece of brass (a pointed backplate, a scrolled arm, a drip pan
   and a cup) with a candle and its flame. Chandeliers hang two beaded hoops of

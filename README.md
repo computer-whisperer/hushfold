@@ -56,7 +56,10 @@ pause screen replaces the current library's save with a fresh one (settings, in
 
 - Each category owns three bookcases on one side of an aisle (in the Great
   Library four to six, laid out as its room has them: rows, wall cases, alcoves);
-  the sign and lantern above the middle case name it. With Signposts, signs of
+  the sign and lantern above the middle case name it. Where a category's cases
+  stand in two parts (either side of a nave, a door or a window), each part has a
+  sign of its own, giving the part's letters under the name, and the Observatory's
+  ranges say at their nave ends what is down either side. With Signposts, signs of
   categories you carry show through the stacks, marked "other side" when their shelves face
   away from you; one in plain view is only marked, or named above its board when
   too far off to read. Lanterns brighten with progress and burn in the category's colour once it is

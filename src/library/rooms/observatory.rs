@@ -38,12 +38,14 @@ fn shelve(lib: &mut Library, rng: &mut StdRng, cat: usize, mut faces: Vec<(Vec3,
 }
 
 /// The two ranges across the room (three cases either side of the nave, a category
-/// on each face of each), and cases on the walls: four down each side, two either
+/// on each face of each), with a plaque on the nave's side of each half saying what
+/// is down either side of it; and cases on the walls: four down each side, two either
 /// side of the far window and two either side of the door.
 fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     let mut cat = frame.categories.start;
     let across = !frame.out_along_x();
     for o in [RANGE_NEAR, RANGE_FAR] {
+        let first = lib.faces.len();
         let (mut near, mut far) = (Vec::new(), Vec::new());
         for s in [-1.0f32, 1.0] {
             for k in 0..3 {
@@ -57,9 +59,24 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                 }
             }
         }
+        let n = near.len();
         for faces in [near, far] {
             shelve(lib, rng, cat, faces, titles);
             cat += 1;
+        }
+        // Each face's half on side `s` of the nave (its faces run left to right, so
+        // the half is together).
+        let middle = frame.at(0.0, o, 0.0);
+        for s in [-1.0f32, 1.0] {
+            let half = |faces: Range<usize>| {
+                let on: Vec<usize> = faces
+                    .filter(|&i| (lib.faces[i].center - middle).dot(frame.across()) * s > 0.0)
+                    .collect();
+                on[0]..on[on.len() - 1] + 1
+            };
+            let sides = [half(first..first + n), half(first + n..lib.faces.len())];
+            let end = frame.at(s * (NAVE + UNIT_PITCH * 0.5), o, 0.0);
+            lib.range_end(end, -frame.across() * s, sides);
         }
     }
     let wall = |lib: &mut Library, a: f32, o: f32, n: Vec3| lib.wall_bookcase(frame.at(a, o, 0.0), n);

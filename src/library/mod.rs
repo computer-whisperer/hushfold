@@ -24,6 +24,7 @@ use motion::{Motion, Mover};
 use rand::prelude::*;
 use std::collections::HashSet;
 use std::f32::consts::TAU;
+use std::ops::Range;
 
 pub const ROWS: usize = 6;
 pub const UNIT_W: f32 = 2.6;
@@ -54,6 +55,16 @@ const SIGN_LETTERS: Style = Style {
     lettering: Lettering::Gilt,
     color: GOLD_LEAF,
 };
+/// A category's name on the sign over one part of its cases, with room for the
+/// part's filing keys (`PART_KEYS`) under it.
+const PART_LETTERS: Style = Style {
+    em: 0.17,
+    ..SIGN_LETTERS
+};
+const PART_KEYS: Style = Style {
+    em: 0.1,
+    ..SIGN_LETTERS
+};
 /// A shelf's range of filing keys, inked on its label.
 const SHELF_LETTERS: Style = Style {
     em: 0.034,
@@ -78,6 +89,42 @@ fn flame(foot: Vec3, (w, h): (f32, f32), color: [f32; 4]) -> Inst {
         color,
         0,
     )
+}
+
+/// How far apart the middles of two of a category's faces, one after the other, stand
+/// in parts apart: across a nave, a doorway or a window, but not across a gate in a run
+/// of cases or round a corner, where its one sign is still in view.
+const PARTS_APART: f32 = 6.0;
+
+/// The parts of a category's `faces` (in reading order) that stand apart, each
+/// wanting a sign of its own.
+fn parts_apart(faces: &[(Vec3, Vec3)]) -> Vec<Range<usize>> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    for i in 1..=faces.len() {
+        if i == faces.len() || faces[i].0.distance(faces[i - 1].0) > PARTS_APART {
+            parts.push(start..i);
+            start = i;
+        }
+    }
+    parts
+}
+
+/// Where the lantern over a sign hangs, over a case whose face's front plane has its
+/// centre at `center` (at floor level) and faces `normal`.
+fn lantern_at(center: Vec3, normal: Vec3) -> Vec3 {
+    center + Vec3::Y * (UNIT_H + 0.95) + normal * 0.05
+}
+
+/// Where a sign goes over `faces` (in reading order): over the middle one, or between
+/// the middle two (over the later, should they face apart).
+fn middle(faces: &[(Vec3, Vec3)]) -> (Vec3, Vec3) {
+    let n = faces.len();
+    let ((p, m), (q, k)) = (faces[(n - 1) / 2], faces[n / 2]);
+    match (m + k).try_normalize() {
+        Some(normal) if n.is_multiple_of(2) => ((p + q) * 0.5, normal),
+        _ => faces[n / 2],
+    }
 }
 
 /// Height of the shelf surface above the floor for reading-order row (0 = top).
@@ -391,6 +438,17 @@ impl Library {
         Some(format!("{} – {}", key(runs.first()?), key(runs.last()?)))
     }
 
+    /// The range of filing keys across `faces` (one category's, in reading order), as
+    /// a sign over them gives it: from their first shelf's first to their last shelf's
+    /// last.
+    pub fn faces_keys(&self, faces: Range<usize>) -> Option<String> {
+        let shelves = || faces.clone().flat_map(|f| self.runs[f].iter());
+        let key = |r: &Run| self.series[r.series as usize].shelf_key();
+        let first = shelves().find_map(|row| row.first())?;
+        let last = shelves().rev().find_map(|row| row.last())?;
+        Some(format!("{} – {}", key(first), key(last)))
+    }
+
     /// The department whose room `p` is in, if any.
     pub fn room_at(&self, p: Vec3) -> Option<usize> {
         let l = self.world.level_at(p);
@@ -489,7 +547,9 @@ impl Library {
 
     /// Shelve category `cat` across `faces` (front plane centre at floor level,
     /// outward normal; see `bookcase`), in reading order, and hang its sign and
-    /// lantern over the middle one.
+    /// lantern over the middle one; or, where its cases stand in parts apart (either
+    /// side of a nave, a door or a window), over the middle of each part, with the
+    /// part's filing keys under the name.
     fn add_category(&mut self, rng: &mut StdRng, cat: usize, faces: &[(Vec3, Vec3)], titles: &mut HashSet<String>) {
         let first_face = self.faces.len();
         for (ci, &(center, normal)) in faces.iter().enumerate() {
@@ -503,20 +563,40 @@ impl Library {
             self.runs.push(Default::default());
         }
         self.fill_category(rng, cat, first_face..first_face + faces.len(), titles);
-        // Sign + lantern above the middle case.
-        let mid = &self.faces[first_face + faces.len() / 2];
-        let (mid_center, mid_rot, normal) = (mid.center, mid.rot(), mid.normal);
-        let sign_pos = mid_center + Vec3::Y * (UNIT_H + 0.42) + normal * 0.02;
+        let parts = parts_apart(faces);
+        if parts.len() == 1 {
+            let (center, normal) = faces[faces.len() / 2];
+            self.hang_sign(cat, center, normal, None);
+        } else {
+            for part in parts {
+                let (center, normal) = middle(&faces[part.clone()]);
+                let keys = self.faces_keys(first_face + part.start..first_face + part.end);
+                self.hang_sign(cat, center, normal, keys);
+            }
+        }
+        // One light for the category, from the lantern over its middle case (where
+        // its one sign hangs, or would): more would crowd out other lights from the
+        // nearest the renderer draws, darkening the rooms round about.
+        let (center, normal) = faces[faces.len() / 2];
+        self.light(
+            lantern_at(center, normal) + normal * 0.5,
+            7.5,
+            [1.0, 0.7, 0.4],
+            0.35,
+            LightKind::Lantern(cat),
+        );
+        self.category_center[cat] = center + normal * 1.5 + Vec3::Y * 1.0;
+    }
+
+    /// Category `cat`'s sign, and its lantern above it, over a case whose face's front
+    /// plane has its centre at `center` (at floor level) and faces `normal`; `keys`,
+    /// the filing keys of a part of the category's cases, lettered under the name.
+    fn hang_sign(&mut self, cat: usize, center: Vec3, normal: Vec3, keys: Option<String>) {
+        let rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Y.cross(normal), Vec3::Y, normal));
+        let sign_pos = center + Vec3::Y * (UNIT_H + 0.42) + normal * 0.02;
         let ccol = catalog::category_color(&self.catalog.categories[cat]);
         let board = Vec3::new(2.0, 0.42, 0.05);
-        let plaque = Inst::new(
-            sign_pos,
-            mid_rot,
-            board,
-            kind::PLAQUE,
-            [ccol[0], ccol[1], ccol[2], 0.08],
-            0,
-        );
+        let plaque = Inst::new(sign_pos, rot, board, kind::PLAQUE, [ccol[0], ccol[1], ccol[2], 0.08], 0);
         self.decor(plaque);
         self.decor(Inst::aabox(
             sign_pos - Vec3::Y * 0.25 - normal * 0.02,
@@ -525,17 +605,28 @@ impl Library {
             BRASS,
         ));
         let name = self.catalog.categories[cat].name.clone();
-        self.inscribe(&name, SIGN_LETTERS, sign_pos + normal * 0.025, normal, 1.86);
+        let face = sign_pos + normal * 0.025;
+        let (em, text) = match keys {
+            None => {
+                self.inscribe(&name, SIGN_LETTERS, face, normal, 1.86);
+                (SIGN_LETTERS.em, name)
+            }
+            Some(keys) => {
+                self.inscribe(&name, PART_LETTERS, face + Vec3::Y * 0.06, normal, 1.86);
+                self.inscribe(&keys, PART_KEYS, face - Vec3::Y * 0.1, normal, 1.0);
+                (PART_LETTERS.em, format!("{name} · {keys}"))
+            }
+        };
         self.labels.push(Label {
             pos: sign_pos + normal * 0.04,
             normal,
-            text: name,
-            em: SIGN_LETTERS.em,
+            text,
+            em,
             half: board.y * 0.5,
             kind: LabelKind::Category(cat),
-            level: self.world.level_at(mid_center),
+            level: self.world.level_at(center),
         });
-        let lantern = mid_center + Vec3::Y * (UNIT_H + 0.95) + normal * 0.05;
+        let lantern = lantern_at(center, normal);
         self.decor(Inst::aabox(
             lantern + Vec3::Y * 0.16,
             Vec3::new(0.22, 0.04, 0.22),
@@ -555,24 +646,10 @@ impl Library {
             BRASS,
         ));
         self.lanterns.push((cat, lantern));
-        self.light(
-            lantern + normal * 0.5,
-            7.5,
-            [1.0, 0.7, 0.4],
-            0.35,
-            LightKind::Lantern(cat),
-        );
-        self.category_center[cat] = mid_center + normal * 1.5 + Vec3::Y * 1.0;
     }
 
     /// Generate this category's series and lay them out across its faces.
-    fn fill_category(
-        &mut self,
-        rng: &mut StdRng,
-        cat: usize,
-        faces: std::ops::Range<usize>,
-        titles: &mut HashSet<String>,
-    ) {
+    fn fill_category(&mut self, rng: &mut StdRng, cat: usize, faces: Range<usize>, titles: &mut HashSet<String>) {
         let first_face = faces.start;
         let shelves = faces.len() * ROWS;
         let capacity = shelves as f32 * USABLE_W;
@@ -887,5 +964,33 @@ mod tests {
             println!("{f}");
         }
         assert!(found.is_empty(), "{} coplanar overlapping faces", found.len());
+    }
+
+    /// No case stands far from a sign naming its category, however its category's
+    /// cases are split up (across a nave, a door, a window): no farther than `NEAR`
+    /// across the floor. (With one sign to a category, as there was, a case of Feast
+    /// Days stood 19 m from it.)
+    #[test]
+    fn every_case_has_its_sign_near() {
+        const NEAR: f32 = 9.0;
+        for layout in Layout::ALL {
+            let lib = Library::generate(layout, 7);
+            let mut worst = (0.0f32, "");
+            for f in &lib.faces {
+                let near = (lib.labels.iter())
+                    .filter(|l| matches!(l.kind, LabelKind::Category(c) if c == f.category))
+                    .map(|l| (l.pos - f.center).with_y(0.0).length())
+                    .fold(f32::MAX, f32::min);
+                if near > worst.0 {
+                    worst = (near, lib.catalog.categories[f.category].name.as_str());
+                }
+            }
+            assert!(
+                worst.0 <= NEAR,
+                "{layout:?}: a case of {} stands {:.1} m from its nearest sign",
+                worst.1,
+                worst.0
+            );
+        }
     }
 }
