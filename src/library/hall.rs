@@ -241,9 +241,10 @@ impl Library {
         }
     }
 
-    /// Boxes round an arc about `c` in the plane of `u` and `v` (unit, at right angles),
-    /// `r` from it to their middles, `w` across the arc and `d` through its plane; from
-    /// angle `a0` to `a1` (0 along `u`, a quarter turn along `v`) in `n` pieces.
+    /// A band round an arc about `c` in the plane of `u` and `v` (unit, at right
+    /// angles), `r` from it to the band's middle, `w` across the arc and `d` through
+    /// its plane; from angle `a0` to `a1` (0 along `u`, a quarter turn along `v`), or
+    /// all the way round. `n` says how finely: at least that many facets.
     fn arc(
         &mut self,
         c: Vec3,
@@ -252,16 +253,36 @@ impl Library {
         (a0, a1, n): (f32, f32, usize),
         (kind, color): (u32, [f32; 4]),
     ) {
-        let step = (a1 - a0) / n as f32;
-        let normal = u.cross(v);
-        // Long enough that neighbours meet at the outer edge.
-        let len = 2.0 * (r + w * 0.5) * libm::tanf((step * 0.5).abs());
-        for k in 0..n {
-            let a = a0 + (k as f32 + 0.5) * step;
-            let radial = u * libm::cosf(a) + v * libm::sinf(a);
-            let rot = Quat::from_mat3(&Mat3::from_cols(radial, normal, radial.cross(normal)));
-            self.decor(Inst::new(c + radial * r, rot, Vec3::new(w, d, len), kind, color, 0));
-        }
+        let i = self.arc_inst(c, (u, v), (r, w, d), (a0, a1, n), (kind, color));
+        self.decor(i);
+    }
+
+    /// The band `arc` lays down.
+    fn arc_inst(
+        &mut self,
+        c: Vec3,
+        (u, v): (Vec3, Vec3),
+        (r, w, d): (f32, f32, f32),
+        (a0, a1, n): (f32, f32, usize),
+        (kind, color): (u32, [f32; 4]),
+    ) -> Inst {
+        let span = a1 - a0;
+        let segs = n.max((span.abs() / (TAU / 64.0)).ceil() as usize);
+        let at = |k: usize, rr: f32| {
+            let a = a0 + span * k as f32 / segs as f32;
+            Vec2::new(libm::cosf(a), libm::sinf(a)) * rr
+        };
+        let (outer, inner) = (r + w * 0.5, r - w * 0.5);
+        let mesh = if (span.abs() - TAU).abs() < 1e-4 {
+            let ring = |rr: f32| (0..segs).map(|k| at(k, rr)).collect::<Vec<_>>();
+            Mesh::ring(&ring(outer), &ring(inner), d)
+        } else {
+            let mut band: Vec<Vec2> = (0..=segs).map(|k| at(k, outer)).collect();
+            band.extend((0..=segs).rev().map(|k| at(k, inner)));
+            Mesh::prism(&band, d)
+        };
+        let rot = Quat::from_mat3(&Mat3::from_cols(u, v, u.cross(v)));
+        self.shape(mesh).at(c, rot, kind, color)
     }
 
     /// A box on a wall (see `Mount`).
@@ -269,20 +290,15 @@ impl Library {
         self.decor(Inst::new(m.at(off), m.rot(spin), size, kind, color, 0));
     }
 
-    /// A disc on a wall: a fan of strips, none of them square to the wall's edges (so
-    /// no two share a face), `r` round and `d` thick at `off`; fewer strips when small.
+    /// A disc on a wall, `r` round and `d` thick at `off`.
     fn disc(&mut self, m: Mount, off: Vec3, (r, d): (f32, f32), kind: u32, color: [f32; 4]) {
-        let n = match r {
-            r if r < 0.08 => 4,
-            r if r < 0.45 => 6,
-            _ => 8,
+        let segs = match r {
+            r if r < 0.08 => 16,
+            r if r < 0.45 => 32,
+            _ => 64,
         };
-        let step = PI / n as f32;
-        let w = 2.0 * r * libm::sinf(step * 0.5) * 1.08;
-        for k in 0..n {
-            let spin = (k as f32 + 0.5) * step;
-            self.mounted(m, off, Vec3::new(2.0 * r, w, d), spin, kind, color);
-        }
+        let disc = self.shape(Mesh::cylinder(segs)).sized(Vec3::new(2.0 * r, d, 2.0 * r));
+        self.decor(disc.inst(m.at(off), m.rot(0.0) * Quat::from_rotation_x(FRAC_PI_2), kind, color));
     }
 
     /// The timbers: girders on the columns, beams across the hall, and between them
@@ -924,7 +940,7 @@ impl Library {
         self.mounted(m, hook, Vec3::new(0.08, 0.08, 0.1), FRAC_PI_4, kind::METAL, gilt);
     }
 
-    /// A great clock face on a walnut board, at ten to midnight.
+    /// A great clock face on a walnut board, at ten to midnight as the library opens.
     fn clock(&mut self, m: Mount) {
         let y = 4.2;
         let centre = Vec3::new(0.0, y, 0.0);
@@ -951,16 +967,13 @@ impl Library {
             let at = centre + Vec3::new(libm::cosf(a), libm::sinf(a), 0.0) * 1.0 + Vec3::Z * 0.12;
             self.mounted(m, at, Vec3::new(len, wid, 0.01), a, kind::METAL, ink);
         }
-        // Hands: the hour just short of twelve, the minute at ten to.
-        for (turn, len, wid, z) in [
-            (11.83f32 / 12.0, 0.7f32, 0.08f32, 0.13f32),
-            (50.0 / 60.0, 1.0, 0.05, 0.14),
-        ] {
-            let a = FRAC_PI_2 - turn * TAU;
-            let at = centre + Vec3::new(libm::cosf(a), libm::sinf(a), 0.0) * len * 0.4 + Vec3::Z * z;
-            self.mounted(m, at, Vec3::new(len, wid, 0.01), a, kind::METAL, ink);
-        }
-        self.disc(m, centre + Vec3::Z * 0.15, (0.07, 0.02), kind::METAL, gilt);
+        // Hands at ten to midnight when the library opens, and keeping time from there.
+        self.clock_hands(
+            (m.at(centre + Vec3::Z * 0.11), m.n, 1.25),
+            (11.0, 50.0),
+            (ink, gilt),
+            false,
+        );
     }
 
     /// Panelling round the walls below a rail: a skirting, the panels with stiles
@@ -1440,7 +1453,8 @@ impl Library {
     }
 
     /// An armillary sphere on a turned stand at `c`: horizon, meridian, equator and
-    /// ecliptic rings round a small globe on its polar axis.
+    /// ecliptic rings round a small globe on its polar axis; the heavens (the equator,
+    /// the ecliptic and the globe) turn slowly about the pole.
     fn armillary(&mut self, c: Vec3) {
         let wood =
             |lib: &mut Self, y: f32, size: Vec3, rgb| lib.decor(Inst::aabox(c + Vec3::Y * y, size, kind::WOOD, rgb));
@@ -1490,35 +1504,33 @@ impl Library {
         let lat = 0.9f32;
         let pole = Vec3::Y * libm::sinf(lat) - along * libm::cosf(lat);
         let across = pole.cross(x).normalize();
-        self.arc(
+        let heavens = self.mover(o, Motion::Spin { axis: pole, rate: 0.12 }, 0.0, None);
+        let equator = self.arc_inst(
             o,
             (x, across),
             (r - 0.04, 0.04, 0.025),
             (0.0, TAU, 20),
             (kind::METAL, brass),
         );
+        self.moving(heavens, equator);
         let tilt = Quat::from_axis_angle(x, 0.41);
         let gilt = rgba(GILT);
-        self.arc(
+        let ecliptic = self.arc_inst(
             o,
             (x, tilt * across),
             (r - 0.04, 0.07, 0.02),
             (0.0, TAU, 20),
             (kind::METAL, gilt),
         );
+        self.moving(heavens, ecliptic);
         let axis = Quat::from_rotation_arc(Vec3::Y, pole);
-        self.decor(Inst::new(
-            o,
-            axis,
-            Vec3::new(0.02, 2.0 * r + 0.16, 0.02),
-            kind::METAL,
-            brass,
-            0,
-        ));
         let earth = [0.1, 0.24, 0.32, 1.0];
-        self.decor(Inst::new(o, axis, Vec3::splat(0.13), kind::PLAIN, earth, 0));
-        let tumbled = axis * Quat::from_rotation_y(FRAC_PI_4) * Quat::from_rotation_x(FRAC_PI_4);
-        self.decor(Inst::new(o, tumbled, Vec3::splat(0.13), kind::PLAIN, earth, 0));
+        let globe = self.shape(Mesh::sphere(24)).sized(Vec3::splat(0.16));
+        self.moving(heavens, globe.inst(o, axis, kind::PLAIN, earth));
+        let rod = self
+            .shape(Mesh::cylinder(8))
+            .sized(Vec3::new(0.02, 2.0 * r + 0.16, 0.02));
+        self.decor(rod.inst(o, axis, kind::METAL, brass));
         self.collide(
             c - Vec3::new(0.62, 0.0, 0.62),
             c + Vec3::new(0.62, 1.86, 0.62),

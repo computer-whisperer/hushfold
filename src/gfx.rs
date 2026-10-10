@@ -1,7 +1,8 @@
-//! wgpu renderer: instanced boxes (opaque, translucent, moonbeams), lettering, bloom,
-//! tonemap, egui.
+//! wgpu renderer: instanced boxes and meshes (opaque, translucent, moonbeams),
+//! lettering, bloom, tonemap, egui.
 
 pub mod books;
+pub mod mesh;
 
 use crate::text::{self, Glyph};
 use bytemuck::{Pod, Zeroable};
@@ -53,11 +54,15 @@ pub mod kind {
     /// broad faces: 0 writing, 1 a map, 2 a star chart, 3 none. A thick box shows a
     /// rolled scroll's turns at its ends.
     pub const PARCHMENT: u32 = 17;
-    /// A part of a folded-paper bird, drawn from its own mesh rather than as a box
-    /// (see `crane`). param: bits 0..3 the mesh (a fold's part), 4..7 the print on
-    /// the sheet (a `crane::Print`), 8..31 the paper's tint (r | g << 8 | b << 16);
-    /// color: the glow inside it, and its strength in w.
+    /// A part of a folded-paper bird, drawn from its own mesh (see `crane`). param:
+    /// bits 4..7 the print on the sheet (a `crane::Print`), 8..31 the paper's tint (r |
+    /// g << 8 | b << 16); color: the glow inside it, and its strength in w.
     pub const CRANE: u32 = 18;
+    /// Clear glass (jars, bell jars, glazed doors, a lamp's chimney), drawn in the
+    /// translucent pass (`Library::glass`): the room reflected in it and the lights'
+    /// highlights, more at grazing angles. color: its tint, and in w how much of what is
+    /// behind it it hides (0.05 to 0.3).
+    pub const CLEAR: u32 = 19;
 }
 
 #[repr(C)]
@@ -69,6 +74,8 @@ pub struct Inst {
     pub scale: [f32; 3],
     pub param: u32,
     pub color: [f32; 4],
+    /// What it is drawn as (`mesh`): the box unless shaped.
+    pub mesh: u32,
 }
 
 impl Inst {
@@ -80,7 +87,13 @@ impl Inst {
             scale: scale.into(),
             param,
             color,
+            mesh: mesh::BOX,
         }
+    }
+
+    /// Drawn as `mesh` (its bounds are the box) rather than the box.
+    pub fn shaped(self, mesh: u32) -> Self {
+        Self { mesh, ..self }
     }
 
     /// Axis-aligned box from its centre and full size.
@@ -139,50 +152,16 @@ pub struct PostParams {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct Vertex {
-    pos: [f32; 3],
-    normal: [f32; 3],
+#[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq)]
+pub struct Vertex {
+    pub pos: [f32; 3],
+    pub normal: [f32; 3],
 }
 
 const MSAA: u32 = 4;
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const BLOOM_LEVELS: usize = 6;
-
-fn unit_box() -> (Vec<Vertex>, Vec<u16>) {
-    let mut v = Vec::new();
-    let mut idx = Vec::new();
-    let faces: [([f32; 3], [f32; 3], [f32; 3]); 6] = [
-        ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
-        ([-1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
-        ([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
-        ([0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
-        ([0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
-        ([0.0, 0.0, -1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]),
-    ];
-    for (n, a, b) in faces {
-        let n = Vec3::from(n);
-        let a = Vec3::from(a);
-        let b = Vec3::from(b);
-        let base = v.len() as u16;
-        for (sa, sb) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-            let p = (n + a * sa + b * sb) * 0.5;
-            v.push(Vertex {
-                pos: p.into(),
-                normal: n.into(),
-            });
-        }
-        // Wind counter-clockwise when viewed from outside.
-        let cross = a.cross(b).dot(n);
-        if cross > 0.0 {
-            idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-        } else {
-            idx.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
-        }
-    }
-    (v, idx)
-}
 
 /// Instances (boxes, or glyphs), or a model's vertices or indices, in a buffer that
 /// grows to fit.
@@ -366,7 +345,7 @@ impl BookData {
 }
 
 /// The planes of a view frustum (inside where `dot(xyz, p) + w >= 0`).
-fn frustum(view_proj: Mat4) -> [Vec4; 6] {
+pub fn frustum(view_proj: Mat4) -> [Vec4; 6] {
     let r = |i| view_proj.row(i);
     [r(3) + r(0), r(3) - r(0), r(3) + r(1), r(3) - r(1), r(2), r(3) - r(2)]
 }
@@ -377,6 +356,14 @@ fn draw_boxes(rp: &mut wgpu::RenderPass, b: &GrowBuf) {
         rp.set_vertex_buffer(1, b.buf.slice(..));
         rp.draw_indexed(0..36, 0, 0..b.len);
     }
+}
+
+/// Whether a ball reaching `r` from `c` may be in view.
+pub fn ball_visible(planes: &[Vec4; 6], c: Vec3, r: f32) -> bool {
+    // Rows aren't normalised: a plane's distance is in units of its normal's length.
+    planes
+        .iter()
+        .all(|p| p.truncate().dot(c) + p.w >= -r * p.truncate().length())
 }
 
 fn box_visible(planes: &[Vec4; 6], min: Vec3, max: Vec3) -> bool {
@@ -413,6 +400,7 @@ pub struct Renderer {
     book_data: BookData,
     trans_pipe: wgpu::RenderPipeline,
     beam_pipe: wgpu::RenderPipeline,
+    glass_pipe: wgpu::RenderPipeline,
     /// Lettering on signs and labels, and the glyph atlas it is cut from.
     text_pipe: wgpu::RenderPipeline,
     text_bg: wgpu::BindGroup,
@@ -427,14 +415,16 @@ pub struct Renderer {
     globals_buf: wgpu::Buffer,
     globals_bg: wgpu::BindGroup,
     post_buf: wgpu::Buffer,
-    box_vb: wgpu::Buffer,
-    box_ib: wgpu::Buffer,
-    static_buf: GrowBuf,
+    /// Every mesh instances are drawn as (the box among them).
+    meshes: mesh::Meshes,
+    static_batch: mesh::Batch,
     text_buf: GrowBuf<Glyph>,
-    dyn_buf: GrowBuf,
+    dyn_batch: mesh::Batch,
     /// Books on the move, drawn apart from the other dynamic things (see `book_pipe`).
     dyn_books_buf: GrowBuf,
-    trans_buf: GrowBuf,
+    trans_batch: mesh::Batch,
+    /// Clear glass, drawn apart from the other translucent things (see `glass_pipe`).
+    glass_batch: mesh::Batch,
     /// Moonbeams, drawn apart from the other translucent things (see `beam_pipe`).
     beam_buf: GrowBuf,
     /// The lists the frame's instances are sorted into: dynamic books and the rest,
@@ -444,7 +434,6 @@ pub struct Renderer {
     models: HeldModels,
     model_verts: GrowBuf<books::ModelVertex>,
     model_idx: GrowBuf<u32>,
-    cranes: crane::Cranes,
     chunks: Vec<ChunkGpu>,
     timer: Option<Timer>,
     targets: Targets,
@@ -603,7 +592,7 @@ impl Renderer {
                 array_stride: std::mem::size_of::<Inst>() as u64,
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &wgpu::vertex_attr_array![
-                    2 => Float32x3, 3 => Uint32, 4 => Float32x4, 5 => Float32x3, 6 => Uint32, 7 => Float32x4
+                    2 => Float32x3, 3 => Uint32, 4 => Float32x4, 5 => Float32x3, 6 => Uint32, 7 => Float32x4, 9 => Uint32
                 ],
             },
         ];
@@ -673,6 +662,15 @@ impl Renderer {
             "fs_beam",
             Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             (false, Always),
+            false,
+        );
+        let glass_pipe = make_scene(
+            "glass",
+            &trans_layout,
+            boxes,
+            "fs_glass",
+            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            (false, Less),
             false,
         );
 
@@ -969,17 +967,7 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
-        let (verts, idx) = unit_box();
-        let box_vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("box vb"),
-            contents: bytemuck::cast_slice(&verts),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let box_ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("box ib"),
-            contents: bytemuck::cast_slice(&idx),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let meshes = mesh::Meshes::new(&device, &queue);
 
         let targets = Self::make_targets(
             &device,
@@ -1021,18 +1009,19 @@ impl Renderer {
         );
 
         Self {
-            static_buf: GrowBuf::new(&device, "static", 1024),
+            static_batch: mesh::Batch::new(&device, "static", 1024),
             text_buf: GrowBuf::new(&device, "lettering", 1024),
-            dyn_buf: GrowBuf::new(&device, "dynamic", 16384),
+            dyn_batch: mesh::Batch::new(&device, "dynamic", 16384),
             dyn_books_buf: GrowBuf::new(&device, "dynamic books", 1024),
-            trans_buf: GrowBuf::new(&device, "trans", 16384),
+            trans_batch: mesh::Batch::new(&device, "trans", 16384),
+            glass_batch: mesh::Batch::new(&device, "glass", 256),
             beam_buf: GrowBuf::new(&device, "beams", 64),
             split: Default::default(),
             held_buf: GrowBuf::new(&device, "held", 256),
             models: Default::default(),
             model_verts: GrowBuf::new(&device, "held models", 4096),
             model_idx: GrowBuf::index(&device, "held model indices", 16384),
-            cranes: crane::Cranes::new(&device),
+            meshes,
             chunks: Vec::new(),
             timer,
             window,
@@ -1046,6 +1035,7 @@ impl Renderer {
             book_data,
             trans_pipe,
             beam_pipe,
+            glass_pipe,
             text_pipe,
             text_bg,
             down_first_pipe,
@@ -1059,8 +1049,6 @@ impl Renderer {
             globals_buf,
             globals_bg,
             post_buf,
-            box_vb,
-            box_ib,
             targets,
             egui,
             capture: None,
@@ -1234,9 +1222,10 @@ impl Renderer {
         result
     }
 
-    pub fn set_static(&mut self, insts: &[Inst]) {
-        let boxes = self.cranes.set_fixed(&self.device, &self.queue, insts);
-        self.static_buf.upload(&self.device, &self.queue, &boxes);
+    /// The library's fixed instances, and its own meshes (`mesh::LIBRARY` on).
+    pub fn set_static(&mut self, insts: &[Inst], meshes: &[mesh::Mesh]) {
+        self.meshes.set_library(&self.device, &self.queue, meshes);
+        self.static_batch.upload(&self.device, &self.queue, insts);
     }
 
     /// The library's lettering.
@@ -1306,12 +1295,15 @@ impl Renderer {
                 }
             }
         };
-        let boxes = self.cranes.set_moving(&self.device, &self.queue, f.dynamic);
-        sort(boxes, kind::BOOK, books, others);
+        sort(f.dynamic, kind::BOOK, books, others);
         sort(f.trans, kind::SHAFT, beams, rest);
         self.dyn_books_buf.upload(&self.device, &self.queue, books);
-        self.dyn_buf.upload(&self.device, &self.queue, others);
-        self.trans_buf.upload(&self.device, &self.queue, rest);
+        self.dyn_batch.upload(&self.device, &self.queue, others.iter());
+        let clear = |i: &&Inst| i.kind == kind::CLEAR;
+        self.trans_batch
+            .upload(&self.device, &self.queue, rest.iter().filter(|i| !clear(i)));
+        self.glass_batch
+            .upload(&self.device, &self.queue, rest.iter().filter(clear));
         self.beam_buf.upload(&self.device, &self.queue, beams);
         self.held_buf.upload(&self.device, &self.queue, f.held);
         let m = &mut self.models;
@@ -1381,12 +1373,11 @@ impl Renderer {
                 multiview_mask: None,
             });
             rp.set_bind_group(0, &self.globals_bg, &[]);
-            rp.set_vertex_buffer(0, self.box_vb.slice(..));
-            rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
+            self.meshes.bind(&mut rp);
             // Walls and floors first: they hide whole rooms of books behind them. The
             // chunks hold only books.
             rp.set_pipeline(&self.scene_pipe);
-            draw_boxes(&mut rp, &self.static_buf);
+            self.meshes.draw(&mut rp, &self.static_batch);
             rp.set_pipeline(&self.book_pipe);
             rp.set_bind_group(1, &self.book_data.bg, &[]);
             for &(_, i) in &visible {
@@ -1394,8 +1385,7 @@ impl Renderer {
             }
             draw_boxes(&mut rp, &self.dyn_books_buf);
             rp.set_pipeline(&self.scene_pipe);
-            draw_boxes(&mut rp, &self.dyn_buf);
-            self.cranes.draw(&mut rp);
+            self.meshes.draw(&mut rp, &self.dyn_batch);
             if self.text_buf.len > 0 {
                 rp.set_pipeline(&self.text_pipe);
                 rp.set_bind_group(1, &self.text_bg, &[]);
@@ -1428,13 +1418,14 @@ impl Renderer {
             });
             rp.set_bind_group(0, &self.globals_bg, &[]);
             rp.set_bind_group(1, &t.depth_bg, &[]);
-            rp.set_vertex_buffer(0, self.box_vb.slice(..));
-            rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
+            self.meshes.bind(&mut rp);
             rp.set_pipeline(&self.trans_pipe);
             for &(_, i) in visible.iter().rev() {
                 draw_boxes(&mut rp, &self.chunks[i].trans);
             }
-            draw_boxes(&mut rp, &self.trans_buf);
+            self.meshes.draw(&mut rp, &self.trans_batch);
+            rp.set_pipeline(&self.glass_pipe);
+            self.meshes.draw(&mut rp, &self.glass_batch);
             if self.beam_buf.len > 0 {
                 rp.set_pipeline(&self.beam_pipe);
                 draw_boxes(&mut rp, &self.beam_buf);

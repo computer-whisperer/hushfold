@@ -478,52 +478,64 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     ));
     guard(lib, frame, (a - 0.36, a + 0.36), (o - 0.36, o + 0.36), ped);
     let base = frame.at(a, o, ped);
-    // A brass foot and lid; the glass between them is drawn see-through, as faint
-    // panes with bright edges, an octagon round.
+    // A brass foot and lid, and the glass between them.
     let (r, h) = (0.26, 0.62);
-    for k in 0..2 {
-        let q = Quat::from_rotation_y(k as f32 * 0.785 + 0.2);
-        lib.decor(Inst::new(
-            base + Vec3::Y * (0.03 + 0.002 * k as f32),
-            q,
-            Vec3::new(r * 1.85, 0.06, r * 1.85),
-            kind::METAL,
-            rgba(BRASS, 1.0),
-            0,
-        ));
-        lib.decor(Inst::new(
-            base + Vec3::Y * (h + 0.07 + 0.002 * k as f32),
-            q,
-            Vec3::new(r * 1.75, 0.05, r * 1.75),
-            kind::METAL,
-            rgba(BRASS, 1.0),
-            0,
-        ));
-    }
-    lib.decor(Inst::new(
-        base + Vec3::Y * (h + 0.14),
-        Quat::from_rotation_y(0.985),
-        Vec3::new(0.08, 0.08, 0.08),
-        kind::METAL,
-        rgba(BRASS, 1.0),
-        0,
+    let brass = rgba(BRASS, 1.0);
+    let foot = lib.shape(Mesh::lathe(
+        &[
+            (0.0, 0.0),
+            (0.25, 0.0),
+            (0.25, 0.025),
+            (0.23, 0.045),
+            (0.235, 0.06),
+            (0.0, 0.06),
+        ]
+        .map(Vec2::from),
+        40,
     ));
-    for k in 0..8 {
-        let th = 0.2 + (k as f32 + 0.5) / 8.0 * TAU;
-        let radial = Vec3::new(libm::cosf(th), 0.0, libm::sinf(th));
-        let q = Quat::from_rotation_arc(Vec3::Z, radial);
-        let pane = 2.0 * r * libm::tanf(TAU / 16.0);
-        lib.static_trans.push(Inst::new(
-            base + Vec3::Y * (0.06 + h * 0.5) + radial * r,
-            q,
-            Vec3::new(pane, h, 0.004),
-            kind::GHOST,
-            [0.6, 0.75, 0.95, 0.35],
-            0,
-        ));
-    }
-    // The cloud: puffs of white, faintly lit from within.
+    lib.decor(foot.at(base, Quat::IDENTITY, kind::METAL, brass));
+    let lid = lib.shape(Mesh::lathe(
+        &[
+            (0.0, 0.0),
+            (0.24, 0.0),
+            (0.24, 0.03),
+            (0.2, 0.05),
+            (0.06, 0.08),
+            (0.05, 0.1),
+            (0.045, 0.13),
+            (0.0, 0.14),
+        ]
+        .map(Vec2::from),
+        40,
+    ));
+    lib.decor(lid.at(base + Vec3::Y * (h + 0.06), Quat::IDENTITY, kind::METAL, brass));
+    let jar = Mesh::lathe(
+        &[
+            (r - 0.02, 0.0),
+            (r, 0.04),
+            (r, h - 0.1),
+            (r - 0.04, h - 0.03),
+            (r - 0.05, h),
+        ]
+        .map(Vec2::from),
+        48,
+    );
+    let jar = lib.shape(jar.two_sided());
+    lib.glass(jar.at(
+        base + Vec3::Y * 0.06,
+        Quat::IDENTITY,
+        kind::CLEAR,
+        [0.75, 0.85, 1.0, 0.08],
+    ));
+    // The cloud: puffs of white, faintly lit from within, drifting in the jar.
     let cloud = base + Vec3::Y * 0.36;
+    let drift = Motion::Bob {
+        amp: 0.035,
+        period: 7.0,
+        rock: 0.15,
+    };
+    let m = lib.mover(cloud, drift, 0.0, None);
+    let puff = lib.shape(Mesh::sphere(16));
     let puffs = [
         (Vec3::new(0.0, 0.0, 0.0), 0.2, 0.3),
         (Vec3::new(0.1, 0.04, 0.03), 0.15, 1.1),
@@ -534,14 +546,12 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     ];
     for (off, s, spin) in puffs {
         let q = Quat::from_rotation_y(spin) * Quat::from_rotation_x(spin * 0.7);
-        lib.decor(Inst::new(
-            cloud + off,
-            q,
-            Vec3::splat(s),
-            kind::PAPER,
-            [0.55, 0.62, 0.8, 0.35],
-            0,
-        ));
+        let size = Vec3::new(s * 1.25, s, s * 1.1);
+        lib.moving(
+            m,
+            puff.sized(size)
+                .inst(cloud + off, q, kind::PAPER, [0.55, 0.62, 0.8, 0.35]),
+        );
     }
     // A fork of lightning in it.
     let bolt = [
@@ -550,18 +560,20 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         Vec3::new(0.02, -0.17, 0.0),
         Vec3::new(-0.02, -0.27, 0.0),
     ];
-    for w in bolt.windows(2) {
-        rod(
-            lib,
-            cloud + w[0],
-            cloud + w[1],
-            0.012,
-            0.012,
-            kind::EMISSIVE,
-            [0.85, 0.9, 1.0, 6.0],
-        );
-    }
-    lib.light(cloud, 3.5, [0.7, 0.8, 1.0], 0.7, LightKind::Flicker);
+    let fork = lib.shape(Mesh::sweep(&bolt.map(|p| cloud + p), &[0.008, 0.004], &octagon(), true));
+    lib.moving(
+        m,
+        fork.at(Vec3::ZERO, Quat::IDENTITY, kind::EMISSIVE, [0.85, 0.9, 1.0, 6.0]),
+    );
+    lib.light_riding(m, cloud, 3.5, [0.7, 0.8, 1.0], 0.7, LightKind::Flicker);
+}
+
+/// A unit octagon, for round rods swept along a path.
+fn octagon() -> [Vec2; 8] {
+    std::array::from_fn(|k| {
+        let a = k as f32 * TAU / 8.0;
+        Vec2::new(libm::cosf(a), libm::sinf(a))
+    })
 }
 
 /// A weathervane on a post at `a`, `o`: the arms of the four winds and an arrow

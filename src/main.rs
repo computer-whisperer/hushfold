@@ -114,12 +114,13 @@ impl Running {
             t0.elapsed().as_secs_f32() * 1000.0,
             if loaded { " (save loaded)" } else { "" }
         );
-        self.renderer.set_static(&self.game.lib.static_insts);
+        self.renderer
+            .set_static(&self.game.lib.static_insts, &self.game.lib.meshes);
         self.renderer.set_text(&self.game.lib.text);
         self.renderer.set_books(&self.game.lib.series);
         self.renderer.clear_chunks();
         // Fill its chunks now, so this frame doesn't draw an empty library.
-        self.game.build_instances();
+        self.game.build_instances(self.renderer.aspect());
         self.apply_settings();
         self.hud.confirm_restart = false;
         self.hud.menu_open = false;
@@ -293,8 +294,8 @@ impl Running {
             self.game.save();
         }
 
-        self.game.build_instances();
         let aspect = self.renderer.aspect();
+        self.game.build_instances(aspect);
 
         let raw = self.egui_state.take_egui_input(&self.renderer.window);
         let mut actions = Vec::new();
@@ -584,7 +585,7 @@ impl ApplicationHandler for App {
             t0.elapsed().as_secs_f32() * 1000.0,
             if loaded { " (save loaded)" } else { "" }
         );
-        renderer.set_static(&game.lib.static_insts);
+        renderer.set_static(&game.lib.static_insts, &game.lib.meshes);
         renderer.set_text(&game.lib.text);
         renderer.set_books(&game.lib.series);
         let egui_ctx = egui::Context::default();

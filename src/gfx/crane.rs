@@ -1,6 +1,6 @@
-//! Folded-paper birds: small triangle meshes drawn with the scene pipeline, in place
-//! of boxes, for instances of `kind::CRANE` (the familiars, and the Verse Gallery's
-//! hanging cranes).
+//! Folded-paper birds: small triangle meshes (built in, see `mesh`), one per part, drawn
+//! with the scene pipeline as instances of `kind::CRANE` (the familiars, and the Verse
+//! Gallery's hanging cranes).
 //!
 //! Every part is modelled in one frame (x right, y up, forward -z; metres at a posted
 //! familiar's size, wings spread level), so the parts of a bird share its sheet's
@@ -9,11 +9,9 @@
 //! drawn facing out on both sides with its own flat normal, so every crease shows as
 //! a change in the light.
 
-use super::{GrowBuf, Inst, Vertex, kind};
+use super::mesh::{self, Mesh};
+use super::{Inst, Vertex, kind};
 use glam::{Quat, Vec3};
-use std::borrow::Cow;
-use std::ops::Range;
-use wgpu::util::DeviceExt;
 
 /// The birds there are folded as.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -86,15 +84,20 @@ pub struct Crane {
 /// halves (left, right).
 const PARTS: usize = 5;
 
+/// Meshes of every fold's parts, in `Fold::ALL`'s order.
+pub const MESHES: usize = PARTS * Fold::ALL.len();
+
 impl Crane {
     /// Its parts, as instances of `kind::CRANE`.
     pub fn parts(&self) -> [Inst; PARTS] {
         let shape = self.fold.shape();
         let k = self.size;
         let [r, g, b] = self.paper.tint.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u32);
-        let first = self.fold as u32 * PARTS as u32;
-        let param = |part: usize| (first + part as u32) | (self.paper.print as u32) << 4 | (r | g << 8 | b << 16) << 8;
-        let inst = |at: Vec3, rot: Quat, part| Inst::new(at, rot, Vec3::splat(k), kind::CRANE, self.glow, param(part));
+        let first = mesh::CRANE + self.fold as u32 * PARTS as u32;
+        let param = (self.paper.print as u32) << 4 | (r | g << 8 | b << 16) << 8;
+        let inst = |at: Vec3, rot: Quat, part: usize| {
+            Inst::new(at, rot, Vec3::splat(k), kind::CRANE, self.glow, param).shaped(first + part as u32)
+        };
         let at = |off: Vec3| self.at + self.rot * (off * k);
         let root = Vec3::Y * shape.ridge;
         let mut parts = [inst(self.at, self.rot, 0); PARTS];
@@ -205,12 +208,22 @@ fn swift(b: &mut Builder) {
     b.wing(|b| b.fan(outer, &[lw, lead, t, tw, cw, lw]));
 }
 
-/// The meshes being built: two-sided facets, and the run of indices each part has.
+/// Every fold's parts' meshes (`MESHES` of them).
+pub(super) fn meshes() -> Vec<Mesh> {
+    let mut b = Builder::default();
+    for fold in Fold::ALL {
+        (fold.shape().build)(&mut b);
+        assert_eq!(b.parts.len(), (fold as usize + 1) * PARTS, "{fold:?}");
+    }
+    b.parts
+}
+
+/// The parts being built, of two-sided facets.
 #[derive(Default)]
 struct Builder {
-    verts: Vec<Vertex>,
-    idx: Vec<u16>,
-    parts: Vec<Range<u32>>,
+    parts: Vec<Mesh>,
+    /// The part being built.
+    part: Mesh,
     /// Building the right side: points are mirrored across the middle.
     right: bool,
 }
@@ -221,10 +234,11 @@ impl Builder {
         let m = |p: Vec3| if self.right { Vec3::new(-p.x, p.y, p.z) } else { p };
         let (a, b, c) = (m(a), m(b), m(c));
         let n = (b - a).cross(c - a).normalize_or_zero();
+        let part = &mut self.part;
         for (corners, n) in [([a, b, c], n), ([a, c, b], -n)] {
             for p in corners {
-                self.idx.push(self.verts.len() as u16);
-                self.verts.push(Vertex {
+                part.idx.push(part.verts.len() as u32);
+                part.verts.push(Vertex {
                     pos: p.into(),
                     normal: n.into(),
                 });
@@ -254,9 +268,9 @@ impl Builder {
 
     /// A part made by `f`.
     fn part(&mut self, f: impl FnOnce(&mut Self)) {
-        let start = self.idx.len() as u32;
         f(self);
-        self.parts.push(start..self.idx.len() as u32);
+        let part = std::mem::take(&mut self.part);
+        self.parts.push(part);
     }
 
     /// A pair of parts: the left wing's as `f` makes it, then the right's.
@@ -265,117 +279,5 @@ impl Builder {
         self.right = true;
         self.part(&f);
         self.right = false;
-    }
-}
-
-/// Birds' parts in a buffer of their own, grouped by part, and how many of each.
-struct Batch {
-    buf: GrowBuf,
-    sorted: Vec<Inst>,
-    counts: Vec<u32>,
-}
-
-impl Batch {
-    fn new(device: &wgpu::Device, label: &'static str, parts: usize) -> Self {
-        Batch {
-            buf: GrowBuf::new(device, label, 64),
-            sorted: Vec::new(),
-            counts: vec![0; parts],
-        }
-    }
-
-    /// Upload the birds' parts among `insts`; whether there were any.
-    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, insts: &[Inst]) -> bool {
-        self.sorted.clear();
-        self.sorted.extend(insts.iter().filter(|i| i.kind == kind::CRANE));
-        self.sorted.sort_by_key(|i| i.param & 15);
-        self.counts.fill(0);
-        for i in &self.sorted {
-            self.counts[(i.param & 15) as usize] += 1;
-        }
-        self.buf.upload(device, queue, &self.sorted);
-        !self.sorted.is_empty()
-    }
-}
-
-/// The meshes, and the birds drawn with them: the library's own, and the frame's.
-pub(super) struct Cranes {
-    vb: wgpu::Buffer,
-    ib: wgpu::Buffer,
-    parts: Vec<Range<u32>>,
-    fixed: Batch,
-    moving: Batch,
-    /// The frame's instances that are not birds.
-    rest: Vec<Inst>,
-}
-
-impl Cranes {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
-        let mut b = Builder::default();
-        for fold in Fold::ALL {
-            (fold.shape().build)(&mut b);
-            assert_eq!(b.parts.len(), (fold as usize + 1) * PARTS, "{fold:?}");
-        }
-        let buf = |label, contents: &[u8], usage| {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents,
-                usage,
-            })
-        };
-        let n = b.parts.len();
-        Cranes {
-            vb: buf("crane vb", bytemuck::cast_slice(&b.verts), wgpu::BufferUsages::VERTEX),
-            ib: buf("crane ib", bytemuck::cast_slice(&b.idx), wgpu::BufferUsages::INDEX),
-            parts: b.parts,
-            fixed: Batch::new(device, "cranes", n),
-            moving: Batch::new(device, "moving cranes", n),
-            rest: Vec::new(),
-        }
-    }
-
-    /// Take the birds out of the library's instances; the rest are boxes.
-    pub(super) fn set_fixed<'a>(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        insts: &'a [Inst],
-    ) -> Cow<'a, [Inst]> {
-        if !self.fixed.upload(device, queue, insts) {
-            return Cow::Borrowed(insts);
-        }
-        Cow::Owned(insts.iter().filter(|i| i.kind != kind::CRANE).copied().collect())
-    }
-
-    /// Take the birds out of the frame's instances; the rest are boxes.
-    pub(super) fn set_moving<'a>(
-        &'a mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        insts: &'a [Inst],
-    ) -> &'a [Inst] {
-        if !self.moving.upload(device, queue, insts) {
-            return insts;
-        }
-        self.rest.clear();
-        self.rest.extend(insts.iter().filter(|i| i.kind != kind::CRANE));
-        &self.rest
-    }
-
-    /// Draw them (with the scene pipeline set), leaving their meshes bound.
-    pub(super) fn draw(&self, rp: &mut wgpu::RenderPass) {
-        rp.set_vertex_buffer(0, self.vb.slice(..));
-        rp.set_index_buffer(self.ib.slice(..), wgpu::IndexFormat::Uint16);
-        for batch in [&self.fixed, &self.moving] {
-            let mut at = 0;
-            for (range, &n) in self.parts.iter().zip(&batch.counts) {
-                if n > 0 {
-                    let from = (at * std::mem::size_of::<Inst>()) as u64;
-                    rp.set_vertex_buffer(1, batch.buf.buf.slice(from..));
-                    rp.draw_indexed(range.clone(), 0, 0..n);
-                }
-                at += n as usize;
-            }
-        }
     }
 }

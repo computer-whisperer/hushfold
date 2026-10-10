@@ -113,7 +113,7 @@ touch or two a room, not everything glowing), still objects only.
   room; each door has a stone frame with the sign between two glowing gems;
   beamed walks under panelled gallery fronts with lamps on the railings; panelled
   stairs; a ribbed leaded skylight with the moon in two clear panes; lanterns
-  floating still in the well.
+  floating in the well, each bobbing in its own time.
 - **The departments.** Ground floor: the Observatory (a painted night-sky ceiling
   with twinkling constellations, an orrery with a glowing sun, a telescope at an
   arched window), the Alchemical Wing (alcoves off a working nave, a brick athanor
@@ -401,11 +401,19 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   will cost them more.
 
 ## Rendering
-Box geometry, but for books in hand (below) and the paper birds (familiars, the
-Verse Gallery's cranes): those are instances of `kind::CRANE`, drawn with the same
-pipeline and instance format from small two-sided triangle meshes (`gfx/crane.rs`),
-one per part (a body, each wing's inner and outer half) and posed per instance; the
-renderer sorts them out of the static and per-frame instances. Each instance's
+Instances of the box, or of a mesh fitted to it (`gfx/mesh.rs`; an instance's
+`mesh`, 0 the box): built in are the box and the paper birds' parts (familiars, the
+Verse Gallery's cranes; small two-sided triangle meshes, `gfx/crane.rs`, one per
+part, posed per instance); the library makes the rest as it is generated
+(`Library::shape`): turned (lathe profiles: cylinders, spheres, balusters, jars; a
+closed profile turns into a ring), extruded (outlines, bands, toothed wheels), swept
+along a path (a lightning fork, a horn), merged, interned by content. Fitted to the
+box, a mesh's instance is sized as a box is and its material reads it in the box's
+coordinates; normals are smooth but at sharp creases, and the rounded edges and edge
+lines materials draw on boxes are left off meshes (worked out branch-free: a branch
+there pushed the scene shader past its register budget). Each set of instances
+(fixed, per frame, translucent) is sorted by mesh and drawn a run per mesh from one
+pair of buffers. Each instance's
 `kind` picks a procedural material in WGSL: wood, book, floor, stone, rug,
 emissive, plaque, window glass, paper, metal, cloth, leaf, crystal, parchment and
 folded paper (a bird's sheet: its tint and print, lit flat per facet so the creases
@@ -422,9 +430,19 @@ stand-in of the room; fog cooling with distance. Translucent things (slot ghosts
 the veil) are drawn in a pass that can read the opaque depth; moonbeams there
 without a depth test, each the light along the eye's ray through a soft shaft in
 closed form, stopping at the scene's depth and pooling on surfaces facing the
-window. 4x MSAA HDR -> bloom -> ACES tonemap (a touch of blue in the darkest
+window; clear glass (`kind::CLEAR`, `fs_glass`) in a pipeline of its own there, the
+room and the lights reflected in it, more at a slant. 4x MSAA HDR -> bloom -> ACES tonemap (a touch of blue in the darkest
 tones) -> egui. Held books are drawn in a second pass with cleared depth. Static
 geometry is one draw in the order it was laid down, without culling.
+
+Things that move (`library/motion.rs`) are looks only: nothing moving is in anyone's
+way, and the world, books and saves never see them. A mover is a pivot and a motion
+about it (spin, swing, bob, tick, slide), its parts laid down where they are at rest
+(`Library::moving`); it may ride another (a moon on a planet's arm), and a light may
+ride it (`light_riding`). Each frame every mover is posed from a clock kept in f64
+(so a spin is as smooth ten hours in), and the parts of those within 70 m and in view
+join the frame's instances. Meshing gears turn at rates that keep their teeth
+together; clocks open at the time they were set to and keep it.
 
 Lettering (`text.rs`) is set in sixteen faces built into the game (`text::Face`,
 `assets/fonts`), so it reads the same on every system: the library's own (signs,

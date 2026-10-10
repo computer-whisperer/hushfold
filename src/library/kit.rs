@@ -418,6 +418,82 @@ impl Library {
     }
 
     /// A wooden box along the line `a`→`b`, `w` across and `h` tall, kept upright.
+    /// A clock's hands over the face of a dial (`face` its middle, `n` out of it, `r`
+    /// its radius) set at `hour`:`minute` and keeping time from there, clockwise as
+    /// seen; spades, the hour hand short and broad, the minute hand long; with a second
+    /// hand ticking round if `seconds`; and a cap over their arbor.
+    pub(super) fn clock_hands(
+        &mut self,
+        (face, n, r): (Vec3, Vec3, f32),
+        (hour, minute): (f32, f32),
+        (ink, cap): ([f32; 4], [f32; 4]),
+        seconds: bool,
+    ) {
+        let side = Vec3::Y.cross(n);
+        let facing = Quat::from_rotation_arc(Vec3::Z, n);
+        // Where `side` is in the plane `facing` lays a hand's length (x) in.
+        let x = facing * Vec3::X;
+        let side_at = libm::atan2f(side.dot(n.cross(x)), side.dot(x));
+        let spade = |len: f32, w: f32| -> Vec<Vec2> {
+            let v = Vec2::new;
+            vec![
+                v(-0.16 * len, -w * 0.5),
+                v(0.62 * len, -w * 0.35),
+                v(0.72 * len, -w * 1.3),
+                v(0.86 * len, -w * 0.4),
+                v(len, 0.0),
+                v(0.86 * len, w * 0.4),
+                v(0.72 * len, w * 1.3),
+                v(0.62 * len, w * 0.35),
+                v(-0.16 * len, w * 0.5),
+            ]
+        };
+        let hand = |lib: &mut Library, turns: f32, (len, w): (f32, f32), z: f32, motion: Motion| {
+            // Up at twelve, a turn clockwise as seen.
+            let th = std::f32::consts::FRAC_PI_2 - turns * TAU;
+            let shape = lib.shape(Mesh::prism(&spade(len, w), 0.01));
+            let m = lib.mover(face, motion, 0.0, None);
+            lib.moving(
+                m,
+                shape.at(
+                    face + n * z,
+                    facing * Quat::from_rotation_z(th + side_at),
+                    kind::METAL,
+                    ink,
+                ),
+            );
+        };
+        let spin = |hours: f32| Motion::Spin {
+            axis: n,
+            rate: -TAU / (hours * 3600.0),
+        };
+        hand(
+            self,
+            (hour % 12.0) / 12.0 + minute / 720.0,
+            (r * 0.52, r * 0.07),
+            0.02,
+            spin(12.0),
+        );
+        hand(self, minute / 60.0, (r * 0.78, r * 0.045), 0.031, spin(1.0));
+        if seconds {
+            let tick = Motion::Tick {
+                axis: -n,
+                steps: 60,
+                period: 60.0,
+            };
+            hand(self, 0.0, (r * 0.86, r * 0.012), 0.042, tick);
+        }
+        let dome = self.shape(Mesh::dome(16));
+        let k = r.max(0.3);
+        let up = Quat::from_rotation_arc(Vec3::Y, n);
+        self.decor(dome.sized(Vec3::new(k * 0.1, k * 0.05, k * 0.1)).inst(
+            face + n * (0.048 + k * 0.025),
+            up,
+            kind::METAL,
+            cap,
+        ));
+    }
+
     pub(super) fn beam(&mut self, a: Vec3, b: Vec3, w: f32, h: f32, rgb: [f32; 3]) {
         self.bar(a, b, w, h, kind::WOOD, rgb);
     }

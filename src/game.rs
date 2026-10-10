@@ -16,7 +16,7 @@ pub use spells::{ECHO_SPEED, SPELLS, spell_times};
 
 use crate::audio::{Audio, Sfx};
 use crate::catalog;
-use crate::gfx::{Globals, GpuLight, Inst, MAX_LIGHTS, kind};
+use crate::gfx::{self, Globals, GpuLight, Inst, MAX_LIGHTS, kind};
 use crate::library::*;
 use crate::loose::{Loose, Rest};
 use crate::nav::{Field, Nav, Route};
@@ -41,6 +41,8 @@ const HEAP_WALL: f32 = 1.3;
 const HEAP_CLEAR: f32 = 0.3;
 const SHELF_REACH: f32 = 4.2;
 const HAND_VISIBLE: usize = 8;
+/// Moving things further than this (metres) are lost in the fog, and not drawn.
+const MOVERS_SEEN: f32 = 70.0;
 /// Shelving Aura by level: (radius in metres, books per second).
 const AURA_LEVELS: [(f32, f32); 4] = [(0.0, 0.0), (3.0, 2.0), (4.5, 4.0), (6.0, 8.0)];
 /// Sifting Touch by level: the largest scoop while seeking, in metres.
@@ -607,6 +609,11 @@ pub struct Game {
     pub toasts: Vec<Toast>,
     pub aim: Aim,
     pub time: f32,
+    /// Seconds since the library opened, for the things in it that move (`motion`):
+    /// kept in f64 so that hours in they still turn smoothly.
+    clock: f64,
+    /// Each mover's pose this frame.
+    poses: Vec<motion::Pose>,
     pub play_time: f64,
     /// A press on a pile, while the button is held.
     pub scoop: Option<Scoop>,
@@ -745,6 +752,8 @@ impl Game {
             toasts: Vec::new(),
             aim: Aim::None,
             time: 0.0,
+            clock: 0.0,
+            poses: Vec::new(),
             play_time: 0.0,
             scoop: None,
             toss_charge: 0.0,
@@ -939,6 +948,8 @@ impl Game {
 
     pub fn update(&mut self, dt: f32, input: &Input, audio: &mut Audio, can_play: bool) {
         self.time += dt;
+        self.clock += dt as f64;
+        motion::pose(&self.lib.movers, self.clock, &mut self.poses);
         if can_play {
             self.play_time += dt as f64;
         }
@@ -2070,12 +2081,16 @@ impl Game {
         }
         for (_, li) in near {
             let l = &self.lib.lights[li];
+            let pos = match l.rides.and_then(|m| self.poses.get(m as usize)) {
+                Some(pose) => pose.point(l.pos),
+                None => l.pos,
+            };
             match l.kind {
-                LightKind::Static => push(&mut list, l.pos, l.radius, l.color, l.intensity),
+                LightKind::Static => push(&mut list, pos, l.radius, l.color, l.intensity),
                 LightKind::Flicker => {
                     let f =
                         0.88 + 0.08 * libm::sinf(t * 7.3 + li as f32 * 1.7) + 0.05 * libm::sinf(t * 13.1 + li as f32);
-                    push(&mut list, l.pos, l.radius, l.color, l.intensity * f);
+                    push(&mut list, pos, l.radius, l.color, l.intensity * f);
                 }
                 LightKind::Lantern(c) => {
                     let g = self.lantern_glow[c];
@@ -2087,7 +2102,7 @@ impl Game {
                         l.color[1] * (1.0 - k) + cc[1] * k,
                         l.color[2] * (1.0 - k) + cc[2] * k,
                     ];
-                    push(&mut list, l.pos, l.radius + g * 2.0, col, l.intensity + g * 1.6);
+                    push(&mut list, pos, l.radius + g * 2.0, col, l.intensity + g * 1.6);
                 }
             }
         }
@@ -2168,7 +2183,9 @@ impl Game {
         self.held.get(self.active).copied()
     }
 
-    pub fn build_instances(&mut self) {
+    /// The frame's instances (and the scene's chunks brought up to date), for a view
+    /// `aspect` wide.
+    pub fn build_instances(&mut self, aspect: f32) {
         let mut dyn_insts = std::mem::take(&mut self.dyn_insts);
         let mut trans = std::mem::take(&mut self.trans_insts);
         let mut held_insts = std::mem::take(&mut self.held_insts);
@@ -2373,6 +2390,26 @@ impl Game {
                 [1.0, 0.85, 0.6, (0.6 + 1.2 * tw) * top],
                 0,
             ));
+        }
+
+        // Things that move, posed, if they are in view and not lost in the fog.
+        let planes = gfx::frustum(self.view_proj(aspect));
+        let eye = self.player.eye();
+        if self.poses.len() != self.lib.movers.len() {
+            motion::pose(&self.lib.movers, self.clock, &mut self.poses);
+        }
+        for (m, pose) in self.lib.movers.iter().zip(&self.poses) {
+            let c = pose.point(m.pivot);
+            if c.distance(eye) - m.reach < MOVERS_SEEN && gfx::ball_visible(&planes, c, m.reach) {
+                for i in &self.lib.moving_insts[m.parts.start as usize..m.parts.end as usize] {
+                    let to = if i.kind == kind::CLEAR {
+                        &mut trans
+                    } else {
+                        &mut dyn_insts
+                    };
+                    to.push(pose.inst(i));
+                }
+            }
         }
 
         // Moonbeams and veils.
@@ -3086,7 +3123,7 @@ mod tests {
         let mut g = Game::new(Layout::Hall);
         let mut audio = crate::audio::Audio::silent();
         let check = |g: &mut Game| {
-            g.build_instances();
+            g.build_instances(1.6);
             let mut seen = vec![0u32; g.lib.books.len()];
             for c in 0..g.scene.chunks.len() {
                 let ch = &g.scene.chunks[c];
@@ -3905,7 +3942,7 @@ mod tests {
                 ..Input::default()
             };
             g.update(0.5, &input, audio, true);
-            g.build_instances();
+            g.build_instances(1.6);
         };
         tick(&mut g, None, &mut audio);
         assert_eq!(g.scene.lit(series).0, 0, "no glow before it is learned");

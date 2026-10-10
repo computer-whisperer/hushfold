@@ -1,5 +1,5 @@
-// Hushfold scene shader. Everything is a box but the paper birds, which have meshes of
-// their own (gfx::crane); `kind` picks a procedural material.
+// Hushfold scene shader. Instances are boxes or meshes fitted to the box (gfx::mesh),
+// read in the box's coordinates; `kind` picks a procedural material.
 
 struct Light {
     pos_radius: vec4<f32>,
@@ -40,6 +40,7 @@ const K_LEAF: u32 = 15u;
 const K_CRYSTAL: u32 = 16u;
 const K_PARCHMENT: u32 = 17u;
 const K_CRANE: u32 = 18u;
+const K_CLEAR: u32 = 19u; // drawn by fs_glass
 
 const BRASS: vec3<f32> = vec3<f32>(0.8, 0.5, 0.15);
 
@@ -55,20 +56,25 @@ struct IIn {
     @location(5) scale: vec3<f32>,
     @location(6) param: u32,
     @location(7) color: vec4<f32>,
+    @location(9) mesh: u32,
 };
 
 struct VOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world: vec3<f32>,
     @location(1) local: vec3<f32>,
-    // Per face or per instance from here on.
-    @location(2) @interpolate(flat) lnormal: vec3<f32>,
+    // The normal in the box's frame: a box's face's, or a mesh's, smooth across it.
+    @location(2) lnormal: vec3<f32>,
+    // Per instance from here on.
     @location(3) @interpolate(flat) kind: u32,
     @location(4) @interpolate(flat) param: u32,
     @location(5) @interpolate(flat) color: vec4<f32>,
     @location(6) @interpolate(flat) scale: vec3<f32>,
     @location(7) @interpolate(flat) rot: vec4<f32>,
     @location(8) @interpolate(flat) centre: vec3<f32>,
+    // 0 for the box: box-only detail (rounded edges, lines along them) is drawn on it
+    // alone; a mesh has its shape in its geometry.
+    @location(9) @interpolate(flat) mesh: u32,
 };
 
 fn qrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
@@ -87,13 +93,15 @@ fn vs_main(v: VIn, i: IIn) -> VOut {
     o.clip = g.view_proj * vec4<f32>(world, 1.0);
     o.world = world;
     o.local = v.pos;
-    o.lnormal = v.normal;
+    // Stretched with the box, as normals are (a box's stay its faces').
+    o.lnormal = normalize(v.normal / i.scale);
     o.kind = i.kind;
     o.param = i.param;
     o.color = i.color;
     o.scale = i.scale;
     o.rot = i.rot;
     o.centre = i.ipos;
+    o.mesh = i.mesh;
     return o;
 }
 
@@ -120,6 +128,7 @@ fn vs_book_model(v: ModelIn, i: IIn) -> VOut {
     o.scale = i.scale;
     o.rot = i.rot;
     o.centre = i.ipos;
+    o.mesh = 0u;
     return o;
 }
 
@@ -242,10 +251,11 @@ fn face_uv(ln: vec3<f32>, p: vec3<f32>) -> vec2<f32> {
 
 // The normal of the box with its edges rounded (radius `r` metres; gone where that is
 // under a pixel): near an edge it leans out over it, so edges catch the light.
-// `pillow` swells the faces a little, so reflections sweep across them.
+// `pillow` swells the faces a little, so reflections sweep across them. A mesh's own
+// (worked out as the box's is, leaning nowhere: a branch here costs registers).
 fn bevel(i: VOut, r: f32, k: f32, pillow: f32, fw: f32) -> vec3<f32> {
     let e = (vec3<f32>(0.5) - abs(i.local)) * i.scale;
-    let inplane = vec3<f32>(1.0) - abs(i.lnormal);
+    let inplane = (vec3<f32>(1.0) - abs(i.lnormal)) * f32(i.mesh == 0u);
     let t = clamp(vec3<f32>(1.0) - e / r, vec3<f32>(0.0), vec3<f32>(1.0)) * inplane;
     let lean = sign(i.local) * t * (k * smoothstep(0.5 * fw, 2.0 * fw, r)) + i.local * inplane * pillow;
     return qrot(i.rot, normalize(i.lnormal + lean));
@@ -492,7 +502,9 @@ fn cloth(s: ptr<function, Mat>, i: VOut, fw: f32) {
     let p = i.param;
     if (p != 0u) {
         let tc = vec3<f32>(f32(p & 255u), f32((p >> 8u) & 255u), f32((p >> 16u) & 255u)) / 255.0;
-        var on = line_aa(abs(box_edge(i.local, i.scale, ln) - 0.035), 0.01, fw);
+        // The border runs round a box's faces; a mesh has none.
+        let edge = select(1.0, box_edge(i.local, i.scale, ln), i.mesh == 0u);
+        var on = line_aa(abs(edge - 0.035), 0.01, fw);
         let pat = (p >> 24u) & 3u;
         if (pat == 1u) {
             on = max(on, line_aa(abs(fract(uv.x / 0.1) - 0.5) * 0.1, 0.018, fw));
@@ -613,7 +625,7 @@ fn crystal(s: ptr<function, Mat>, i: VOut, fw: f32) {
     let t = g.cam_pos.w;
     let fleck = vnoise(p * sc * 40.0 + vec3<f32>(seed * 17.0, t * 0.15, 0.0));
     let pulse = 0.85 + 0.15 * sin(t * 1.6 + seed * 6.283);
-    let edge = line_aa(box_edge(i.local, sc, i.lnormal), 0.002, fw) * detail;
+    let edge = line_aa(box_edge(i.local, sc, i.lnormal), 0.002, fw) * detail * f32(i.mesh == 0u);
     let inner = mix(0.75, 0.35 + 1.2 * core * core + 0.6 * fleck * core, detail) + 0.5 * edge;
     (*s).albedo = c * 0.3;
     (*s).back = 0.7;
@@ -776,7 +788,7 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
     s.spec = vec3<f32>(0.04);
     s.gloss = 16.0;
     s.emit = vec3<f32>(0.0);
-    s.n = qrot(i.rot, i.lnormal);
+    s.n = qrot(i.rot, normalize(i.lnormal));
     s.back = 0.0;
     var ao = mix(0.55, 1.0, smoothstep(0.0, 2.2, i.world.y));
     switch i.kind {
@@ -1619,6 +1631,31 @@ fn fs_trans(i: VOut) -> @location(0) vec4<f32> {
     let pulse = 0.5 + 0.5 * sin(t * 5.0);
     let c = i.color.rgb * k * (outline * (1.4 + 0.8 * pulse) + 0.3 + 0.3 * pulse);
     return vec4<f32>(c, k * (0.35 + 0.3 * outline));
+}
+
+// Clear glass (gfx::kind::CLEAR): the room and the lights reflected in it, more toward
+// its edges where it is seen at a slant, over a faint tint. Premultiplied alpha; both
+// sides drawn, the inside of a jar reflecting too.
+@fragment
+fn fs_glass(i: VOut) -> @location(0) vec4<f32> {
+    let view = normalize(g.cam_pos.xyz - i.world);
+    var s: Mat;
+    s.n = qrot(i.rot, normalize(i.lnormal));
+    s.n = select(s.n, -s.n, dot(s.n, view) < 0.0);
+    let fr = fresnel(dot(s.n, view));
+    s.albedo = vec3<f32>(0.0);
+    s.spec = vec3<f32>(2.0);
+    s.gloss = 220.0;
+    s.back = 0.0;
+    let tint = i.color.rgb;
+    let a = i.color.w + (1.0 - i.color.w) * fr * 0.7;
+    let refl = env(reflect(-view, s.n), 0.0) * mix(tint, vec3<f32>(1.0), 0.6) * (0.08 + 0.92 * fr);
+    let body = tint * mix(g.ambient_bottom.rgb, g.ambient_top.rgb, 0.6) * i.color.w;
+    let col = refl + body + shade(s, i.world);
+    // Fogged as what it hides would be: toward the haze, at its own opacity.
+    let d = length(i.world - g.cam_pos.xyz);
+    let f = 1.0 - exp(-d * g.fog.w);
+    return vec4<f32>(mix(col, g.fog.rgb * a, f), a);
 }
 
 // ---------------------------------------------------------------- lettering

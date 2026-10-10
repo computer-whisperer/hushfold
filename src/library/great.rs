@@ -1212,8 +1212,8 @@ impl Library {
         }
     }
 
-    /// Lanterns hanging still in the air of the well with nothing holding them up, two
-    /// of them lighting the galleries round them.
+    /// Lanterns floating in the air of the well with nothing holding them up, each
+    /// bobbing in its own time, two of them lighting the galleries round them.
     fn floating_lanterns(&mut self) {
         const SPOTS: [(f32, f32, f32); 6] = [
             (0.4, 5.0, 10.6),
@@ -1226,8 +1226,14 @@ impl Library {
         for (k, &(t, r, y)) in SPOTS.iter().enumerate() {
             let c = Vec3::new(libm::cosf(t) * r, y, libm::sinf(t) * r);
             let rot = Quat::from_rotation_y(t * 2.3 + k as f32);
+            let bob = Motion::Bob {
+                amp: 0.07 + 0.02 * (k % 3) as f32,
+                period: 6.5 + 0.9 * k as f32,
+                rock: 0.04,
+            };
+            let m = self.mover(c, bob, k as f32 * 2.1, None);
             let part = |lib: &mut Self, off: Vec3, size: Vec3, kind: u32, rgba: [f32; 4]| {
-                lib.decor(Inst::new(c + rot * off, rot, size, kind, rgba, 0));
+                lib.moving(m, Inst::new(c + rot * off, rot, size, kind, rgba, 0));
             };
             let gilt = rgba(GILT, 1.0);
             part(
@@ -1252,7 +1258,7 @@ impl Library {
                 );
             }
             if k % 3 == 0 {
-                self.light(c, 7.0, [1.0, 0.7, 0.4], 0.9, LightKind::Static);
+                self.light_riding(m, c, 7.0, [1.0, 0.7, 0.4], 0.9, LightKind::Static);
             }
         }
     }

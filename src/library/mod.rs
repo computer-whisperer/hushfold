@@ -7,16 +7,19 @@
 mod great;
 mod hall;
 mod kit;
+pub mod motion;
 mod rooms;
 
 #[cfg(test)]
 pub use hall::{HALL_X, HALL_Z, VEIL_X};
 
 use crate::catalog::{self, Catalogue, Series};
+use crate::gfx::mesh::{self, Mesh, Shape};
 use crate::gfx::{Inst, kind};
 use crate::text::{self, Glyph, Lettering, Style};
 use crate::world::{Gate, Level, NOSING, SLAB, Slab, Stairs, Stops, World};
 use glam::{Mat3, Quat, Vec2, Vec3};
+use motion::{Motion, Mover};
 use rand::prelude::*;
 use std::collections::HashSet;
 use std::f32::consts::TAU;
@@ -138,6 +141,8 @@ pub struct LightDef {
     pub color: [f32; 3],
     pub intensity: f32,
     pub kind: LightKind,
+    /// The mover it rides (`motion`), its position being where it is at rest.
+    pub rides: Option<u32>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -186,7 +191,14 @@ pub struct Library {
     /// its length).
     pub drops: Vec<(u32, usize, Vec2, Vec2)>,
     pub static_insts: Vec<Inst>,
-    /// Translucent static geometry (moonbeams).
+    /// Its own meshes (`shape`), the first `mesh::LIBRARY`.
+    pub meshes: Vec<Mesh>,
+    /// Each of them by a hash of its contents, so one made twice is kept once.
+    mesh_ids: std::collections::HashMap<u64, u32>,
+    /// Things that move (`motion`), and their parts as they are at rest.
+    pub movers: Vec<Mover>,
+    pub moving_insts: Vec<Inst>,
+    /// Translucent static geometry (moonbeams, clear glass).
     pub static_trans: Vec<Inst>,
     /// Lettering on signs and labels.
     pub text: Vec<Glyph>,
@@ -222,6 +234,10 @@ impl Library {
             rooms: Vec::new(),
             drops: Vec::new(),
             static_insts: Vec::new(),
+            meshes: Vec::new(),
+            mesh_ids: Default::default(),
+            movers: Vec::new(),
+            moving_insts: Vec::new(),
             static_trans: Vec::new(),
             text: Vec::new(),
             lights: Vec::new(),
@@ -298,6 +314,27 @@ impl Library {
         text::set_line(&mut self.text, text, style, at, Vec3::Y.cross(normal), Vec3::Y, width);
     }
 
+    /// A mesh of its own (fitted to the unit box; one made before is shared), and the
+    /// size it was made at.
+    pub fn shape(&mut self, m: Mesh) -> Shape {
+        use std::hash::{Hash, Hasher};
+        let (m, size, middle) = m.fitted();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        bytemuck::cast_slice::<_, u8>(&m.verts).hash(&mut h);
+        m.idx.hash(&mut h);
+        let first = mesh::LIBRARY + self.meshes.len() as u32;
+        let id = *self.mesh_ids.entry(h.finish()).or_insert(first);
+        if id == first {
+            self.meshes.push(m);
+        } else {
+            debug_assert!(
+                self.meshes[(id - mesh::LIBRARY) as usize] == m,
+                "two meshes hashed alike"
+            );
+        }
+        Shape::new(id, size, middle)
+    }
+
     /// A rug or carpet on the floor: books lie on it rather than under it; it is in
     /// no one's way.
     fn rug(&mut self, rug: Inst) {
@@ -307,6 +344,12 @@ impl Library {
     /// Drawn only: small, or out of reach, so in nothing's way.
     fn decor(&mut self, i: Inst) {
         self.static_insts.push(i);
+    }
+
+    /// Clear glass (`kind::CLEAR`), drawn only, over what is behind it.
+    fn glass(&mut self, i: Inst) {
+        debug_assert_eq!(i.kind, kind::CLEAR, "glass is clear");
+        self.static_trans.push(i);
     }
 
     /// Drawn, and its box is in the way of what `stops` says.
@@ -329,7 +372,14 @@ impl Library {
             color,
             intensity,
             kind,
+            rides: None,
         });
+    }
+
+    /// A light carried by mover `m`, at `pos` when the mover is at rest.
+    fn light_riding(&mut self, m: u32, pos: Vec3, radius: f32, color: [f32; 3], intensity: f32, kind: LightKind) {
+        self.light(pos, radius, color, intensity, kind);
+        self.lights.last_mut().expect("just lit").rides = Some(m);
     }
 
     /// Shelve category `cat` across `faces` (front plane centre at floor level,
@@ -669,10 +719,12 @@ mod tests {
     }
 
     /// Faces of opaque static boxes that lie in the same plane, facing the same way,
-    /// overlapping where they can be seen from inside the library.
+    /// overlapping where they can be seen from inside the library. (Meshes are left
+    /// out: their bounds are faces only where they are flat.)
     fn coplanar(layout: Layout) -> Vec<String> {
         let lib = Library::generate(layout, 7);
         let boxes: Vec<(Vec3, Vec3, u32)> = (lib.static_insts.iter())
+            .filter(|i| i.mesh == mesh::BOX)
             .filter_map(|i| i.axis_box().map(|(a, b)| (a, b, i.kind)))
             .collect();
         let air = Air::new(&boxes, lib.spawn.0 + Vec3::Y * 1.0);
