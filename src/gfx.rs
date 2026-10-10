@@ -23,25 +23,20 @@ pub mod kind {
     /// Brass, iron, silver: the colour is the metal's. Grey metals come out rough,
     /// bright or coloured ones polished. param 1: aged (verdigris on warm metals, rust
     /// on grey ones).
-    #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
     pub const METAL: u32 = 13;
     /// Banners, upholstery, curtains. Thin upright pieces hang in folds, others are
     /// stuffed like cushions. param: 0 plain, else a trim colour in the low 24 bits
     /// (r | g << 8 | b << 16, like RUG) as a border band, and bits 24..25 a pattern in
     /// it: 1 stripes, 2 diamonds.
-    #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
     pub const CLOTH: u32 = 14;
     /// Leaves and stems: a thin flat box is a blade, a long thin one a stem, anything
     /// bigger a mass of foliage. Light behind shines through.
-    #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
     pub const LEAF: u32 = 15;
     /// Gems and glass: color.w is how brightly it glows from inside (0 for plain glass).
-    #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
     pub const CRYSTAL: u32 = 16;
     /// Maps, charts, scrolls; the colour is the paper's. param picks the ink on its
     /// broad faces: 0 writing, 1 a map, 2 a star chart, 3 none. A thick box shows a
     /// rolled scroll's turns at its ends.
-    #[allow(dead_code)] // TEMP(visual pass): until something is made of it.
     pub const PARCHMENT: u32 = 17;
 }
 
