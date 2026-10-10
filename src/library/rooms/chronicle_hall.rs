@@ -466,8 +466,8 @@ fn bust(lib: &mut Library, f: &RoomFrame, s: f32, o: f32, k: usize) {
         1 => put(
             lib,
             round,
-            Vec3::new(0.135, 0.12, 0.09),
-            Vec3::new(0.0, 1.605, 0.035),
+            Vec3::new(0.15, 0.11, 0.12),
+            Vec3::new(0.0, 1.615, 0.022),
             flat,
             kind::STONE,
             white,

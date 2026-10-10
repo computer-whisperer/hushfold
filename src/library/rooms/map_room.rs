@@ -25,6 +25,7 @@ const BACKS: [f32; 3] = [22.25, 25.95, 29.79];
 const GLOBE: (f32, f32) = (0.0, 21.0);
 const TABLE: (f32, f32) = (0.0, 27.2);
 const BRASS_RGBA: [f32; 4] = [0.62, 0.45, 0.16, 1.0];
+const SEPIA: [f32; 3] = [0.22, 0.13, 0.06];
 
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     walls(lib, frame);
@@ -176,13 +177,13 @@ fn walls(lib: &mut Library, f: &RoomFrame) {
     }
     // Maps: two over the middle of the far wall (the category's sign hangs between),
     // two over the near cases, and a great sea chart beside the door.
-    for a in [-4.3f32, 4.3] {
-        wall_map(lib, Spot::new(f, a, far, 0.0), (2.6, 1.5), 4.45);
+    for (i, a) in [-4.3f32, 4.3].into_iter().enumerate() {
+        wall_map(lib, Spot::new(f, a, far, 0.0), (2.6, 1.5), 4.45, i as u64);
     }
-    for a in [2.0f32, 10.1] {
-        wall_map(lib, Spot::new(f, a, near, PI), (2.2, 1.3), 4.35);
+    for (i, a) in [2.0f32, 10.1].into_iter().enumerate() {
+        wall_map(lib, Spot::new(f, a, near, PI), (2.2, 1.3), 4.35, 2 + i as u64);
     }
-    wall_map(lib, Spot::new(f, -4.7, near, PI), (3.6, 1.9), 2.3);
+    wall_map(lib, Spot::new(f, -4.7, near, PI), (3.6, 1.9), 2.3, 4);
 }
 
 /// A tall moonlit window high in a wall, `w` wide, with a stone surround; `at` is on
@@ -223,8 +224,9 @@ fn window(lib: &mut Library, at: Spot, w: f32) {
 }
 
 /// A framed map `size` wide and high, its middle `y` up the wall at `at` (on the
-/// wall's face, facing into the room): its coasts and graticule inked, and a route.
-fn wall_map(lib: &mut Library, at: Spot, (w, h): (f32, f32), y: f32) {
+/// wall's face, facing into the room): a sheet inked as a map, and drawn boldly over
+/// it (to read from across the room) a coast or two, lines of latitude, a route.
+fn wall_map(lib: &mut Library, at: Spot, (w, h): (f32, f32), y: f32, seed: u64) {
     let frame = rgba([0.1, 0.05, 0.022], 1.0);
     let bar = 0.07;
     for s in [-1.0f32, 1.0] {
@@ -256,7 +258,37 @@ fn wall_map(lib: &mut Library, at: Spot, (w, h): (f32, f32), y: f32) {
     sheet.param = 1;
     lib.decor(sheet);
     let z = 0.037;
-    // A dotted route across it.
+    let ink = rgba(SEPIA, 1.0);
+    for k in 1..4 {
+        let yy = y - h * 0.5 + h * k as f32 / 4.0;
+        at.part(
+            lib,
+            Vec3::new(0.0, yy, z - 0.002),
+            Vec3::new(w * 0.94, 0.008, 0.004),
+            Quat::IDENTITY,
+            kind::PLAIN,
+            [0.45, 0.36, 0.24, 1.0],
+        );
+    }
+    let mut r = StdRng::seed_from_u64(0x4d61_7073 ^ seed);
+    let blobs = if w > 3.0 { 3 } else { 2 };
+    for b in 0..blobs {
+        let cx = (b as f32 + 0.5) / blobs as f32 * w - w * 0.5 + r.gen_range(-0.15..0.15) * w / blobs as f32;
+        let cy = y + r.gen_range(-0.15..0.15) * h;
+        let rad = Vec2::new(w / blobs as f32 * 0.32, h * 0.3);
+        let n = 9;
+        let pts: Vec<Vec2> = (0..n)
+            .map(|i| {
+                let t = i as f32 / n as f32 * TAU;
+                let k = r.gen_range(0.65..1.15);
+                Vec2::new(cx + libm::cosf(t) * rad.x * k, cy + libm::sinf(t) * rad.y * k)
+            })
+            .collect();
+        for i in 0..n {
+            stroke(lib, &at, pts[i], pts[(i + 1) % n], z, ink);
+        }
+    }
+    // A dotted route between the coasts.
     let (p, q) = (Vec2::new(-w * 0.35, y - h * 0.3), Vec2::new(w * 0.35, y + h * 0.25));
     for i in 0..6 {
         let t = (i as f32 + 0.25) / 6.0;
@@ -445,7 +477,7 @@ fn press(lib: &mut Library, f: &RoomFrame) {
             );
         }
     }
-    wall_map(lib, Spot::new(f, s * 9.58, RACK_BACK, 0.0), (3.8, 0.8), 2.62);
+    wall_map(lib, Spot::new(f, s * 9.58, RACK_BACK, 0.0), (3.8, 0.8), 2.62, 5);
     // Charts left out on top: a loose sheet or two and a few rolls.
     let lay = Spot {
         at: f.at(s * 9.6, (o0 + o1) * 0.5, top),
@@ -819,6 +851,26 @@ fn table(lib: &mut Library, f: &RoomFrame) {
     );
     sheet.param = 1;
     lib.decor(sheet);
+    let ink = rgba(SEPIA, 1.0);
+    let coast = [
+        (-1.75, 0.3),
+        (-1.3, 0.12),
+        (-0.9, 0.28),
+        (-0.5, 0.05),
+        (-0.1, 0.18),
+        (0.3, -0.12),
+        (0.7, 0.06),
+        (1.1, -0.2),
+        (1.5, -0.08),
+        (1.78, -0.3),
+    ];
+    for w in coast.windows(2) {
+        flat_stroke(lib, &chart, Vec2::from(w[0]), Vec2::from(w[1]), 0.0095, ink);
+    }
+    let isle = [(0.5, 0.3), (0.85, 0.36), (1.0, 0.22), (0.75, 0.15), (0.5, 0.3)];
+    for w in isle.windows(2) {
+        flat_stroke(lib, &chart, Vec2::from(w[0]), Vec2::from(w[1]), 0.0095, ink);
+    }
     for i in 0..7 {
         let p = Vec2::new(-1.4, -0.25).lerp(Vec2::new(0.6, 0.27), i as f32 / 7.0);
         let q = p + (Vec2::new(0.6, 0.27) - Vec2::new(-1.4, -0.25)) * 0.07;
