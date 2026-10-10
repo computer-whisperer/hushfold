@@ -76,16 +76,12 @@ struct Cells {
     height: u32,
 }
 
-/// The serif face (the HUD's), else egui's own.
+/// The serif face, for lettering and the HUD alike: Noto Serif, built in so that
+/// both read the same everywhere (SIL Open Font License, `assets/fonts/OFL.txt`).
+pub const SERIF: &[u8] = include_bytes!("../assets/fonts/NotoSerif-Regular.ttf");
+
 fn font() -> FontArc {
-    if let Some(bytes) = crate::platform::serif_font()
-        && let Ok(f) = FontArc::try_from_slice(bytes)
-    {
-        return f;
-    }
-    let defs = egui::FontDefinitions::default();
-    let data = &defs.font_data["Ubuntu-Light"];
-    FontArc::try_from_vec(data.font.to_vec()).expect("egui's own font")
+    FontArc::try_from_slice(SERIF).expect("the built-in serif font")
 }
 
 fn cells() -> &'static Cells {

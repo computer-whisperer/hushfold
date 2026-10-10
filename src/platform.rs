@@ -1,4 +1,4 @@
-//! Per-OS locations for saves, screenshots and system fonts.
+//! Per-OS locations for saves, screenshots and symbol fonts.
 
 use std::path::PathBuf;
 
@@ -24,25 +24,6 @@ pub fn data_dir() -> PathBuf {
 pub fn screenshot_dir() -> PathBuf {
     home().map(|h| h.join("Pictures")).unwrap_or_else(|| PathBuf::from("."))
 }
-
-/// The first of `SERIF_FONTS` there is, read once.
-pub fn serif_font() -> Option<&'static [u8]> {
-    static FONT: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
-    FONT.get_or_init(|| SERIF_FONTS.iter().find_map(|p| std::fs::read(p).ok()))
-        .as_deref()
-}
-
-/// Serif text fonts to try, in order of preference.
-pub const SERIF_FONTS: &[&str] = &[
-    "/usr/share/fonts/noto/NotoSerif-Regular.ttf",
-    "/usr/share/fonts/truetype/noto/NotoSerif-Regular.ttf",
-    "/usr/share/fonts/TTF/DejaVuSerif.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-    "/usr/share/fonts/liberation/LiberationSerif-Regular.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
-    "C:\\Windows\\Fonts\\georgia.ttf",
-    "C:\\Windows\\Fonts\\cambria.ttc",
-];
 
 /// Fonts that supply symbols such as ✦ and ▼; every one found is added as a fallback.
 pub const SYMBOL_FONTS: &[&str] = &[

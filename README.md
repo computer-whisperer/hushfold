@@ -132,8 +132,8 @@ that fit it.
   the visual pass, which added 8–19% GPU time and no CPU time).
   `HUSHFOLD_UNPACED=1` renders without compositor pacing for benchmarking.
 - Signs and shelf labels are lettered in the world (`src/text.rs`): glyph quads
-  from a signed-distance atlas of the serif face the HUD uses, lit like the
-  boards they're on.
+  from a signed-distance atlas of the serif face the HUD uses (Noto Serif, built
+  in), lit like the boards they're on.
 - All audio is synthesized, nothing loaded (`src/audio.rs`, `src/audio/`): the
   effects' clips on a thread at startup, the rest as it plays. Effects that
   happen somewhere (books filed, books landing, fires, familiars' wings) are
@@ -178,3 +178,6 @@ that fit it.
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
 [MIT license](LICENSE-MIT) at your option.
+
+The built-in Noto Serif font is under the
+[SIL Open Font License 1.1](assets/fonts/OFL.txt).

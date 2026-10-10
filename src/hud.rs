@@ -46,13 +46,11 @@ fn serif(size: f32) -> FontId {
 
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-    let mut family: Vec<String> = Vec::new();
-    if let Some(bytes) = crate::platform::serif_font() {
-        fonts
-            .font_data
-            .insert("serif".into(), std::sync::Arc::new(egui::FontData::from_static(bytes)));
-        family.push("serif".into());
-    }
+    let mut family: Vec<String> = vec!["serif".into()];
+    fonts.font_data.insert(
+        "serif".into(),
+        std::sync::Arc::new(egui::FontData::from_static(crate::text::SERIF)),
+    );
     for &path in crate::platform::SYMBOL_FONTS {
         if let Ok(bytes) = std::fs::read(path) {
             fonts

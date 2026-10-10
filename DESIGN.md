@@ -405,7 +405,8 @@ tones) -> egui. Held books are drawn in a second pass with cleared depth. Static
 geometry is one draw in the order it was laid down, without culling.
 
 Lettering (`text.rs`: signs, shelf labels, the Verse Gallery's words) is laid out
-at generation from the serif face the HUD uses into glyph quads, one static draw
+at generation from the serif face the HUD uses (Noto Serif, built in so that both
+read the same on every system) into glyph quads, one static draw
 after the opaque scene, depth-biased onto the surfaces under them (testing depth,
 not writing it). Glyphs are cut from a signed-distance atlas built at startup
 (64 px to the em, exact distances to the flattened outlines, threaded, ~12 ms;
