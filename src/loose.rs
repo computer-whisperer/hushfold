@@ -1428,21 +1428,19 @@ impl Loose {
     }
 
     /// Resting books lying sunk into what is under them, the floor or low furniture
-    /// such as a rug: saved before it was something books lie on.
+    /// such as a rug: saved before it was something books lie on. Read where a fit
+    /// reads (`fit_on`), at the centres of the cells under a book, as between them a
+    /// tilted book may dip a little below a cell's height while resting on it.
     fn sunk(&self) -> Vec<u32> {
         (0..self.rest.len() as u32)
             .filter(|&b| self.resting[b as usize])
             .filter(|&b| {
                 let r = self.rest[b as usize];
                 let g = self.grid_of(b);
-                let h = self.half(b) * 0.5;
-                [(0.0, 0.0), (-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
-                    .iter()
-                    .map(|&(a, c)| r.xz() + r.u * (a * h.x) + r.v() * (c * h.y))
-                    .any(|p| {
-                        let base = g.base_at(p);
-                        base - g.y <= SHED_HEIGHT && base - r.under(p) > KEEP_EPS
-                    })
+                g.cells_under(r, self.half(b)).any(|(k, l)| {
+                    let base = g.base_k(k);
+                    base - g.y <= SHED_HEIGHT && base - (r.c.y + l.x * r.su + l.y * r.sv) > KEEP_EPS
+                })
             })
             .collect()
     }
