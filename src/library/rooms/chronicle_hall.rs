@@ -45,7 +45,7 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
         [0.32, 0.05, 0.05],
     );
     runner.param = 150 | (110 << 8) | (40 << 16);
-    lib.decor(runner);
+    lib.rug(runner);
     for o in [20.8f32, 27.2] {
         lib.chandelier(frame.at(0.0, o, 4.1), frame.y + RoomFrame::HEIGHT);
     }

@@ -932,10 +932,10 @@ fn rugs(lib: &mut Library, frame: &RoomFrame) {
     let deep_red = [0.32, 0.06, 0.05];
     let gold = 190 | (140 << 8) | (60 << 16);
     let green = 70 | (110 << 8) | (70 << 16);
-    lib.decor(rug((-1.75, 1.75), (25.9, far - BREAST_D - 0.6), deep_red, gold, 0.02));
-    lib.decor(rug((-2.2, 2.2), (21.4, 24.6), [0.12, 0.18, 0.12], gold, 0.024));
-    lib.decor(rug((-9.6, -6.6), (24.6, 28.2), [0.25, 0.12, 0.05], green, 0.02));
-    lib.decor(rug((6.6, 9.6), (25.6, 29.2), [0.25, 0.12, 0.05], green, 0.02));
+    lib.rug(rug((-1.75, 1.75), (25.9, far - BREAST_D - 0.6), deep_red, gold, 0.02));
+    lib.rug(rug((-2.2, 2.2), (21.4, 24.6), [0.12, 0.18, 0.12], gold, 0.024));
+    lib.rug(rug((-9.6, -6.6), (24.6, 28.2), [0.25, 0.12, 0.05], green, 0.02));
+    lib.rug(rug((6.6, 9.6), (25.6, 29.2), [0.25, 0.12, 0.05], green, 0.02));
 }
 
 /// Candles hanging in the air over the hearth and the sofa, unsupported: the room's

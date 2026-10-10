@@ -442,7 +442,7 @@ impl Library {
             [0.06, 0.12, 0.28],
         );
         rug.param = 70 | (20 << 8) | (24 << 16);
-        self.decor(rug);
+        self.rug(rug);
         for (x, z) in [(-5.6f32, -6.4f32), (5.6, -6.4), (-5.6, 6.4), (5.6, 6.4)] {
             self.reading_table(Vec3::new(x, 0.0, z));
         }

@@ -28,8 +28,9 @@ so the hall gets visibly brighter and more colourful as you sort.
 `src/world.rs` is what the library is to everything that moves through it or
 looks across it: levels, floor slabs (anywhere a level has none is a hole),
 flights of stairs, solids and gates. Each solid says what it stops (bodies, books,
-sight): railings and chairs stop walking and throwing but are seen past, and a
-bookcase has a sight-only box above it so no one aims over its top. Bodies walk
+sight): railings and chairs stop walking and throwing but are seen past, rugs
+stop only books (which lie on them), and a bookcase has a sight-only box above it
+so no one aims over its top. Bodies walk
 floors and stair slopes and are stopped by solids, floor edges, stair stone and
 closed gates. The player can jump half a metre, but solids are never floors: in
 the air, what is in the way reaches down to the ground underneath, so a jump

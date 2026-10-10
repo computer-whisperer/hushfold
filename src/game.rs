@@ -2536,6 +2536,10 @@ impl Game {
                     }
                 }
                 self.loose.rebuild_all();
+                // Books saved lying under what they now lie on (a rug) fall back onto it.
+                for (b, p, q) in self.loose.lift_sunk() {
+                    (self.pos[b as usize], self.rot[b as usize]) = (p, q);
+                }
             }
             None => {
                 // A 0.1.x save: piles keep their generated shape and fall into the gaps.
@@ -2690,7 +2694,9 @@ mod tests {
             eat(s.trim);
         }
         assert_eq!(g.lib.books.len(), 11690);
-        assert_eq!(h, 7532805995221069936, "hall fingerprint");
+        // Changed once since 0.1.1, when rugs became something books lie on: 23 books at
+        // the rugs start on them, a few centimetres from where they were.
+        assert_eq!(h, 13018789756892078726, "hall fingerprint");
     }
 
     /// Every slot's approach (the aisle in front of it) is a walk away from the start,

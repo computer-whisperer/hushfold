@@ -278,7 +278,6 @@ impl Library {
         }
     }
 
-    /// Drawn only: small, or out of reach, so in nothing's way.
     /// Letter `text` upright on a surface facing `normal`, centred on `centre` (in the
     /// surface), at most `width` wide.
     fn inscribe(&mut self, text: &str, style: Style, centre: Vec3, normal: Vec3, width: f32) {
@@ -287,6 +286,13 @@ impl Library {
         text::set_line(&mut self.text, text, style, at, Vec3::Y.cross(normal), Vec3::Y, width);
     }
 
+    /// A rug or carpet on the floor: books lie on it rather than under it; it is in
+    /// no one's way.
+    fn rug(&mut self, rug: Inst) {
+        self.solid(rug, Stops::BOOKS);
+    }
+
+    /// Drawn only: small, or out of reach, so in nothing's way.
     fn decor(&mut self, i: Inst) {
         self.static_insts.push(i);
     }

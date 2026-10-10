@@ -1419,6 +1419,48 @@ impl Loose {
         self.flying.iter().map(|f| (f.book, f.pos))
     }
 
+    /// Resting books lying sunk into what is under them, the floor or low furniture
+    /// such as a rug: saved before it was something books lie on.
+    fn sunk(&self) -> Vec<u32> {
+        (0..self.rest.len() as u32)
+            .filter(|&b| self.resting[b as usize])
+            .filter(|&b| {
+                let r = self.rest[b as usize];
+                let g = self.grid_of(b);
+                let h = self.half(b) * 0.5;
+                [(0.0, 0.0), (-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
+                    .iter()
+                    .map(|&(a, c)| r.xz() + r.u * (a * h.x) + r.v() * (c * h.y))
+                    .any(|p| {
+                        let base = g.base_at(p);
+                        base - g.y <= SHED_HEIGHT && base - r.under(p) > KEEP_EPS
+                    })
+            })
+            .collect()
+    }
+
+    /// Lift the books lying sunk (after a load) and drop them where they are, from
+    /// just over what is there now; what rested on them settles first. Returns each
+    /// one and where it falls from.
+    pub fn lift_sunk(&mut self) -> Vec<(u32, Vec3, Quat)> {
+        let sunk = self.sunk();
+        let poses: Vec<(u32, usize, Vec3, Quat)> = (sunk.iter())
+            .map(|&b| {
+                let (p, q) = self.pose(b);
+                (b, self.level[b as usize], p, q)
+            })
+            .collect();
+        self.take(&sunk);
+        (poses.into_iter())
+            .map(|(b, lv, p, q)| {
+                let over = self.height_at(lv, Vec2::new(p.x, p.z)) + FLY_R + 0.02;
+                let from = Vec3::new(p.x, over.max(p.y), p.z);
+                self.throw(b, from, Vec3::ZERO, q, Vec3::ZERO, 0.0);
+                (b, from, q)
+            })
+            .collect()
+    }
+
     /// Lay a book down exactly as saved. Call `rebuild_all` once all are placed.
     pub fn restore(&mut self, b: u32, lv: usize, r: Rest) {
         self.forget(b);
@@ -1617,6 +1659,83 @@ mod tests {
         let (_, mut loose) = library();
         let n = loose.rest.len() as u32;
         assert_settled(&mut loose, (0..n).step_by(3));
+    }
+
+    /// Books lie on rugs, not under them: the thinnest book, dropped on each rug,
+    /// comes to rest on top; one saved lying under a rug (from before rugs were
+    /// something books lie on) is lifted onto it when loaded; and a fresh library has
+    /// none to lift.
+    #[test]
+    fn books_lie_on_rugs() {
+        for layout in crate::library::Layout::ALL {
+            let lib = Library::generate(layout, crate::game::SEED);
+            let mut loose = Loose::new(&lib);
+            assert_eq!(loose.sunk(), Vec::<u32>::new(), "{layout:?}: generated books lie sunk");
+            let n = lib.books.len();
+            let (mut pos, mut rot) = (vec![Vec3::ZERO; n], vec![Quat::IDENTITY; n]);
+            let b = (0..n as u32)
+                .min_by(|&x, &y| lib.books[x as usize].size.x.total_cmp(&lib.books[y as usize].size.x))
+                .unwrap();
+            let size = lib.books[b as usize].size;
+            let mut settle = |loose: &mut Loose| {
+                for _ in 0..300 {
+                    loose.update(1.0 / 60.0, &mut pos, &mut rot);
+                }
+                assert!(loose.is_resting(b));
+                let (p, q) = loose.pose(b);
+                let corners = (0..8).map(|i| {
+                    let s = Vec3::new([-0.5, 0.5][i & 1], [-0.5, 0.5][(i >> 1) & 1], [-0.5, 0.5][i >> 2]);
+                    (p + q * (s * size)).y
+                });
+                corners.fold(f32::MAX, f32::min)
+            };
+            let rugs: Vec<(Vec3, Vec3)> = (lib.static_insts.iter())
+                .filter(|i| i.kind == crate::gfx::kind::RUG)
+                .filter_map(|i| i.axis_box())
+                .collect();
+            assert!(!rugs.is_empty());
+            for &(mn, mx) in &rugs {
+                let c = (mn + mx) * 0.5;
+                loose.take(&[b]);
+                loose.throw(
+                    b,
+                    Vec3::new(c.x, mx.y + 1.0, c.z),
+                    Vec3::ZERO,
+                    Quat::IDENTITY,
+                    Vec3::ZERO,
+                    0.0,
+                );
+                let low = settle(&mut loose);
+                assert!(
+                    low >= mx.y - 0.004,
+                    "{layout:?}: dropped on the rug {mn}..{mx}, lies at {low}"
+                );
+            }
+            let (mn, mx) = rugs[0];
+            let lv = lib.world.level_below(mn.y);
+            loose.take(&[b]);
+            // A spot on the rug with nothing else on it.
+            let g = &loose.grids[lv];
+            let spot = (0..400)
+                .map(|i| Vec2::new(mn.x + 0.3 + (i % 20) as f32 * 0.25, mn.z + 0.3 + (i / 20) as f32 * 0.25))
+                .find(|&p| p.x < mx.x - 0.3 && p.y < mx.z - 0.3 && (g.height(p) - mx.y).abs() < 1e-4)
+                .expect("a clear spot on the rug");
+            let under = Rest {
+                c: Vec3::new(spot.x, mn.y, spot.y),
+                u: Vec2::X,
+                su: 0.0,
+                sv: 0.0,
+            };
+            loose.restore(b, lv, under);
+            loose.rebuild_all();
+            assert_eq!(loose.sunk(), vec![b]);
+            assert_eq!(loose.lift_sunk().len(), 1);
+            let low = settle(&mut loose);
+            assert!(
+                low >= mx.y - 0.004,
+                "{layout:?}: lifted off the floor under {mn}..{mx}, lies at {low}"
+            );
+        }
     }
 
     /// Taking books from deep inside piles (as sifting does) leaves nothing hovering.

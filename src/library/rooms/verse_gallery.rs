@@ -380,7 +380,7 @@ fn lounge(lib: &mut Library, f: &RoomFrame) {
         [0.34, 0.1, 0.12],
     );
     rug.param = 180 | (140 << 8) | (70 << 16);
-    lib.decor(rug);
+    lib.rug(rug);
     low_table(lib, f, ca, co);
     armchair(lib, f, (ca - 1.75, co), -FRAC_PI_2, [0.42, 0.12, 0.16]);
     armchair(lib, f, (ca + 1.75, co), FRAC_PI_2, [0.2, 0.26, 0.36]);

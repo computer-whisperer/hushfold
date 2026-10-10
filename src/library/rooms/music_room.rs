@@ -169,7 +169,7 @@ fn walls(lib: &mut Library, frame: &RoomFrame) {
         [0.32, 0.05, 0.07],
     );
     rug.param = 200 | (150 << 8) | (70 << 16);
-    lib.decor(rug);
+    lib.rug(rug);
 }
 
 /// How a hung instrument sits on a wall facing `n`, turned `tilt` in the wall's

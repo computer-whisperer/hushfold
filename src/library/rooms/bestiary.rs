@@ -297,7 +297,7 @@ fn walls(lib: &mut Library, frame: &RoomFrame) {
         [0.28, 0.06, 0.05],
     );
     rug.param = 120 | (95 << 8) | (40 << 16);
-    lib.decor(rug);
+    lib.rug(rug);
     for k in 0..6 {
         let o = near + 1.6 + k as f32 * 3.0;
         let h = RoomFrame::HEIGHT;

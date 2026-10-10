@@ -1114,7 +1114,7 @@ impl Library {
             [0.28, 0.035, 0.03],
         );
         rug.param = second[0] | (second[1] << 8) | (second[2] << 16);
-        self.decor(rug);
+        self.rug(rug);
 
         // Reading tables with chairs and candles, and a green-shaded lamp on each.
         for (tx, tz) in [(-4.5f32, -2.6f32), (4.5, -2.6), (-4.5, 2.6), (4.5, 2.6)] {
@@ -1401,7 +1401,7 @@ impl Library {
             [0.1, 0.13, 0.2],
         );
         rug.param = 120 | (30 << 8) | (25 << 16);
-        self.decor(rug);
+        self.rug(rug);
     }
 
     /// A banker's lamp standing on a table at `p`: a brass stem under a green glass
