@@ -232,6 +232,11 @@ impl Nav {
         self.first.partition_point(|&f| f <= node) - 1
     }
 
+    /// Whether a body can stand at `p`.
+    pub fn free_at(&self, p: Vec3) -> bool {
+        self.locate(p).is_some_and(|n| self.free(n))
+    }
+
     fn free(&self, node: usize) -> bool {
         let (layer, i) = self.layer_of(node);
         !layer.blocked[i] && !self.gated[node]

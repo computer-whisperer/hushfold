@@ -1728,12 +1728,19 @@ impl Game {
         self.particles.retain(|p| p.life < p.max);
     }
 
-    /// Where to stand to file book `b`: in the aisle in front of its slot, at floor level.
+    /// Where to stand to file book `b`: in the aisle in front of its slot, at floor
+    /// level; where something stands there (in an alcove's back corner, the case
+    /// across the back), the nearest place free to stand.
     fn approach(&self, b: u32) -> Vec3 {
         let info = &self.lib.books[b as usize];
         let face = &self.lib.faces[info.face as usize];
         let p = info.slot_pos + face.normal * 0.75;
-        Vec3::new(p.x, face.center.y, p.z)
+        let at = Vec3::new(p.x, face.center.y, p.z);
+        if self.nav.free_at(at) {
+            at
+        } else {
+            self.nav.standable_near(at)
+        }
     }
 
     /// Where the compass points for book `b`: its slot while Sort Sense reaches (in
@@ -2670,6 +2677,22 @@ mod tests {
                 stuck[0],
                 g.approach(stuck[0])
             );
+            // And from where one stands to file each case, the way back is open: a
+            // spot inside furniture next to an aisle counts as reached above, but
+            // walking out from it finds nothing (the pacing bot was stranded so).
+            let mut back = g.nav.field();
+            let mut seen = std::collections::HashSet::new();
+            for b in 0..g.lib.books.len() as u32 {
+                if !seen.insert(g.lib.books[b as usize].face) {
+                    continue;
+                }
+                let at = g.approach(b);
+                g.nav.fill(&mut back, at);
+                assert!(
+                    g.nav.distance(&back, at, from).is_finite(),
+                    "{layout:?}: stranded standing to file book {b}, at {at}"
+                );
+            }
         }
     }
 
