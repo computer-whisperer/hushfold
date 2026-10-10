@@ -496,6 +496,12 @@ impl Game {
             audio.play(Sfx::Nope, 0.3);
             return;
         };
+        if self.quieted(Magic::Familiars, at) {
+            let msg = "The Arcanum's ward keeps familiars out until a quarter of the room is in order.";
+            self.hint = Some((msg.into(), 2.5));
+            audio.play(Sfx::Nope, 0.3);
+            return;
+        }
         self.post_familiar(i, at);
         audio.play_pitched(Sfx::Unfold, 0.3, self.familiars[i].voice(i));
     }
@@ -636,38 +642,47 @@ impl Game {
 
     /// Where a courier at `post` would take book `b`: the post of a shelver that can
     /// file it, else its room's drop spot; `None` if its department is still veiled,
-    /// the way there is closed, or the book is already there (by that shelver, or
-    /// anywhere in its room).
+    /// the way there is closed, the book is already there (by that shelver, or
+    /// anywhere in its room), or it is a folio, too heavy to lift.
     fn courier_goal(&self, post: &Post, b: u32) -> Option<Vec3> {
         let dept = self.lib.dept_of_book(b);
-        if !self.dept_open(dept) {
+        if !self.dept_open(dept) || self.lib.is_folio(b) || self.quieted(Magic::Familiars, self.loose.pose(b).0) {
             return None;
         }
         let file_reach = WINGS[self.level(Upg::Wings) as usize].3;
         let approach = self.approach(b);
+        // No shelver files behind the Arcanum's ward.
+        let warded = self.quieted(Magic::Familiars, approach);
         let shelver = (self.familiars.iter())
-            .filter(|f| f.role == Role::Shelver)
+            .filter(|f| f.role == Role::Shelver && !warded)
             .filter_map(|f| f.post.as_ref())
             .map(|p| (self.nav.distance(&p.field, p.at, approach), p.at))
             .filter(|&(d, _)| d <= file_reach)
             .min_by(|a, b| a.0.total_cmp(&b.0));
         let at = self.loose.pose(b).0;
+        let near = |p: Vec3, r: f32| Vec2::new(p.x - at.x, p.z - at.z).length() <= r && (p.y - at.y).abs() < 1.0;
+        let drop = self.lib.rooms[dept].drop;
         let (goal, there) = match shelver {
-            Some((_, post)) => {
-                let near = Vec2::new(post.x - at.x, post.z - at.z).length() <= SETTLED && (post.y - at.y).abs() < 1.0;
-                (post, near)
+            Some((_, post)) => (post, near(post, SETTLED)),
+            // The Arcanum's ward keeps familiars out: its books wait at its door.
+            None if self.quieted(Magic::Familiars, drop) => {
+                let door = self.threshold();
+                (door, near(door, 2.5))
             }
-            None => (self.lib.rooms[dept].drop, self.lib.room_at(at) == Some(dept)),
+            None => (drop, self.lib.room_at(at) == Some(dept)),
         };
         let open = self.nav.distance(&post.field, post.at, goal).is_finite();
         (!there && open).then_some(goal)
     }
 
-    /// Whether a shelver at `post` can file book `b`: its department is open and its
-    /// slot a short walk from the post.
+    /// Whether a shelver at `post` can file book `b`: its department is open, its slot
+    /// a short walk from the post, and it is no folio (too heavy to lift).
     fn shelver_files(&self, post: &Post, b: u32) -> bool {
         let file_reach = WINGS[self.level(Upg::Wings) as usize].3;
-        self.dept_open(self.lib.dept_of_book(b))
+        !self.lib.is_folio(b)
+            && !self.quieted(Magic::Familiars, self.loose.pose(b).0)
+            && !self.quieted(Magic::Familiars, self.lib.books[b as usize].slot_pos)
+            && self.dept_open(self.lib.dept_of_book(b))
             && self.nav.distance(&post.field, post.at, self.approach(b)) <= file_reach
     }
 
@@ -766,13 +781,18 @@ impl Game {
             }
             // Fly along the path. A point is passed once reached, or a little before
             // when the way on to the next is clear (so corners are cut only in the open).
+            // Slower into the Weatherhouse's draught.
+            let gust = (self.familiars[i].path.last()).map_or(1.0, |&n| {
+                let f = &self.familiars[i];
+                self.headwind(f.pos, n - f.pos)
+            });
             let world = &self.lib.world;
             let f = &mut self.familiars[i];
             if let Some(&next) = f.path.last() {
                 let to = next - f.pos;
                 let last = f.path.len() == 1;
                 let slow = if last { (to.length() / 0.8).min(1.0) } else { 1.0 };
-                let desired = to.normalize_or_zero() * speed * slow.max(0.15);
+                let desired = to.normalize_or_zero() * speed * gust * slow.max(0.15);
                 f.vel = f.vel.lerp(desired, 1.0 - libm::expf(-dt * 10.0));
                 f.pos += f.vel * dt;
                 let d = f.pos.distance(next);

@@ -35,12 +35,19 @@ const FACE_Y: f32 = 2.9;
 const FACE_R: f32 = 0.42;
 const SHELL: (f32, f32) = (0.8, 1.55);
 const APART: f32 = 0.17;
+/// Books hang only where the direction from the face's middle is less than this
+/// (a cosine) toward the front, leaving the face to be read.
+const WINDOW: f32 = 0.4;
 const LOWEST: f32 = 1.95;
 /// The Hearth Library's books left about: how many to a reading table, the fewest to a
 /// pile on the floor, and how far such a pile keeps from a heap's middle.
 const ON_TABLE: (usize, usize) = (6, 14);
 const LEFT_PILE: usize = 15;
 const CLEAR_OF_HEAPS: f32 = 2.3;
+/// How far a heap's middle keeps from anything books would rest on top of, and the
+/// height past which a piece sheds books (the loose books' own rule).
+const HEAP_CLEAR: f32 = 1.5;
+const SHEDS: f32 = 0.9;
 
 fn xz(p: Vec3) -> Vec2 {
     Vec2::new(p.x, p.z)
@@ -68,9 +75,9 @@ impl Library {
             let mut units = std::mem::take(&mut pools[r]);
             units.shuffle(&mut rng);
             let lv = self.rooms[r].level;
-            let mut spots = self.room_spots(&mut rng, r, 0.8, 0.7);
+            let mut spots = self.room_spots(&mut rng, r, (0.8, 0.7), HEAP_CLEAR);
             // Clear of the stopped clocks' books, which fall where they hang.
-            spots.retain(|p| clocks.iter().all(|c| c.distance(*p) > SHELL.1 + 1.2));
+            spots.retain(|p| clocks.iter().all(|c| c.distance(*p) > SHELL.1 + 0.8));
             if r == dept::VERSE_GALLERY {
                 // The songs stacked nearest its door, as many of its heaps as their
                 // share of its books.
@@ -97,11 +104,21 @@ impl Library {
         go
     }
 
-    /// Pile centres in room `r` (`pile_spots`), its walls' thickness in from them.
-    fn room_spots(&self, rng: &mut StdRng, r: usize, radius: f32, gap: f32) -> Vec<Vec2> {
+    /// Pile centres in room `r` (`pile_spots`, its walls' thickness in from them), and
+    /// `clear` from anything books would come to rest on top of: a tall piece, or one
+    /// overhanging (such as the Clockworks' great clock), which the floor's heights
+    /// count as standing from the floor.
+    fn room_spots(&self, rng: &mut StdRng, r: usize, (radius, gap): (f32, f32), clear: f32) -> Vec<Vec2> {
         let room = &self.rooms[r];
+        let floor = self.world.levels[room.level].y;
+        let tall: Vec<(Vec2, Vec2)> = (self.world.solids_on(room.level))
+            .filter(|s| s.stops.has(Stops::BOOKS) && s.max.y - floor > SHEDS)
+            .map(|s| (xz(s.min), xz(s.max)))
+            .collect();
         let pad = Vec2::splat(0.2);
-        self.pile_spots(rng, room.level, &[(room.min + pad, room.max - pad)], radius, gap)
+        let mut spots = self.pile_spots(rng, room.level, &[(room.min + pad, room.max - pad)], radius, gap);
+        spots.retain(|p| tall.iter().all(|&(mn, mx)| p.clamp(mn, mx).distance(*p) >= clear));
+        spots
     }
 
     /// The Clockworks' stopped clocks over open floor, spread out, each holding about
@@ -112,7 +129,7 @@ impl Library {
         let n: usize = TIERS.iter().sum();
         let door = xz(self.rooms[r].door);
         // Each next the spot farthest from those chosen and from the door.
-        let cand = self.room_spots(rng, r, SHELL.1, 0.4);
+        let cand = self.room_spots(rng, r, (SHELL.1, 0.4), SHELL.1 + 0.5);
         let mut at: Vec<Vec2> = Vec::new();
         while at.len() < n {
             let far = |p: &Vec2| (at.iter()).map(|q| q.distance(*p)).fold(p.distance(door), f32::min);
@@ -193,6 +210,7 @@ impl Library {
             for &b in &books {
                 let mut best = c;
                 for _ in 0..24 {
+                    // Never in front of the face, which reads through the gap.
                     let d = loop {
                         let v = Vec3::new(
                             rng.gen_range(-1.0..1.0),
@@ -200,7 +218,7 @@ impl Library {
                             rng.gen_range(-1.0..1.0),
                         );
                         let l = v.length();
-                        if l > 0.1 && l <= 1.0 {
+                        if l > 0.1 && l <= 1.0 && (v / l).dot(n_face) < WINDOW {
                             break v / l;
                         }
                     };
@@ -246,17 +264,27 @@ impl Library {
     fn leave_about(&mut self, rng: &mut StdRng, units: Vec<Vec<u32>>, heaps: &[Vec<Vec2>]) {
         let rooms = RELAID..dept::HEARTH_LIBRARY;
         let mut units = units.into_iter();
-        // Reading tables: pieces standing table height off the floor, broad enough.
+        // Reading tables: pieces standing table height off the floor, broad enough, with
+        // nothing over them.
         let mut tables: Vec<(usize, Vec2)> = Vec::new();
         for r in rooms.clone() {
             let room = &self.rooms[r];
             let floor = self.world.levels[room.level].y;
-            for s in self.world.solids_on(room.level) {
+            let solids: Vec<_> = self.world.solids_on(room.level).collect();
+            for s in &solids {
                 let (mn, mx) = (xz(s.min), xz(s.max));
                 let top = s.max.y - floor;
                 let inside = mn.cmpge(room.min).all() && mx.cmple(room.max).all();
                 let broad = (mx - mn).min_element() >= 0.6;
-                if inside && broad && (top - TABLE_H).abs() < 0.06 && s.stops.has(Stops::BOOKS) {
+                let table = inside && broad && (top - TABLE_H).abs() < 0.06 && s.stops.has(Stops::BOOKS);
+                let clear = || {
+                    (solids.iter()).all(|o| {
+                        let (omn, omx) = (xz(o.min), xz(o.max));
+                        let overlaps = omn.cmplt(mx).all() && omx.cmpgt(mn).all();
+                        !overlaps || o.max.y <= s.max.y + 0.05
+                    })
+                };
+                if table && clear() {
                     tables.push((r, (mn + mx) * 0.5));
                 }
             }
@@ -279,7 +307,7 @@ impl Library {
         // are.
         let mut spots: Vec<Vec<Vec2>> = vec![Vec::new(); self.rooms.len()];
         for r in rooms.clone() {
-            spots[r] = (self.room_spots(rng, r, 0.5, 0.5).into_iter())
+            spots[r] = (self.room_spots(rng, r, (0.5, 0.5), 1.0).into_iter())
                 .filter(|p| heaps[r].iter().all(|h| h.distance(*p) > CLEAR_OF_HEAPS))
                 .collect();
         }

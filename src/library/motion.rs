@@ -121,6 +121,21 @@ impl Pose {
     }
 }
 
+/// Mover `m`'s pose at time `t`, with those it rides (one mover's, without posing the
+/// rest).
+pub fn pose_of(movers: &[Mover], m: u32, t: f64) -> Pose {
+    let mv = &movers[m as usize];
+    let (turn, offset) = mv.motion.at(t + mv.phase as f64);
+    let own = Pose {
+        turn,
+        shift: mv.pivot - turn * mv.pivot + offset,
+    };
+    match mv.rides {
+        Some(r) => pose_of(movers, r, t).after(&own),
+        None => own,
+    }
+}
+
 /// Every mover's pose at time `t` (seconds), into `out`.
 pub fn pose(movers: &[Mover], t: f64, out: &mut Vec<Pose>) {
     out.clear();

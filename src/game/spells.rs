@@ -85,6 +85,14 @@ impl Game {
             self.hint = Some((format!("{name} is learned in the Grimoire (Tab)."), 2.0));
             return;
         }
+        if self.quieted(Magic::Spells, self.player.pos) {
+            audio.play(Sfx::Nope, 0.3);
+            self.hint = Some((
+                "The Arcanum's ward quiets spells here until the room is half in order.".into(),
+                2.5,
+            ));
+            return;
+        }
         let wait = self.spell_wait[slot];
         if wait > 0.0 {
             audio.play(Sfx::Nope, 0.3);
@@ -172,7 +180,7 @@ impl Game {
             self.hint = Some(("Hold a volume of the series to summon the rest.".into(), 2.0));
             return false;
         };
-        let room = self.capacity().saturating_sub(self.held.len());
+        let room = self.room_in_arms();
         if room == 0 {
             self.hint = Some(("Your arms are full — file some books first.".into(), 2.0));
             return false;
@@ -183,7 +191,18 @@ impl Game {
             self.hint = Some(("No loose volumes of that series lie in reach.".into(), 2.0));
             return false;
         }
-        books.truncate(room);
+        let mut used = 0;
+        books.retain(|&b| {
+            used += self.weight(b);
+            used <= room
+        });
+        if books.is_empty() {
+            self.hint = Some((
+                format!("A folio takes {FOLIO} places in your arms — file some books first."),
+                2.0,
+            ));
+            return false;
+        }
         let color = self.lib.series[series as usize].color;
         let eye = self.player.eye();
         for &b in &books {
@@ -206,7 +225,7 @@ impl Game {
         let here = self.player.pos;
         let (floor, room) = (self.lib.world.level_at(here), self.lib.room_at(here));
         let mut books: Vec<u32> = (self.lib.series_books[series as usize].iter().copied())
-            .filter(|&b| self.loose.is_resting(b))
+            .filter(|&b| self.loose.is_resting(b) && !self.quieted(Magic::Spells, self.loose.pose(b).0))
             .filter(|&b| match lvl {
                 1 => {
                     self.lib.room_at(self.loose.pose(b).0) == room
@@ -253,7 +272,11 @@ impl Game {
         let (lib, sought) = (&self.lib, self.sought());
         let keep = |b: u32| sought.is_none_or(|(group, key)| group.of(lib, b) == key);
         let mut books = self.loose.near(lv, Vec2::new(at.x, at.z), radius, keep);
-        books.retain(|&b| !(lv == hub_lv && self.at_hub(self.loose.pose(b).0)));
+        books.retain(|&b| {
+            let p = self.loose.pose(b).0;
+            let home = lv == hub_lv && self.at_hub(p);
+            !home && !self.quieted(Magic::Spells, p)
+        });
         books.sort_by(|&a, &b| {
             let d = |x: u32| self.loose.pose(x).0.distance_squared(at);
             d(a).total_cmp(&d(b))

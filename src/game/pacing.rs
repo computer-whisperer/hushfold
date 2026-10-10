@@ -195,6 +195,8 @@ impl Bot {
         self.t += secs;
         self.spent[0] += secs;
         self.pos = to;
+        // Restless books scurry from where it walked up.
+        self.g.startle(to);
         Some(d)
     }
 
@@ -205,6 +207,8 @@ impl Bot {
         while left > 0.0 {
             let dt = left.min(DT);
             self.g.time += dt;
+            self.g.clock += dt as f64;
+            self.g.blow();
             self.g.update_familiars(dt);
             self.g.update_flights(dt, &mut self.audio);
             self.g.update_streams(dt);
@@ -283,18 +287,22 @@ impl Bot {
         let mut target = Some(c);
         while let Some(p) = target {
             let g = &mut self.g;
-            let room = cap - g.held.len() - aside.len();
+            let aside_w: usize = aside.iter().map(|&b| g.weight(b)).sum();
+            let room = cap.saturating_sub(g.carried() + aside_w);
             let spot = Vec2::new(p.x, p.z);
             let books = match sift {
                 Some((group, key)) => {
                     let lib = &g.lib;
                     let keep = |b: u32| fileable[b as usize] && group.of(lib, b) == key;
-                    g.loose
-                        .gather(lv, spot, SIFT_RADIUS[g.level(Upg::Sift) as usize], room, keep)
+                    let weigh = |b: u32| if lib.is_folio(b) { FOLIO } else { 1 };
+                    let sift = SIFT_RADIUS[g.level(Upg::Sift) as usize];
+                    g.loose.gather_weighed(lv, spot, sift, (room, weigh), keep)
                 }
-                None => g
-                    .loose
-                    .gather(lv, spot, 0.35 + 0.05 * (room as f32).sqrt(), room, |_| true),
+                None => {
+                    let weigh = |b: u32| if g.lib.is_folio(b) { FOLIO } else { 1 };
+                    let r = 0.35 + 0.05 * (room as f32).sqrt();
+                    g.loose.gather_weighed(lv, spot, r, (room, weigh), |_| true)
+                }
             };
             if books.is_empty() {
                 self.empty_scoops += 1;
@@ -310,7 +318,8 @@ impl Bot {
             }
             self.t += SCOOP;
             self.spent[1] += SCOOP;
-            if g.held.len() + aside.len() >= cap {
+            let aside_w: usize = aside.iter().map(|&b| g.weight(b)).sum();
+            if g.carried() + aside_w >= cap {
                 break;
             }
             // The richest pile in reach that it can see to aim at.
@@ -352,7 +361,8 @@ impl Bot {
         // the volumes in reach would complete (the biggest), else the series held
         // with the most loose volumes in reach (three or more).
         let summon = self.g.level(Upg::Summon);
-        let room = cap.saturating_sub(self.g.held.len() + aside.len());
+        let aside_w: usize = aside.iter().map(|&b| self.g.weight(b)).sum();
+        let room = cap.saturating_sub(self.g.carried() + aside_w);
         if self.ready(Upg::Summon) && room > 0 {
             let g = &mut self.g;
             g.player.pos = self.pos;
@@ -406,7 +416,7 @@ impl Bot {
     /// lies there to be gathered again.
     fn file(&mut self) {
         for u in [Upg::Glimpse, Upg::Rush] {
-            if self.ready(u) {
+            if self.ready(u) && !self.g.quieted(Magic::Spells, self.pos) {
                 self.commit(u);
             }
         }
@@ -451,7 +461,11 @@ impl Bot {
                 self.climbing += (to.y - here.y).abs() / 6.0 * 11.0 / speed;
             }
             let hop = hop((here, here_d), (to, d));
-            let rushing = self.t < rush_until;
+            // The Arcanum's ward quiets the rush and the aura for its slots.
+            let slot = g.lib.books[b as usize].slot_pos;
+            let rushing = self.t < rush_until && !g.quieted(Magic::Spells, slot);
+            let aura_r = if g.quieted(Magic::Aura, slot) { 0.0 } else { aura_r };
+            let aura_rate = if aura_r == 0.0 { 0.0 } else { aura_rate };
             let mut reach = if rushing { aura_r.max(rush_r) } else { aura_r };
             // The aura and the rush send a book home only from before its case: from
             // here if the front of its slot is in sight, else no sooner than a click.
@@ -479,7 +493,7 @@ impl Bot {
             self.t += read;
             self.spent[4] += read;
             // A toss at the floor in front of its run, from where the bot stands.
-            if homing && walk_m > TOSS_OVER {
+            if homing && walk_m > TOSS_OVER && !g.quieted(Magic::Spells, slot) {
                 let ground = |p: Vec3| g.lib.world.ground(Vec2::new(p.x, p.z), p.y + 0.1).unwrap_or(p.y);
                 let stand = g.nav.standable_near(Vec3::new(here.x, ground(here), here.z));
                 let info = &g.lib.books[b as usize];
@@ -545,7 +559,7 @@ impl Bot {
                 Role::Shelver => self.shelver_spot(i),
                 Role::Courier => self.courier_spot(i),
             };
-            if let Some(at) = spot
+            if let Some(at) = spot.filter(|&at| !self.g.quieted(Magic::Familiars, at))
                 && self.walk(at, AIM).is_some()
             {
                 self.g.post_familiar(i, at);

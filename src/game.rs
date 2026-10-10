@@ -6,11 +6,13 @@ mod familiar;
 mod mood;
 #[cfg(test)]
 mod pacing;
+mod rooms;
 mod sound;
 
 pub use cheats::Cheat;
 use familiar::Familiar;
 pub use familiar::Role;
+use rooms::Magic;
 mod spells;
 use spells::Stream;
 pub use spells::{ECHO_SPEED, SPELLS, spell_times};
@@ -41,6 +43,12 @@ const WADE: f32 = 2.5;
 const HEAP_WALL: f32 = 1.3;
 const HEAP_CLEAR: f32 = 0.3;
 const SHELF_REACH: f32 = 4.2;
+/// How far off a stopped clock's face can be read by aiming at it.
+const CLOCK_READ: f32 = 12.0;
+/// Places a folio takes in the arms (`Library::is_folio`), and the share of a throw's
+/// speed it keeps (so it flies half as far).
+pub const FOLIO: usize = 3;
+const FOLIO_THROW: f32 = 0.71;
 const HAND_VISIBLE: usize = 8;
 /// Moving things further than this (metres) are lost in the fog, and not drawn.
 const MOVERS_SEEN: f32 = 70.0;
@@ -449,6 +457,8 @@ pub enum Aim {
     },
     /// A posted familiar (its crane or its perch).
     Familiar(usize),
+    /// A stopped clock in the Clockworks (`Library::stopped`), by its face.
+    Clock(usize),
 }
 
 /// A press on a pile while the button is held: released quickly it takes the book
@@ -622,6 +632,15 @@ pub struct Game {
     poses: Vec<motion::Pose>,
     /// When each of the Clockworks' stopped clocks started again (`clock`), if it has.
     started: Vec<Option<f64>>,
+    /// The first folio taken this session has been explained.
+    told_folio: bool,
+    /// Restless books' hops this session and when each may hop again (`rooms`), the
+    /// first hop explained, the room the player is in, and the rooms whose ask has
+    /// been said (by bit).
+    wary: std::collections::HashMap<u32, (u8, f32)>,
+    told_restless: bool,
+    in_room: Option<usize>,
+    told_rooms: u32,
     pub play_time: f64,
     /// A press on a pile, while the button is held.
     pub scoop: Option<Scoop>,
@@ -763,6 +782,11 @@ impl Game {
             clock: 0.0,
             poses: Vec::new(),
             started: vec![None; lib.stopped.len()],
+            told_folio: false,
+            wary: Default::default(),
+            told_restless: false,
+            in_room: None,
+            told_rooms: 0,
             play_time: 0.0,
             scoop: None,
             toss_charge: 0.0,
@@ -841,6 +865,21 @@ impl Game {
 
     pub fn capacity(&self) -> usize {
         [6, 12, 24, 48, 96][self.level(Upg::Arms) as usize]
+    }
+
+    /// The places book `b` takes in the arms: a folio's `FOLIO`, else one.
+    pub fn weight(&self, b: u32) -> usize {
+        if self.lib.is_folio(b) { FOLIO } else { 1 }
+    }
+
+    /// The places the books in the arms take.
+    pub fn carried(&self) -> usize {
+        self.held.iter().map(|&b| self.weight(b)).sum()
+    }
+
+    /// The places left in the arms.
+    pub fn room_in_arms(&self) -> usize {
+        self.capacity().saturating_sub(self.carried())
     }
 
     fn gather_reach(&self) -> f32 {
@@ -941,32 +980,6 @@ impl Game {
         done < (total as f32 * gate.need).ceil() as u32
     }
 
-    /// Start again every stopped clock in the Clockworks whose key series is filed
-    /// whole: the books it held fall from where they hung. Returns those started.
-    fn start_clocks(&mut self) -> Vec<usize> {
-        let mut started = Vec::new();
-        for k in 0..self.lib.stopped.len() {
-            let key = self.lib.stopped[k].key as usize;
-            if self.started[k].is_some() || self.series_shelved[key] < self.lib.series[key].volumes {
-                continue;
-            }
-            self.started[k] = Some(self.clock);
-            started.push(k);
-            let face = self.lib.stopped[k].face;
-            for i in 0..self.lib.stopped[k].books.len() {
-                let b = self.lib.stopped[k].books[i];
-                if self.state[b as usize] != BookState::Loose || !self.loose.is_frozen(b) {
-                    continue;
-                }
-                let mut j = || self.rng.gen_range(-1.0..1.0f32);
-                let (push, spin) = (Vec3::new(j(), j(), j()), Vec3::new(j(), j(), j()));
-                let out = (self.loose.pose(b).0 - face).normalize_or_zero();
-                self.loose.thaw(b, out * 0.6 + push * 0.3, spin * 4.0);
-            }
-        }
-        started
-    }
-
     fn open_gate(&mut self, g: usize) {
         self.lib.world.open_gate(g);
         self.loose.set_gate(g, false);
@@ -1004,6 +1017,13 @@ impl Game {
         let bob_before = self.player.bob;
         let grounded = self.player.grounded;
         let landed = self.update_player(dt, input);
+        // Walking (not standing or creeping) startles restless books nearby.
+        let pace = Vec2::new(self.player.vel.x, self.player.vel.z).length();
+        if can_play && self.player.grounded && pace >= rooms::STARTLE_SPEED {
+            self.startle(self.player.pos);
+        }
+        self.step_in();
+        self.blow();
         // A soft footfall each time the walking bob touches down; in books, the heel
         // muffled and the pages shuffling, more the deeper they are.
         let p = self.player.pos;
@@ -1330,8 +1350,21 @@ impl Game {
             best_t = t;
         }
         // Posted familiars, nearer still.
-        if let Some((i, _)) = self.aimed_familiar(o, d, best_t.min(block).min(SHELF_REACH * 2.0)) {
+        if let Some((i, t)) = self.aimed_familiar(o, d, best_t.min(block).min(SHELF_REACH * 2.0)) {
             best = Aim::Familiar(i);
+            best_t = t;
+        }
+        // Stopped clocks' faces, from the front, nearer than all that.
+        for (k, c) in self.lib.stopped.iter().enumerate() {
+            let dn = d.dot(c.n);
+            if dn >= -1e-3 {
+                continue;
+            }
+            let t = (c.face - o).dot(c.n) / dn;
+            if t > 0.0 && t < best_t.min(block).min(CLOCK_READ) && (o + d * t).distance(c.face) < c.r * 1.2 {
+                best = Aim::Clock(k);
+                best_t = t;
+            }
         }
         best
     }
@@ -1341,7 +1374,7 @@ impl Game {
     fn press(&mut self, audio: &mut Audio) {
         match self.aim {
             Aim::Loose { book, point, .. } => {
-                if self.held.len() >= self.capacity() {
+                if self.room_in_arms() == 0 {
                     audio.play(Sfx::Nope, 0.4);
                     self.hint = Some(("Your arms are full — file some books first.".into(), 2.0));
                     return;
@@ -1401,6 +1434,13 @@ impl Game {
             self.state[b as usize] = BookState::Held;
             self.held.push(b);
             self.start_flight(b, Dest::Hand, 0.32 + i as f32 * 0.004, i as f32 * 0.025);
+        }
+        if !self.told_folio && books.iter().any(|&b| self.lib.is_folio(b)) {
+            self.told_folio = true;
+            let msg = format!(
+                "A folio: it takes {FOLIO} places in your arms, flies half as far tossed, and is too heavy for familiars."
+            );
+            self.hint = Some((msg, 5.0));
         }
         self.manual_pick = None;
         if self.level(Upg::Tidy) > 0 {
@@ -1486,7 +1526,7 @@ impl Game {
     /// The largest a scoop's ring grows: Sifting Touch's reach while seeking, else
     /// wider the more the arms have room for.
     fn scoop_max(&self) -> f32 {
-        let room = self.capacity().saturating_sub(self.held.len());
+        let room = self.room_in_arms();
         let plain = 0.35 + 0.05 * (room as f32).sqrt();
         match self.sought() {
             Some(_) => SIFT_RADIUS[self.level(Upg::Sift) as usize].max(plain),
@@ -1520,17 +1560,25 @@ impl Game {
     /// A tap takes the book pressed on; a hold, the top of the pile inside the ring,
     /// or while seeking only the sought group's books there, from any depth.
     fn take_scoop(&mut self, s: &Scoop, audio: &mut Audio) {
+        let room = self.room_in_arms();
         let books = match self.scoop_radius(s) {
+            None if self.weight(s.book) > room => {
+                audio.play(Sfx::Nope, 0.4);
+                let msg = format!("A folio takes {FOLIO} places in your arms — file some books first.");
+                self.hint = Some((msg, 2.0));
+                return;
+            }
             None if self.loose.is_resting(s.book) => {
                 self.loose.take(&[s.book]);
                 vec![s.book]
             }
             None => return,
             Some(r) => {
-                let room = self.capacity().saturating_sub(self.held.len());
                 let (lib, sought) = (&self.lib, self.sought());
                 let keep = |b: u32| sought.is_none_or(|(group, key)| group.of(lib, b) == key);
-                self.loose.gather(s.lv, Vec2::new(s.at.x, s.at.z), r, room, keep)
+                let weigh = |b: u32| if lib.is_folio(b) { FOLIO } else { 1 };
+                self.loose
+                    .gather_weighed(s.lv, Vec2::new(s.at.x, s.at.z), r, (room, weigh), keep)
             }
         };
         self.take_into_arms(&books, audio);
@@ -1569,6 +1617,7 @@ impl Game {
         if down && !self.held.is_empty() {
             self.toss_charge = (self.toss_charge + dt / TOSS_CHARGE).min(1.0);
             let (from, vel) = self.toss_launch();
+            let vel = vel * self.active_book().map_or(1.0, |b| self.throw_keeps(b));
             let mut arc = std::mem::take(&mut self.toss_arc);
             self.toss_land = self.loose.predict(from, vel, &mut arc);
             self.toss_arc = arc;
@@ -1607,15 +1656,22 @@ impl Game {
             self.flights.retain(|f| f.book != b);
             self.state[b as usize] = BookState::Loose;
             self.tossed[b as usize] = true;
+            let keeps = self.throw_keeps(b);
             let mut j = || self.rng.gen_range(-1.0..1.0f32);
             let scatter = Vec3::new(j(), j(), j()) * (0.06 * speed + 0.3) * spread;
             let spin = Vec3::new(j(), j(), j()) * 9.0;
             let rot = self.hand_xform(0).1;
-            self.loose.throw(b, from, vel + scatter, rot, spin, i as f32 * gap);
+            self.loose
+                .throw(b, from, (vel + scatter) * keeps, rot, spin, i as f32 * gap);
         }
         audio.play(Sfx::Toss, 0.45);
         self.toss_charge = 0.0;
         self.dirty_save = true;
+    }
+
+    /// The share of a throw's speed book `b` keeps: a folio flies half as far.
+    fn throw_keeps(&self, b: u32) -> f32 {
+        if self.lib.is_folio(b) { FOLIO_THROW } else { 1.0 }
     }
 
     /// Homing Toss: a tossed book that landed in front of its own shelf, near its
@@ -1632,7 +1688,8 @@ impl Game {
             let world = &self.lib.world;
             let home = world.level_at(l.at) == world.level_at(info.slot_pos)
                 && Vec2::new(rel.x, rel.z).length() <= reach
-                && self.lib.reaches_front(l.book, l.at + Vec3::Y * 0.1);
+                && self.lib.reaches_front(l.book, l.at + Vec3::Y * 0.1)
+                && !self.quieted(Magic::Spells, info.slot_pos);
             if home && self.loose.is_resting(l.book) {
                 self.loose.take(&[l.book]);
                 self.state[b] = BookState::Filing;
@@ -1970,9 +2027,12 @@ impl Game {
     /// carried books near their slots fly home, from in front of their cases.
     fn update_aura(&mut self, dt: f32) {
         let (mut radius, mut rate) = AURA_LEVELS[self.level(Upg::Aura) as usize];
+        // In the Arcanum the ward quiets the aura, and the rush with spells.
+        let mut quiet = Magic::Aura;
         if self.spell_on(Upg::Rush) {
             radius = radius.max(spells::rush_reach(self.level(Upg::Rush)));
             rate = spells::RUSH_RATE;
+            quiet = Magic::Spells;
         }
         if rate == 0.0 {
             return;
@@ -1984,7 +2044,8 @@ impl Game {
         while i < self.held.len() && self.aura_budget >= 1.0 {
             let b = self.held[i];
             let arrived = !self.flights.iter().any(|f| f.book == b);
-            if arrived && self.lib.books[b as usize].slot_pos.distance(eye) < radius && self.lib.reaches_front(b, eye) {
+            let slot = self.lib.books[b as usize].slot_pos;
+            if arrived && slot.distance(eye) < radius && self.lib.reaches_front(b, eye) && !self.quieted(quiet, slot) {
                 self.leave_hand(&[b]);
                 self.held.remove(i);
                 self.state[b as usize] = BookState::Filing;
@@ -2071,8 +2132,14 @@ impl Game {
             .filter(|&b| self.loose.is_resting(b) && self.lib.category_of_book(b) == cat)
             .collect();
         let step = (ids.len() / n.max(1)).max(1);
-        let room = self.capacity().saturating_sub(self.held.len());
-        let ids: Vec<u32> = ids.iter().copied().step_by(step).take(n.min(room)).collect();
+        let room = self.room_in_arms();
+        let mut used = 0;
+        let ids: Vec<u32> = (ids.iter().copied().step_by(step).take(n))
+            .take_while(|&b| {
+                used += self.weight(b);
+                used <= room
+            })
+            .collect();
         self.loose.take(&ids);
         for &b in &ids {
             self.state[b as usize] = BookState::Held;
@@ -2353,32 +2420,7 @@ impl Game {
             dyn_insts.push(Inst { color, ..gem });
         }
 
-        // The Clockworks' stopped clocks: their hands still, or keeping time since they
-        // started again; a haze of stillness round each while it holds its books.
-        for (k, c) in self.lib.stopped.iter().enumerate() {
-            let since = self.started[k].map_or(0.0, |t| (self.clock - t) as f32);
-            let hours = c.stopped_at + since / 3600.0;
-            for (hand, turns) in c.hands.iter().zip([hours / 12.0, hours]) {
-                let turn = Quat::from_axis_angle(c.n, -(turns - libm::floorf(turns)) * std::f32::consts::TAU);
-                let pose = motion::Pose {
-                    turn,
-                    shift: c.face - turn * c.face,
-                };
-                dyn_insts.push(pose.inst(hand));
-            }
-            let haze = 1.0 - (since / 2.0).min(1.0);
-            if haze > 0.0 {
-                trans.push(Inst::new(
-                    c.face,
-                    Quat::IDENTITY,
-                    Vec3::new(3.4, 2.5, 3.4),
-                    kind::MIST,
-                    [0.55, 0.7, 1.0, 0.3 * haze],
-                    1,
-                ));
-            }
-        }
-
+        self.draw_rooms(&mut dyn_insts, &mut trans);
         self.draw_familiars(&mut dyn_insts);
 
         // Particles and dust motes.

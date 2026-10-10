@@ -311,7 +311,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         Aim::Loose { book, .. } => {
             painter.circle_stroke(c, 7.0, Stroke::new(1.5_f32, GOLD));
             let cat = g.lib.series[g.lib.books[book as usize].series as usize].category;
-            let room = g.capacity().saturating_sub(g.held.len());
+            let room = g.room_in_arms();
             let what = if room == 0 {
                 "arms full".to_string()
             } else if g.level(Upg::Sift) == 0 {
@@ -370,6 +370,28 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             if let Some((role, _)) = g.familiars().nth(i) {
                 tip = Some((format!("A {} at its post · G take it back", role.name()), INK));
             }
+        }
+        Aim::Clock(k) => {
+            painter.circle_stroke(c, 7.0, Stroke::new(1.5_f32, INK));
+            let key = g.lib.stopped[k].key;
+            let s = &g.lib.series[key as usize];
+            let done = g.series_shelved[key as usize];
+            let t = if done == s.volumes {
+                "A clock keeping time again".to_string()
+            } else {
+                // A key's volume may hang by another clock still stopped.
+                let hung = (g.lib.series_books[key as usize].iter()).any(|&b| g.loose.is_frozen(b));
+                let more = if hung {
+                    " · a volume hangs by another clock"
+                } else {
+                    ""
+                };
+                format!(
+                    "Stopped: starts when “{}” is filed · {done}/{} shelved{more}",
+                    s.title, s.volumes
+                )
+            };
+            tip = Some((t, INK));
         }
         Aim::None => {
             painter.circle_filled(c, 2.0, INK.gamma_multiply(0.7));
@@ -468,7 +490,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                 ui.set_max_width(380.0);
                 let mut status = format!(
                     "Arms  {}/{}  ·  sorting by {}",
-                    g.held.len(),
+                    g.carried(),
                     g.capacity(),
                     g.group.name()
                 );

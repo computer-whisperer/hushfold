@@ -405,6 +405,9 @@ pub struct Loose {
     moved: Vec<bool>,
     /// Held still in the air by a stopped clock (`Library::frozen`), until thawed.
     frozen: Vec<bool>,
+    /// A draught where one blows: its level, its rectangle (x, z), and its push on a
+    /// flying book (m/s², along x and z).
+    wind: Option<(usize, Vec2, Vec2, Vec2)>,
     grids: Vec<Grid>,
     /// Every gate: (level, min, max).
     gate_boxes: Vec<(usize, Vec3, Vec3)>,
@@ -440,6 +443,7 @@ impl Loose {
             resting: vec![false; n],
             moved: vec![false; n],
             frozen: vec![false; n],
+            wind: None,
             grids: (0..lib.world.levels.len()).map(|l| Grid::new(&lib.world, l)).collect(),
             gate_boxes: lib.world.gates().iter().map(|g| (g.level, g.min, g.max)).collect(),
             flying: Vec::new(),
@@ -470,6 +474,11 @@ impl Loose {
             loose.level[bi] = lib.world.level_at(at);
         }
         loose
+    }
+
+    /// Set the draught blowing (see `wind`), or none.
+    pub fn set_wind(&mut self, wind: Option<(usize, Vec2, Vec2, Vec2)>) {
+        self.wind = wind;
     }
 
     /// Close or open gate `i`: a closed gate is a wall to books.
@@ -1048,8 +1057,27 @@ impl Loose {
     /// Lift up to `n` books passing `keep` from within `radius` of `at` on level `lv`,
     /// topmost first; what rested on them falls.
     pub fn gather(&mut self, lv: usize, at: Vec2, radius: f32, n: usize, keep: impl Fn(u32) -> bool) -> Vec<u32> {
+        self.gather_weighed(lv, at, radius, (n, |_| 1), keep)
+    }
+
+    /// As `gather`, up to a `budget` of what the books `weigh`: topmost first, until
+    /// the next would not fit.
+    pub fn gather_weighed(
+        &mut self,
+        lv: usize,
+        at: Vec2,
+        radius: f32,
+        (budget, weigh): (usize, impl Fn(u32) -> usize),
+        keep: impl Fn(u32) -> bool,
+    ) -> Vec<u32> {
         let mut found = self.near(lv, at, radius, keep);
         found.sort_by(|&a, &b| self.rest[b as usize].c.y.total_cmp(&self.rest[a as usize].c.y));
+        let mut used = 0;
+        let fits = found.iter().take_while(|&&b| {
+            used += weigh(b);
+            used <= budget
+        });
+        let n = fits.count();
         found.truncate(n);
         for &b in &found {
             self.release(b);
@@ -1231,6 +1259,14 @@ impl Loose {
     fn step(&self, lv: &mut usize, p: &mut Vec3, v: &mut Vec3, dt: f32) -> bool {
         let prev = *p;
         v.y -= GRAVITY * dt;
+        if let Some((wl, mn, mx, push)) = self.wind
+            && *lv == wl
+            && Vec2::new(p.x, p.z).cmpge(mn).all()
+            && Vec2::new(p.x, p.z).cmplt(mx).all()
+        {
+            v.x += push.x * dt;
+            v.z += push.y * dt;
+        }
         *p += *v * dt;
         let bounce = |x: &mut f32, vx: &mut f32, lo: f32, hi: f32| {
             if *x < lo {
