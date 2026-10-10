@@ -236,7 +236,8 @@ fn cells() -> &'static Cells {
         Cells {
             faces,
             cells,
-            height: (y + row).next_power_of_two(),
+            // Even down to the smallest mip level.
+            height: (y + row).next_multiple_of(1 << (LEVELS - 1)),
         }
     })
 }
@@ -250,10 +251,20 @@ fn index(c: char) -> usize {
     CHARS.chars().position(|k| k == c).unwrap_or_else(|| index('?'))
 }
 
-/// A glyph's outline as line segments, in ems (y up).
+/// How far a curve may stray from the segments it is cut into, in ems: a twentieth of
+/// an atlas pixel.
+const FLAT: f32 = 0.05 / EM_PX;
+
+/// A glyph's outline as line segments, in ems (y up). Curves are cut as finely as
+/// their bend needs to keep within `FLAT`, into at most 8 pieces (quadratics) or 12
+/// (cubics): rough faces' outlines are made of many small curves, nearly straight.
 fn outline(font: &FontRef, id: GlyphId, upem: f32) -> Vec<(Vec2, Vec2)> {
     let Some(o) = font.outline(id) else { return Vec::new() };
     let p = |q: ab_glyph::Point| Vec2::new(q.x, q.y) / upem;
+    // A quadratic whose control points' second difference is `bend` strays from n even
+    // chords by at most bend / (4 n²); a cubic by three times that, of the larger of
+    // its two.
+    let pieces = |bend: f32, max: usize| ((bend / (4.0 * FLAT)).sqrt().ceil() as usize).clamp(1, max);
     let mut segs = Vec::new();
     let mut curve = |n: usize, f: &dyn Fn(f32) -> Vec2| {
         let mut a = f(0.0);
@@ -266,15 +277,20 @@ fn outline(font: &FontRef, id: GlyphId, upem: f32) -> Vec<(Vec2, Vec2)> {
     for c in &o.curves {
         match *c {
             OutlineCurve::Line(a, b) => curve(1, &|t| p(a).lerp(p(b), t)),
-            OutlineCurve::Quad(a, b, c) => curve(8, &|t| {
+            OutlineCurve::Quad(a, b, c) => {
                 let (a, b, c) = (p(a), p(b), p(c));
-                a.lerp(b, t).lerp(b.lerp(c, t), t)
-            }),
-            OutlineCurve::Cubic(a, b, c, d) => curve(12, &|t| {
+                curve(pieces((a - 2.0 * b + c).length(), 8), &|t| {
+                    a.lerp(b, t).lerp(b.lerp(c, t), t)
+                })
+            }
+            OutlineCurve::Cubic(a, b, c, d) => {
                 let (a, b, c, d) = (p(a), p(b), p(c), p(d));
-                let (ab, bc, cd) = (a.lerp(b, t), b.lerp(c, t), c.lerp(d, t));
-                ab.lerp(bc, t).lerp(bc.lerp(cd, t), t)
-            }),
+                let bend = (a - 2.0 * b + c).length().max((b - 2.0 * c + d).length());
+                curve(pieces(3.0 * bend, 12), &|t| {
+                    let (ab, bc, cd) = (a.lerp(b, t), b.lerp(c, t), c.lerp(d, t));
+                    ab.lerp(bc, t).lerp(bc.lerp(cd, t), t)
+                })
+            }
         }
     }
     segs
@@ -416,27 +432,37 @@ fn field(c: &Cells, slot: usize) -> Vec<u8> {
     let tf = &c.faces[slot / chars()];
     let segs = outline(&tf.font, cell.id, tf.upem);
     let [sx, sy] = cell.size;
+    // An outline further off than this leaves a texel saturated, so each segment is
+    // measured only from the texels within this of it. A texel's winding counts the
+    // crossings of its row to its right.
+    let reach = (PAD + 1.0) / EM_PX;
+    let x = |col: u32| (cell.min[0] as f32 + col as f32 + 0.5) / EM_PX;
+    let col = |x: f32| (x * EM_PX - cell.min[0] as f32 - 0.5).clamp(0.0, sx as f32 - 1.0);
+    let mut d2 = vec![f32::MAX; sx as usize];
+    let mut crossings = Vec::new();
     let mut out = Vec::with_capacity((sx * sy) as usize);
     for row in 0..sy {
-        for col in 0..sx {
-            let p = Vec2::new(
-                cell.min[0] as f32 + col as f32 + 0.5,
-                cell.min[1] as f32 + (sy - 1 - row) as f32 + 0.5,
-            ) / EM_PX;
-            let mut d2 = f32::MAX;
-            let mut winding = 0;
-            for &(a, b) in &segs {
-                let ab = b - a;
-                let t = ((p - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
-                d2 = d2.min((a + ab * t).distance_squared(p));
-                if (a.y <= p.y) != (b.y <= p.y) {
-                    let x = a.x + (p.y - a.y) / ab.y * ab.x;
-                    if x > p.x {
-                        winding += if b.y > a.y { 1 } else { -1 };
-                    }
-                }
+        let y = (cell.min[1] as f32 + (sy - 1 - row) as f32 + 0.5) / EM_PX;
+        d2.fill(f32::MAX);
+        crossings.clear();
+        for &(a, b) in &segs {
+            let ab = b - a;
+            if (a.y <= y) != (b.y <= y) {
+                crossings.push((a.x + (y - a.y) / ab.y * ab.x, if b.y > a.y { 1 } else { -1 }));
             }
-            let d = d2.sqrt() * EM_PX * if winding != 0 { 1.0 } else { -1.0 };
+            if a.y.min(b.y) - reach > y || y > a.y.max(b.y) + reach {
+                continue;
+            }
+            let (lo, hi) = (col(a.x.min(b.x) - reach).floor(), col(a.x.max(b.x) + reach).ceil());
+            for k in lo as u32..=hi as u32 {
+                let p = Vec2::new(x(k), y);
+                let t = ((p - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
+                d2[k as usize] = d2[k as usize].min((a + ab * t).distance_squared(p));
+            }
+        }
+        for k in 0..sx {
+            let winding: i32 = (crossings.iter()).filter(|&&(cx, _)| cx > x(k)).map(|&(_, w)| w).sum();
+            let d = d2[k as usize].sqrt() * EM_PX * if winding != 0 { 1.0 } else { -1.0 };
             out.push((128.0 + d * 127.0 / PAD).round().clamp(0.0, 255.0) as u8);
         }
     }

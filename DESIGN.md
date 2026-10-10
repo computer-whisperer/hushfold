@@ -424,8 +424,9 @@ kerning is written as a `kern` table, the only kerning ab_glyph and egui read.
 Signs, labels and words are laid out at generation into glyph quads, one static draw
 after the opaque scene, depth-biased onto the surfaces under them (testing depth,
 not writing it). Every face's glyphs are cut from one signed-distance atlas built at
-startup (64 px to the em, 1632 glyphs; exact distances to the flattened outlines,
-threaded; mipmapped), so they stay sharp up close. Each is
+startup (64 px to the em, 1632 glyphs in 2048 x 2272; exact distances to outlines
+flattened to within a twentieth of a pixel, each segment measured from the texels
+near it only; threaded, ~40 ms; mipmapped), so they stay sharp up close. Each is
 lit like its surface (gold leaf, ink) or glows; small letters are set a little
 bolder, and those under about four pixels to the em fade out rather than shimmer.
 Names are therefore read in the world, at the distance their size allows (a
