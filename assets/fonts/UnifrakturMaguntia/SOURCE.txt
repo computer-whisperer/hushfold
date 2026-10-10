@@ -1,0 +1,6 @@
+UnifrakturMaguntia, by j. 'mach' wust, based on a font by Peter Wiegel, original typeface by Carl Albert Fahrenwaldt 1901.
+Licence: SIL Open Font License 1.1 (OFL.txt).
+From: https://github.com/google/fonts/blob/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/unifrakturmaguntia/UnifrakturMaguntia-Book.ttf
+Upstream: https://github.com/googlefonts/googlefontdirectory-hg
+Changes: none, as it reserves its name (its licence: "Copyright (c) 2010, j. 'mach' wust, with Reserved Font Name UnifrakturMaguntia. Copyright (c) 2009, Peter Wiegel.").
+Made by assets/fonts/subset.py.

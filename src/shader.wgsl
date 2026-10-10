@@ -857,15 +857,18 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
 // ---------------------------------------------------------------- books
 
 // The book table (gfx::books): a header, the glyph atlas's cells, volume numbers set
-// roman and arabic, a record per series and the glyphs its lettering points into.
+// roman and arabic in every face, a record per series, the glyphs its lettering points
+// into, and FACE_WORDS per face.
 @group(1) @binding(3) var<storage, read> book_table: array<u32>;
 // Binding materials tiling every BOOK_TILE metres: r leather grain, g cloth weave,
 // b marbling, a mottle.
 @group(1) @binding(4) var book_tex: texture_2d<f32>;
 @group(1) @binding(5) var book_sampler: sampler;
 const BOOK_TILE: f32 = 0.064;
-// Words per series (gfx::books::RECORD).
+// Words per series (gfx::books::RECORD), and volume numbers set in each face
+// (gfx::books::NUMERALS).
 const RECORD: u32 = 10u;
+const NUMERALS: u32 = 64u;
 // Raised bands run from this far below the head to as far above the tail; half a
 // band's width.
 const BAND_END: f32 = 0.045;
@@ -886,23 +889,53 @@ fn unpack_rgb(w: u32) -> vec3<f32> {
     return c * c;
 }
 
+// Words per face in the book table's face table (gfx::books::FACE_WORDS): its
+// capitals' height, and how far its glyphs' cells reach left and right of their pens,
+// in ems (f32 bits).
+const FACE_WORDS: u32 = 3u;
+
+// A glyph word's pen, in ems from the middle of its line.
+fn glyph_pen(gw: u32) -> f32 {
+    return f32((gw >> 14u) & 0xffffu) / 1024.0 - 32.0;
+}
+
+// The distance field (atlas pixels, inside positive) of the glyph of glyph word `gw` at
+// `q`, atlas pixels along its line from the middle and up from its baseline; outside
+// its cell, as far as the field reaches.
+fn glyph_field(gw: u32, q: vec2<f32>, lod: f32) -> f32 {
+    let c = book_table[0] + (gw & 0x3fffu) * 2u;
+    let c1 = book_table[c + 1u];
+    let size = vec2<f32>(f32(c1 & 255u), f32((c1 >> 8u) & 255u));
+    let at = q - vec2<f32>(glyph_pen(gw) * GLYPH_EM, 0.0) - vec2<f32>(f32((c1 >> 16u) & 255u), f32(c1 >> 24u)) + 128.0;
+    if (any(at < vec2<f32>(0.0)) || any(at > size)) {
+        return -GLYPH_PAD;
+    }
+    let c0 = book_table[c];
+    let uv = (vec2<f32>(f32(c0 & 0xffffu), f32(c0 >> 16u)) + vec2<f32>(at.x, size.y - at.y))
+        / vec2<f32>(textureDimensions(glyph_atlas));
+    return (textureSampleLevel(glyph_atlas, glyph_sampler, uv, lod).r * 255.0 - 128.0) * GLYPH_PAD / 127.0;
+}
+
 // Coverage of a block of lettering (a word of the book table: its glyphs' first index,
-// count and lines) at `p`, in ems from the middle of its capitals, its lines `pitch` ems
-// apart; `texels` is atlas pixels to a screen pixel. Letters too small to read fade
-// out, as signs' do.
-fn lettering(block: u32, p: vec2<f32>, pitch: f32, texels: f32) -> f32 {
+// count and lines) set in face `face` at `p`, in ems from the middle of its capitals,
+// its lines `pitch` ems apart; `texels` is atlas pixels to a screen pixel. Letters too
+// small to read fade out, as signs' do.
+fn lettering(block: u32, face: u32, p: vec2<f32>, pitch: f32, texels: f32) -> f32 {
     let count = (block >> 22u) & 127u;
     let lines = f32(block >> 29u);
     if (count == 0u || texels > GLYPH_EM / 4.0 || abs(p.y) > 0.5 * lines * pitch + 0.6) {
         return 0.0;
     }
     let first = book_table[3] + (block & 0x3fffffu);
-    let cells = book_table[0];
+    let ft = book_table[4] + face * FACE_WORDS;
+    let cap = bitcast<f32>(book_table[ft]);
+    let reach = vec2<f32>(bitcast<f32>(book_table[ft + 1u]), bitcast<f32>(book_table[ft + 2u]));
     // The line the point is on, and the point in atlas pixels from its baseline.
     let l = clamp(round(0.5 * (lines - 1.0) - p.y / pitch), 0.0, lines - 1.0);
-    let base = (0.5 * (lines - 1.0) - l) * pitch - 0.5 * bitcast<f32>(book_table[4]);
+    let line = u32(l);
+    let base = (0.5 * (lines - 1.0) - l) * pitch - 0.5 * cap;
     let q = vec2<f32>(p.x, p.y - base) * GLYPH_EM;
-    let key = u32(l) << 16u | u32(clamp(p.x * 1024.0 + 32768.0, 0.0, 65535.0));
+    let key = line << 16u | u32(clamp(p.x * 1024.0 + 32768.0, 0.0, 65535.0));
     // The last glyph whose pen is at or before the point (else the first).
     var lo = first;
     var hi = first + count;
@@ -915,24 +948,28 @@ fn lettering(block: u32, p: vec2<f32>, pitch: f32, texels: f32) -> f32 {
         }
     }
     let lod = clamp(log2(texels), 0.0, 3.0);
-    let dims = vec2<f32>(textureDimensions(glyph_atlas));
     var d = -GLYPH_PAD;
-    // That glyph and the next, whose cells overlap.
-    for (var k = lo; k < min(lo + 2u, first + count); k = k + 1u) {
+    // Every glyph of the line whose cell may hold the point (kerned letters overlap,
+    // and some tails run long): from that one back while their pens are near enough
+    // for a cell to reach right to it, then on while near enough for one to reach left.
+    var k = lo;
+    loop {
         let gw = book_table[k];
-        if ((gw >> 30u) != u32(l)) {
-            continue;
+        if ((gw >> 30u) != line || glyph_pen(gw) + reach.y < p.x) {
+            break;
         }
-        let c = cells + (gw & 0x3fffu) * 2u;
-        let c1 = book_table[c + 1u];
-        let size = vec2<f32>(f32(c1 & 255u), f32((c1 >> 8u) & 255u));
-        let pen = f32((gw >> 14u) & 0xffffu) / 1024.0 - 32.0;
-        let at = q - vec2<f32>(pen * GLYPH_EM, 0.0) - vec2<f32>(f32((c1 >> 16u) & 255u), f32(c1 >> 24u)) + 128.0;
-        if (all(at >= vec2<f32>(0.0)) && all(at <= size)) {
-            let c0 = book_table[c];
-            let uv = (vec2<f32>(f32(c0 & 0xffffu), f32(c0 >> 16u)) + vec2<f32>(at.x, size.y - at.y)) / dims;
-            d = max(d, (textureSampleLevel(glyph_atlas, glyph_sampler, uv, lod).r * 255.0 - 128.0) * GLYPH_PAD / 127.0);
+        d = max(d, glyph_field(gw, q, lod));
+        if (k == first) {
+            break;
         }
+        k = k - 1u;
+    }
+    for (k = lo + 1u; k < first + count; k = k + 1u) {
+        let gw = book_table[k];
+        if ((gw >> 30u) != line || glyph_pen(gw) + reach.x > p.x) {
+            break;
+        }
+        d = max(d, glyph_field(gw, q, lod));
     }
     // Small letters a little bolder, as signs' are.
     let bold = 0.35 * smoothstep(GLYPH_EM / 30.0, GLYPH_EM / 10.0, texels);
@@ -1096,6 +1133,7 @@ fn book_spine(b: ptr<function, BookSurf>, i: VOut, fw: f32, tex: vec4<f32>, rec:
     }
     // The title, and the volume's number.
     let texel_m = fw * 0.7071 * GLYPH_EM;
+    let face = book_table[rec + 9u];
     let mode = (look >> 9u) & 3u;
     let in_ink = label == 2u || binding == 3u;
     if (mode != 0u) {
@@ -1106,7 +1144,7 @@ fn book_spine(b: ptr<function, BookSurf>, i: VOut, fw: f32, tex: vec4<f32>, rec:
             p = vec2<f32>(a - tg.y, m.x);
             pitch = PITCH;
         }
-        let c = lettering(book_table[rec + 3u], p / tg.x, pitch, texel_m / tg.x);
+        let c = lettering(book_table[rec + 3u], face, p / tg.x, pitch, texel_m / tg.x);
         (*b).ink = max((*b).ink, select(0.0, c, in_ink));
         (*b).gold = select(c, 0.0, in_ink);
     }
@@ -1114,8 +1152,8 @@ fn book_spine(b: ptr<function, BookSurf>, i: VOut, fw: f32, tex: vec4<f32>, rec:
     if (numerals != 0u) {
         let ng = unpack2x16float(book_table[rec + 8u]);
         let volume = min((i.param >> 8u) & 255u, 63u);
-        let blk = book_table[book_table[1] + volume * 2u + numerals - 1u];
-        let c = lettering(blk, vec2<f32>(m.x, ng.y - a) / ng.x, PITCH_CAPS, texel_m / ng.x);
+        let blk = book_table[book_table[1] + (face * NUMERALS + volume) * 2u + numerals - 1u];
+        let c = lettering(blk, face, vec2<f32>(m.x, ng.y - a) / ng.x, PITCH_CAPS, texel_m / ng.x);
         (*b).gold = max((*b).gold, c);
     }
 }
@@ -1185,7 +1223,13 @@ fn book_cover(b: ptr<function, BookSurf>, i: VOut, fw: f32, tex: vec4<f32>, rec:
     if (i.lnormal.x > 0.5 && blk != 0u) {
         let cg = unpack2x16float(book_table[rec + 7u]);
         let at = vec2<f32>(-0.5 * joint(sc.x), 0.5 * sc.y - cg.y);
-        let c = lettering(blk, vec2<f32>(at.x - m.z, m.y - at.y) / cg.x, PITCH_CAPS, fw * 0.7071 * GLYPH_EM / cg.x);
+        let c = lettering(
+            blk,
+            book_table[rec + 9u],
+            vec2<f32>(at.x - m.z, m.y - at.y) / cg.x,
+            PITCH_CAPS,
+            fw * 0.7071 * GLYPH_EM / cg.x,
+        );
         if (binding == 4u) {
             let lines = f32(blk >> 29u);
             let half = vec2<f32>(0.23 * sc.z, cg.x * (0.5 * (lines - 1.0) * PITCH_CAPS + 1.0));

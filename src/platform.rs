@@ -1,4 +1,4 @@
-//! Per-OS locations for saves, screenshots and symbol fonts.
+//! Per-OS locations for saves and screenshots.
 
 use std::path::PathBuf;
 
@@ -24,14 +24,3 @@ pub fn data_dir() -> PathBuf {
 pub fn screenshot_dir() -> PathBuf {
     home().map(|h| h.join("Pictures")).unwrap_or_else(|| PathBuf::from("."))
 }
-
-/// Fonts that supply symbols such as ✦ and ▼; every one found is added as a fallback.
-pub const SYMBOL_FONTS: &[&str] = &[
-    "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf",
-    "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
-    "/usr/share/fonts/noto/NotoSansSymbols-Regular.ttf",
-    "/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "C:\\Windows\\Fonts\\seguisym.ttf",
-];

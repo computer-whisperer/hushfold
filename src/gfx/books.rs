@@ -3,29 +3,40 @@
 //! lettering goes, and a tiling texture of binding materials.
 //!
 //! The table: a header; the glyph atlas's cells (`text::cell_words`); volume numbers
-//! set roman and arabic; a record of `RECORD` words per series; and the glyphs every
-//! block of lettering points into. A block is one word, `first | count << 22 | lines
-//! << 29`; each of its glyphs a word, `slot | pen << 14 | line << 30`, the pen in
-//! 1/1024 ems from the middle of its line biased by 32 ems, so a block's glyphs sort
-//! by line, then pen (the shader finds a glyph by bisection).
+//! set roman and arabic in every face; a record of `RECORD` words per series; the
+//! glyphs every block of lettering points into; and `FACE_WORDS` per face. A block
+//! is one word, `first | count << 22 | lines << 29`; each of its glyphs a word, `slot |
+//! pen << 14 | line << 30`, the pen in 1/1024 ems from the middle of its line biased by
+//! 32 ems, so a block's glyphs sort by line, then pen (the shader finds a glyph by
+//! bisection).
 //!
 //! Books in hand are also modelled in the round (`model`), drawn with the same material.
 
 use crate::catalog::{Binding, Look, Series};
-use crate::text;
+use crate::text::{self, Face};
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
-/// Words before the cells: where the cells, numerals, records and glyphs start, and
-/// the height of a capital in ems (as f32 bits).
+/// Words before the cells: where the cells, numerals, records, glyphs and faces start.
 const HEADER: usize = 8;
+/// Words per face, in `Face::ALL`'s order: its capitals' height, and how far its
+/// glyphs' cells reach left and right of their pens (`text::reach`, widened by the
+/// pens' rounding to 1/1024 em), in ems as f32 bits.
+const FACE_WORDS: usize = 3;
 /// Words per series: the look; label colour; accent colour; spine lettering's block
 /// and its (em, centre); the label's (half length, centre); the front cover's block
-/// and its (em, centre); the volume number's (em, centre). Centres are metres down
-/// from the head; pairs are two f16 in one word.
+/// and its (em, centre); the volume number's (em, centre); the face. Centres are metres
+/// down from the head; pairs are two f16 in one word.
 pub const RECORD: usize = 10;
-/// Volume numbers set in advance (higher ones show as the last).
+/// Volume numbers set in advance in each face (higher ones show as the last).
 const NUMERALS: u32 = 64;
+/// The tallest capitals, in metres: of titles along a spine, across one and on a
+/// cover, and of volume numbers. Faces differ in how tall their capitals stand in the
+/// em, so sizes are set by the capitals'.
+const CAP_ALONG: f32 = 0.0114;
+const CAP_ACROSS: f32 = 0.0079;
+const CAP_COVER: f32 = 0.0086;
+const CAP_NUMERAL: f32 = 0.0064;
 
 /// The spine's raised bands run from this far below the head to as far above the tail;
 /// half a band's width, and how far it stands (the shader's `BAND_END`, `BAND_W`).
@@ -57,10 +68,10 @@ enum Label {
 
 /// A block of lettering being set: its glyph words go to `glyphs`, and it returns the
 /// block's word.
-fn block(glyphs: &mut Vec<u32>, lines: &[String], tracking: f32) -> u32 {
+fn block(glyphs: &mut Vec<u32>, face: Face, lines: &[String], tracking: f32) -> u32 {
     let first = glyphs.len() as u32;
     for (l, line) in lines.iter().enumerate() {
-        let (placed, w) = text::run(line, tracking);
+        let (placed, w) = text::run(face, line, tracking);
         for (slot, pen) in placed.into_iter().filter(|&(s, _)| text::inked(s)) {
             let pen = ((pen - w * 0.5) * 1024.0 + 32768.0).round().clamp(0.0, 65535.0) as u32;
             glyphs.push(slot as u32 | pen << 14 | (l as u32) << 30);
@@ -111,10 +122,10 @@ fn roman(mut n: u32) -> String {
     s
 }
 
-/// The widths of `words` set with `tracking`, and of a space, in ems.
-fn widths(words: &[&str], tracking: f32) -> (Vec<f32>, f32) {
-    let space = text::run(" ", tracking).1 + tracking;
-    (words.iter().map(|w| text::run(w, tracking).1).collect(), space)
+/// The widths of `words` set in `face` with `tracking`, and of a space, in ems.
+fn widths(face: Face, words: &[&str], tracking: f32) -> (Vec<f32>, f32) {
+    let space = text::run(face, " ", tracking).1 + tracking;
+    (words.iter().map(|w| text::run(face, w, tracking).1).collect(), space)
 }
 
 /// `words` broken into `n` lines (each a run of words) as evenly as they go: the
@@ -156,12 +167,12 @@ fn break_lines(words: &[&str], w: &[f32], space: f32, n: usize) -> Option<(Vec<S
     }
 }
 
-/// The largest em at which `text` fits a box `w` wide and `h` high in up to `max_lines`
-/// lines `pitch` apart: (lines, em).
-fn fit(text: &str, tracking: f32, pitch: f32, w: f32, h: f32, max_lines: usize) -> (Vec<String>, f32) {
+/// The largest em at which `text` set in `face` fits a box `w` wide and `h` high in up
+/// to `max_lines` lines `pitch` apart: (lines, em).
+fn fit(face: Face, text: &str, tracking: f32, pitch: f32, w: f32, h: f32, max_lines: usize) -> (Vec<String>, f32) {
     let words: Vec<&str> = text.split_whitespace().collect();
-    let (ws, space) = widths(&words, tracking);
-    let cap = text::cap_height();
+    let (ws, space) = widths(face, &words, tracking);
+    let cap = text::cap_height(face);
     let mut best = (vec![text.to_string()], 0.0);
     for n in 1..=max_lines {
         if let Some((lines, widest)) = break_lines(&words, &ws, space, n) {
@@ -185,12 +196,23 @@ struct Spine {
     bits: u32,
 }
 
+/// A title as set in capitals in `face` (fraktur's stay as they are).
+fn capitals(face: Face, title: &str) -> String {
+    if face.caps() {
+        title.to_uppercase()
+    } else {
+        title.to_string()
+    }
+}
+
 fn spine(glyphs: &mut Vec<u32>, s: &Series) -> Spine {
     let look = &s.look;
+    let face = look.face;
+    let cap = text::cap_height(face);
     let h = s.height;
     let t = s.thickness.iter().copied().fold(f32::MAX, f32::min);
     let numbered = s.volumes > 1;
-    let caps = s.title.to_uppercase();
+    let caps = capitals(face, &s.title);
     // The volume number: in the panel under the label's on banded spines, else above
     // the tail's tooling.
     let panel = |k: f32| {
@@ -203,27 +225,34 @@ fn spine(glyphs: &mut Vec<u32>, s: &Series) -> Spine {
     } else {
         (h - 0.05, 0.016)
     };
-    let numeral = pair((0.36 * t).min(num_room).min(0.009), num_at);
+    // Its capitals up to a quarter of the spine's width, and most of its room.
+    let numeral = pair((0.257 * t).min(0.714 * num_room).min(CAP_NUMERAL) / cap, num_at);
     // Labels across a spine too thin for them would carry letters too small to read.
     let across_room = t >= 0.03;
     let along = |glyphs: &mut Vec<u32>, from: f32, to: f32, width: f32| {
-        let (lines, em) = fit(&s.title, 0.02, PITCH, to - from - 0.012, width, 2);
-        (block(glyphs, &lines, 0.02), pair(em.min(0.016), (from + to) * 0.5))
+        let (lines, em) = fit(face, &s.title, 0.02, PITCH, to - from - 0.012, width, 2);
+        (
+            block(glyphs, face, &lines, 0.02),
+            pair(em.min(CAP_ALONG / cap), (from + to) * 0.5),
+        )
     };
-    // In capitals, or where they would come out too small, in the title's own case,
+    // In capitals, or where they would come out under 2.9 mm, in the title's own case,
     // which sets narrower.
     let across = |glyphs: &mut Vec<u32>, half: f32, at: f32| {
         let (w, h) = (t - 0.0075, 2.0 * half - 0.004);
         let max_lines = if h > 0.04 { 4 } else { 3 };
-        let (mut lines, mut em) = fit(&caps, 0.03, PITCH_CAPS, w, h, max_lines);
+        let (mut lines, mut em) = fit(face, &caps, 0.03, PITCH_CAPS, w, h, max_lines);
         let mut tracking = 0.03;
-        if em < 0.004 {
-            let (l, e) = fit(&s.title, 0.01, PITCH_CAPS, w, h, max_lines);
+        if em * cap < 0.0029 {
+            let (l, e) = fit(face, &s.title, 0.01, PITCH_CAPS, w, h, max_lines);
             if e > em {
                 (lines, em, tracking) = (l, e, 0.01);
             }
         }
-        (block(glyphs, &lines, tracking), pair(em.min(0.011), at))
+        (
+            block(glyphs, face, &lines, tracking),
+            pair(em.min(CAP_ACROSS / cap), at),
+        )
     };
     let bottom = if numbered { h - 0.064 } else { h - 0.045 };
     let (mode, label, (block, text), label_geom) = if look.bands > 0 {
@@ -274,7 +303,8 @@ fn spine(glyphs: &mut Vec<u32>, s: &Series) -> Spine {
             (Mode::Along, Label::None, lettered, 0)
         }
     };
-    let roman = matches!(look.binding, Binding::Leather | Binding::Half | Binding::Vellum);
+    // Roman numerals on the older bindings, but for fraktur's capitals.
+    let roman = face.caps() && matches!(look.binding, Binding::Leather | Binding::Half | Binding::Vellum);
     let numerals = match (numbered, roman) {
         (false, _) => 0,
         (true, true) => 1,
@@ -297,10 +327,11 @@ fn look_bits(look: &Look) -> u32 {
 pub fn table(series: &[Series]) -> Vec<u32> {
     let cells = text::cell_words();
     let mut glyphs = Vec::new();
-    let numerals: Vec<u32> = (0..NUMERALS)
-        .flat_map(|n| {
-            let r = block(&mut glyphs, &[roman(n)], 0.04);
-            let a = block(&mut glyphs, &[n.to_string()], 0.0);
+    let numerals: Vec<u32> = (Face::ALL.into_iter())
+        .flat_map(|face| (0..NUMERALS).map(move |n| (face, n)))
+        .flat_map(|(face, n)| {
+            let r = block(&mut glyphs, face, &[roman(n)], 0.04);
+            let a = block(&mut glyphs, face, &[n.to_string()], 0.0);
             [r, a]
         })
         .collect();
@@ -314,9 +345,12 @@ pub fn table(series: &[Series]) -> Vec<u32> {
             Binding::Boards => 0.38 * d,
             _ => 0.0,
         };
+        let face = s.look.face;
         let (cover, cover_at) = if width > 0.0 {
-            let (lines, em) = fit(&s.title.to_uppercase(), 0.06, PITCH_CAPS, width, 0.3 * s.height, 3);
-            (block(&mut glyphs, &lines, 0.06), pair(em.min(0.012), 0.3 * s.height))
+            let title = capitals(face, &s.title);
+            let (lines, em) = fit(face, &title, 0.06, PITCH_CAPS, width, 0.3 * s.height, 3);
+            let em = em.min(CAP_COVER / text::cap_height(face));
+            (block(&mut glyphs, face, &lines, 0.06), pair(em, 0.3 * s.height))
         } else {
             (0, 0)
         };
@@ -330,19 +364,20 @@ pub fn table(series: &[Series]) -> Vec<u32> {
             cover,
             cover_at,
             sp.numeral,
-            0,
+            face as u32,
         ]);
     }
     let at_cells = HEADER;
     let at_numerals = at_cells + cells.len();
     let at_series = at_numerals + numerals.len();
     let at_glyphs = at_series + records.len();
+    let at_faces = at_glyphs + glyphs.len();
     let mut out = vec![
         at_cells as u32,
         at_numerals as u32,
         at_series as u32,
         at_glyphs as u32,
-        text::cap_height().to_bits(),
+        at_faces as u32,
         0,
         0,
         0,
@@ -351,6 +386,11 @@ pub fn table(series: &[Series]) -> Vec<u32> {
     out.extend(numerals);
     out.extend(records);
     out.extend(glyphs);
+    for face in Face::ALL {
+        let (left, right) = text::reach(face);
+        let words: [f32; FACE_WORDS] = [text::cap_height(face), left - 1.0 / 512.0, right + 1.0 / 512.0];
+        out.extend(words.map(f32::to_bits));
+    }
     out
 }
 
@@ -736,7 +776,7 @@ mod tests {
     #[test]
     fn lines_break_evenly() {
         let words = ["The", "Lantern-lit", "Almanac", "of", "Tides"];
-        let (w, space) = widths(&words, 0.0);
+        let (w, space) = widths(Face::Caslon, &words, 0.0);
         let (lines, widest) = break_lines(&words, &w, space, 2).expect("two lines");
         assert_eq!(lines, ["The Lantern-lit", "Almanac of Tides"]);
         assert!(widest < w.iter().sum::<f32>());
@@ -748,19 +788,27 @@ mod tests {
     #[test]
     fn blocks_sort() {
         let mut glyphs = Vec::new();
-        let b = block(&mut glyphs, &["SALT-WORN".into(), "TIDES & LIGHT".into()], 0.06);
+        let b = block(
+            &mut glyphs,
+            Face::Bodoni,
+            &["SALT-WORN".into(), "TIDES & LIGHT".into()],
+            0.06,
+        );
         let (first, count) = (b & 0x3f_ffff, b >> 22 & 127);
         assert_eq!((first, count, b >> 29), (0, 20, 2));
         assert!(glyphs.windows(2).all(|g| g[0] >> 14 < g[1] >> 14));
     }
 
-    /// Every series' lettering points at its glyphs in the table, in order, and is set
-    /// big enough to read from somewhere.
+    /// Every series' lettering points at its glyphs in the table, in order, in its own
+    /// face, each cell within the face's reach of its pen (as far as the shader looks
+    /// for glyphs), and is set big enough to read from somewhere: its capitals at least
+    /// 1.35 mm tall, whatever its face. Every face but the signs' letters some spine.
     #[test]
     fn tables_hold_their_lettering() {
         let g = crate::game::Game::new(crate::library::Layout::Hall);
         let t = table(&g.lib.series);
-        let glyphs = t[3] as usize;
+        let (glyphs, faces) = (t[3] as usize, t[4] as usize);
+        let per_face = (t[1] - t[0]) as usize / 2 / Face::ALL.len();
         let half = |w: u32| {
             let h = |b: u32| {
                 let exp = (b >> 10 & 31) as i32 - 15;
@@ -768,16 +816,38 @@ mod tests {
             };
             (h(w & 0xffff), h(w >> 16))
         };
+        let mut used = [false; Face::ALL.len()];
         for (i, s) in g.lib.series.iter().enumerate() {
             let r = t[2] as usize + i * RECORD;
+            let face = t[r + 9] as usize;
+            assert_eq!(face, s.look.face as usize);
+            let reach = |k: usize| f32::from_bits(t[faces + face * FACE_WORDS + k]);
             for blk in [t[r + 3], t[r + 6]] {
                 let (first, count) = ((blk & 0x3f_ffff) as usize, (blk >> 22 & 127) as usize);
-                assert!(glyphs + first + count <= t.len());
+                assert!(glyphs + first + count <= faces);
                 let words = &t[glyphs + first..glyphs + first + count];
                 assert!(words.windows(2).all(|w| w[0] >> 14 < w[1] >> 14), "{}", s.title);
+                for w in words {
+                    let slot = (w & 0x3fff) as usize;
+                    assert_eq!(slot / per_face, face, "{}", s.title);
+                    let c1 = t[t[0] as usize + slot * 2 + 1];
+                    let min = ((c1 >> 16) & 255) as f32 - 128.0;
+                    let (lo, hi) = (min / text::EM_PX, (min + (c1 & 255) as f32) / text::EM_PX);
+                    assert!(reach(1) <= lo && hi <= reach(2), "{}: {lo}..{hi}", s.title);
+                }
             }
+            used[face] = true;
+            let cap = f32::from_bits(t[faces + face * FACE_WORDS]);
             let (em, at) = half(t[r + 4]);
-            assert!(em > 0.0019 && at > 0.0 && at < s.height, "{}: em {em} at {at}", s.title);
+            assert!(
+                em * cap > 0.00135 && at > 0.0 && at < s.height,
+                "{} ({:?}): em {em} at {at}",
+                s.title,
+                s.look.face
+            );
+        }
+        for face in Face::ALL {
+            assert_eq!(used[face as usize], face != text::SIGNS, "{face:?}");
         }
     }
 

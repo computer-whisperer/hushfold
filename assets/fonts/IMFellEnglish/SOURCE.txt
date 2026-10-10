@@ -1,0 +1,6 @@
+IM FELL English, by Igino Marini.
+Licence: SIL Open Font License 1.1 (OFL.txt).
+From: https://github.com/google/fonts/blob/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/imfellenglish/IMFeENrm28P.ttf
+Upstream: https://github.com/librefonts/imfellenglish
+Changes: none, as it reserves its name (the font: "© 2007 Igino Marini (www.iginomarini.com) With Reserved Font Name IM FELL English Roman").
+Made by assets/fonts/subset.py.
