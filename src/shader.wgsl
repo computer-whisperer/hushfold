@@ -17,6 +17,8 @@ struct Globals {
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
+// The opaque scene's depth, for translucent things (fs_trans).
+@group(1) @binding(0) var scene_depth: texture_depth_multisampled_2d;
 
 const K_PLAIN: u32 = 0u;
 const K_WOOD: u32 = 1u;
@@ -641,16 +643,22 @@ fn plaque(s: ptr<function, Mat>, i: VOut, fw: f32) {
 // hangings, velvet sheen, and an optional trim (see `kind::CLOTH`).
 fn cloth(s: ptr<function, Mat>, i: VOut, fw: f32) {
     let m = i.local * i.scale;
-    let seed = hash3(i.centre * 7.31);
     let ln = i.lnormal;
     let uv = face_uv(ln, m);
     let thick = dot(abs(ln), i.scale);
     let thin = min(i.scale.x, min(i.scale.y, i.scale.z));
     var col = i.color.rgb;
-    if (thick < 0.06 && thick <= thin + 1e-4 && abs(ln.y) < 0.5) {
-        let ph = uv.x * 40.0 + 3.0 * vnoise(vec3<f32>(uv.x * 4.0, uv.y * 1.2, seed * 9.0));
-        let ax = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(ln.x) > 0.5);
-        let amp = 1.0 - smoothstep(0.015, 0.04, fw);
+    // Folds hang straight down the broad upright faces of thin cloth, however it is
+    // turned; placed in world space, so pieces laid over one another (a tapestry's
+    // motifs) fold together.
+    let flat = cross(ln, qrot_inv(i.rot, vec3<f32>(0.0, 1.0, 0.0)));
+    if (thick < 0.06 && thick <= thin + 1e-4 && length(flat) > 0.7) {
+        let ax = normalize(flat);
+        let u = dot(i.world, qrot(i.rot, ax));
+        let wobble = vnoise(vec3<f32>(u * 2.5, i.world.y * 0.8, 0.0));
+        let ph = u * 30.0 + 5.0 * wobble;
+        // Some folds deeper than others.
+        let amp = (0.7 + 0.3 * sin(wobble * 11.0 + u * 3.0)) * (1.0 - smoothstep(0.015, 0.04, fw));
         (*s).n = qrot(i.rot, normalize(ln - ax * cos(ph) * 0.6 * amp));
         col *= 0.82 + 0.18 * sin(ph) * amp;
     } else {
@@ -763,8 +771,11 @@ fn leaf(s: ptr<function, Mat>, i: VOut, fw: f32) -> f32 {
     return occl;
 }
 
-// Crystal: a faceted body, white highlights, and color.w of light from deep inside: a
-// core and flecks that shift with the view, edges lit up, a slow breath.
+// Crystal and glass: a faceted body that the room is reflected in, light from behind
+// shining through it, a rim of its own colour, and color.w of light from deep inside:
+// a core and flecks that shift with the view, lit edges, a slow breath. The inner
+// structure shows only where the box is big enough on screen; many small pieces (a
+// globe's seas, an egg's slices) glow as one.
 fn crystal(s: ptr<function, Mat>, i: VOut, fw: f32) {
     let view = normalize(g.cam_pos.xyz - i.world);
     let seed = hash3(i.centre * 7.31);
@@ -773,18 +784,22 @@ fn crystal(s: ptr<function, Mat>, i: VOut, fw: f32) {
     let lo = min(sc.x, min(sc.y, sc.z));
     (*s).n = bevel(i, lo * 0.3, 1.6, 0.3, fw);
     let fr = fresnel(dot((*s).n, view));
+    let detail = smoothstep(12.0, 60.0, lo / max(fw, 1e-5));
     let into = normalize(qrot_inv(i.rot, -view) / sc);
     let p = i.local + into * 0.4;
-    let core = 1.0 - smoothstep(0.0, 0.6, length(p));
+    let core = 1.0 - smoothstep(0.0, 0.7, length(p));
     let t = g.cam_pos.w;
     let fleck = vnoise(p * sc * 40.0 + vec3<f32>(seed * 17.0, t * 0.15, 0.0));
     let pulse = 0.85 + 0.15 * sin(t * 1.6 + seed * 6.283);
-    let edge = line_aa(box_edge(i.local, sc, i.lnormal), 0.002, fw);
-    (*s).albedo = c * 0.25;
+    let edge = line_aa(box_edge(i.local, sc, i.lnormal), 0.002, fw) * detail;
+    let inner = mix(0.75, 0.35 + 1.2 * core * core + 0.6 * fleck * core, detail) + 0.5 * edge;
+    (*s).albedo = c * 0.3;
+    (*s).back = 0.7;
     (*s).spec = vec3<f32>(1.5);
     (*s).gloss = 160.0;
     (*s).emit = env(reflect(-view, (*s).n), 0.0) * mix(c, vec3<f32>(1.0), 0.4) * (0.5 + 2.5 * fr)
-        + c * i.color.w * pulse * (0.25 + 1.6 * core * core + 0.8 * fleck * core + 0.9 * edge);
+        + c * g.ambient_top.rgb * 2.5 * fr
+        + c * i.color.w * pulse * inner;
 }
 
 // Ink on a sheet (mode 0 writing, 1 a map, 2 a star chart, 3 none); `uv` in metres from
@@ -955,6 +970,15 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
     return vec4<f32>(apply_fog(col, i.world), 1.0);
 }
 
+fn erf(x: f32) -> f32 {
+    return tanh(1.12838 * x + 0.10094 * x * x * x);
+}
+
+// A moonbeam's strength down its length (local y, -0.5 at the window).
+fn beam_fade(y: f32) -> f32 {
+    return smoothstep(-0.5, -0.4, y) * (1.0 - smoothstep(0.0, 0.5, y));
+}
+
 // A moonbeam: the light scattered along the eye's path through a soft round shaft
 // (local y runs down the beam from the window), so it reads from outside and from
 // within; dust drifts in it and motes glint.
@@ -965,45 +989,69 @@ fn moonbeam(i: VOut, front: bool) -> vec4<f32> {
     if (inside == front) {
         return vec4<f32>(0.0);
     }
+    // The eye sees along this ray as far as the opaque scene: `seen` times as far as this
+    // fragment. View depth is p23 / (z + p22) from the projection's third row; p22 is
+    // recovered from view_proj, whose fourth row is the view's (unit) depth axis.
+    let r2 = vec3<f32>(g.view_proj[0][2], g.view_proj[1][2], g.view_proj[2][2]);
+    let r3 = vec3<f32>(g.view_proj[0][3], g.view_proj[1][3], g.view_proj[2][3]);
+    let p22 = -length(r2) / length(r3);
+    let seen = (i.clip.z + p22) / (textureLoad(scene_depth, vec2<i32>(i.clip.xy), 0) + p22);
+    // Drawn without a depth test (`fs_beam`): from outside, nothing if the near side is
+    // hidden.
+    if (!inside && seen < 1.0) {
+        return vec4<f32>(0.0);
+    }
+    // The eye's ray in box coordinates is cam + ray * u, reaching this fragment at u = 1.
+    let ray = i.local - cam;
     var a = i.local;
-    var b = i.local;
+    var u1 = 1.0;
     if (inside) {
         a = cam;
     } else {
-        let d = i.local - cam;
-        let safe = select(d, vec3<f32>(1e-6), abs(d) < vec3<f32>(1e-6));
+        let safe = select(ray, vec3<f32>(1e-6), abs(ray) < vec3<f32>(1e-6));
         let tt = (sign(safe) * 0.5 - i.local) / safe;
-        b = i.local + d * max(min(tt.x, min(tt.y, tt.z)), 0.0);
+        u1 = 1.0 + max(min(tt.x, min(tt.y, tt.z)), 0.0);
     }
+    let b = cam + ray * min(u1, seen);
     // Across the beam the light falls off as a Gaussian of the distance from its axis,
     // so its integral along the ray has a closed form: with x = distance / sigma,
-    // x^2 = A t^2 + 2 B t + C for t from 0 (a) to 1 (b).
+    // x^2 = qa t^2 + 2 qb t + qc for t from 0 (a) to 1 (b).
     let d = b - a;
     let k = 4.0 / (0.45 * 0.45);
+    // Where something stands in the beam, a pool of moonlight on it; only below the eye,
+    // as the light falls downward (and a ceiling poking into the beam of the room
+    // above is not lit).
+    var pool = 0.0;
+    if (seen < u1 && (i.centre + qrot(i.rot, b * i.scale)).y < g.cam_pos.y) {
+        pool = exp(-k * dot(b.xz, b.xz)) * beam_fade(b.y);
+    }
     let qa = k * dot(d.xz, d.xz);
     let qb = k * dot(a.xz, d.xz);
     let qc = k * dot(a.xz, a.xz);
     var through = exp(-qc);
     var tc = 0.5;
+    // How much of the segment the Gaussian spans: all of it when the ray runs down the
+    // beam, where the nearest point is ill-defined.
+    var spread = 1.0;
     if (qa > 1e-4) {
         let sa = sqrt(qa);
         let t0 = -qb / qa;
-        // erf(x) ~ tanh(1.2 x); sqrt(pi) / 2 = 0.886.
-        let span = tanh(1.2025 * sa * (1.0 - t0)) + tanh(1.2025 * sa * t0);
-        through = exp(-max(qc + qb * t0, 0.0)) * 0.886 / sa * span;
+        // sqrt(pi) / 2 = 0.886.
+        through = exp(-max(qc + qb * t0, 0.0)) * 0.886 / sa * (erf(sa * (1.0 - t0)) + erf(sa * t0));
         tc = clamp(t0, 0.0, 1.0);
+        spread = clamp(1.5 / sa, 0.0, 1.0);
     }
-    // Faded in from the window and out toward the floor, judged where the ray passes
-    // nearest the axis.
-    let along = a.y + d.y * tc + 0.5;
-    let dens = through * smoothstep(0.0, 0.1, along) * (1.0 - smoothstep(0.5, 1.0, along));
+    // Faded in from the window and out toward the floor: judged where the ray passes
+    // nearest the axis, or along its whole length when it runs down the beam.
+    let near = beam_fade(a.y + d.y * tc);
+    let whole = (beam_fade(a.y + d.y * 0.17) + beam_fade(a.y + d.y * 0.5) + beam_fade(a.y + d.y * 0.83)) / 3.0;
+    let dens = through * mix(near, whole, spread);
     let len = length(d * i.scale);
     let t = g.cam_pos.w;
     // Brighter looking up the beam toward the window.
     let axis = qrot(i.rot, vec3<f32>(0.0, 1.0, 0.0));
-    let ray = normalize(i.world - g.cam_pos.xyz);
-    let fwd = 1.0 + 1.2 * pow(max(dot(ray, -axis), 0.0), 6.0);
-    let mid = i.centre + qrot(i.rot, (a + d * tc) * i.scale);
+    let fwd = 1.0 + 1.2 * pow(max(dot(normalize(i.world - g.cam_pos.xyz), -axis), 0.0), 6.0);
+    let mid = i.centre + qrot(i.rot, (a + d * mix(tc, 0.5, spread)) * i.scale);
     let dust = 0.65 + 0.7 * vnoise(mid * 1.6 + vec3<f32>(t * 0.02, -t * 0.04, 0.0));
     // Motes: points in the air near the beam's skin, twinkling as they turn.
     let mp = i.world * 9.0 + vec3<f32>(0.0, -t * 0.06, 0.0);
@@ -1012,8 +1060,15 @@ fn moonbeam(i: VOut, front: bool) -> vec4<f32> {
     let pt = cell + 0.5 + (vec3<f32>(fract(h * 13.7), fract(h * 71.3), fract(h * 37.1)) - 0.5) * 0.6;
     let mote = step(0.9, h) * (1.0 - smoothstep(0.0, 0.08, length(mp - pt))) * (0.5 + 0.5 * sin(t * 2.0 + h * 60.0));
     let across_mid = 1.0 - smoothstep(0.15, 1.0, length((a + b).xz));
-    let glow = i.color.w * (0.9 * dens * len * fwd * dust + 30.0 * mote * across_mid);
+    let glow = i.color.w * (0.9 * dens * len * fwd * dust + 30.0 * mote * across_mid + 4.0 * pool);
     return vec4<f32>(i.color.rgb * glow, 0.0);
+}
+
+// Moonbeams, drawn with no depth test: `moonbeam` hides and clips itself against the
+// scene's depth.
+@fragment
+fn fs_beam(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return moonbeam(i, front);
 }
 
 // Translucent things: slot ghosts, the veil, moonbeams. Premultiplied alpha.
