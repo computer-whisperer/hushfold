@@ -5,6 +5,7 @@
 //! walls, with maps hung over them.
 
 use super::*;
+use crate::gfx::Vertex;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 /// Where the dividers between the side alcoves stand (the middle of each one's
@@ -223,7 +224,8 @@ fn window(lib: &mut Library, at: Spot, w: f32) {
 }
 
 /// A framed map `size` wide and high, its middle `y` up the wall at `at` (on the
-/// wall's face, facing into the room): a coast or two, lines of latitude, a route.
+/// wall's face, facing into the room): a sheet inked as a map, and drawn boldly over
+/// it (to read from across the room) a coast or two, lines of latitude, a route.
 fn wall_map(lib: &mut Library, at: Spot, (w, h): (f32, f32), y: f32, seed: u64) {
     let frame = rgba([0.1, 0.05, 0.022], 1.0);
     let bar = 0.07;
@@ -245,14 +247,16 @@ fn wall_map(lib: &mut Library, at: Spot, (w, h): (f32, f32), y: f32, seed: u64) 
             frame,
         );
     }
-    at.part(
-        lib,
-        Vec3::new(0.0, y, 0.025),
-        Vec3::new(w, h, 0.02),
-        Quat::IDENTITY,
+    let mut sheet = Inst::new(
+        at.at + at.q * Vec3::new(0.0, y, 0.029),
+        at.q,
+        Vec3::new(w, h, 0.012),
         kind::PARCHMENT,
         [0.78, 0.68, 0.48, 1.0],
+        0,
     );
+    sheet.param = 1;
+    lib.decor(sheet);
     let z = 0.037;
     let ink = rgba(SEPIA, 1.0);
     for k in 1..4 {
@@ -391,7 +395,8 @@ fn rack(lib: &mut Library, f: &RoomFrame) {
         [0.6, 0.48, 0.33],
     ];
     let mut r = StdRng::seed_from_u64(0x5261_636b);
-    // Each pigeonhole a little pyramid of rolls lying end on.
+    let roll = lib.shape(Mesh::cylinder(12));
+    // Each pigeonhole a little pyramid of rolls lying end on, their turns showing.
     for col in 0..cols {
         for row in 0..rows {
             let x0 = a0 + 0.05 + col as f32 * cw + 0.03;
@@ -404,13 +409,12 @@ fn rack(lib: &mut Library, f: &RoomFrame) {
                     let y = y0 + tier as f32 * d * 0.86;
                     let len = r.gen_range(0.36..0.47f32);
                     let c = f.at(s * x, o1 - 0.02 - len * 0.5, y + d * 0.5);
-                    lib.decor(Inst::new(
+                    let end_on = Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_y(r.gen_range(-1.0..1.0));
+                    lib.decor(roll.sized(Vec3::new(d * 0.95, len, d * 0.95)).inst(
                         c,
-                        f.turn() * Quat::from_rotation_z(FRAC_PI_4 + r.gen_range(-0.2..0.2)),
-                        Vec3::new(d * 0.72, d * 0.72, len),
+                        f.turn() * end_on,
                         kind::PARCHMENT,
                         rgba(tints[r.gen_range(0..tints.len())], 1.0),
-                        0,
                     ));
                 }
             }
@@ -495,193 +499,276 @@ fn press(lib: &mut Library, f: &RoomFrame) {
         kind::PARCHMENT,
         [0.8, 0.72, 0.52, 1.0],
     );
-    for i in 0..3 {
-        let c = f.at(
-            s * (8.0 + i as f32 * 0.03),
-            o0 + 0.12 + i as f32 * 0.1,
-            top + 0.045 + (i == 2) as u8 as f32 * 0.08,
-        );
-        lib.decor(Inst::new(
+    // Two side by side, the third in the groove on top of them.
+    let roll = lib.shape(Mesh::cylinder(16));
+    for (i, (o, y)) in [(0.12f32, 0.04f32), (0.22, 0.04), (0.17, 0.102)]
+        .into_iter()
+        .enumerate()
+    {
+        let c = f.at(s * (8.0 + i as f32 * 0.03), o0 + o, top + y);
+        lib.decor(roll.sized(Vec3::new(0.08, 0.95 - i as f32 * 0.1, 0.08)).inst(
             c,
-            f.turn() * Quat::from_rotation_y(FRAC_PI_2) * Quat::from_rotation_z(FRAC_PI_4),
-            Vec3::new(0.075, 0.075, 0.95 - i as f32 * 0.1),
+            f.turn() * Quat::from_rotation_z(FRAC_PI_2) * Quat::from_rotation_y(i as f32),
             kind::PARCHMENT,
             [0.66, 0.56, 0.4, 1.0],
-            0,
         ));
     }
 }
 
-/// Brass lines set in the floor round the globe: two rings and the eight points of
-/// the winds.
+/// A compass rose inlaid in the floor round the globe: two brass rings, and the eight
+/// points of the winds, each split down its middle into a bright half and a dark.
 fn compass_rose(lib: &mut Library, f: &RoomFrame) {
     let spot = Spot::new(f, GLOBE.0, GLOBE.1, 0.0);
-    for (r, n, y) in [(2.75f32, 28, 0.004f32), (2.5, 26, 0.005)] {
-        let len = TAU * r / n as f32 + 0.02;
-        for k in 0..n {
-            let t = k as f32 / n as f32 * TAU;
-            spot.part(
-                lib,
-                Vec3::new(libm::cosf(t) * r, y * 0.5, libm::sinf(t) * r),
-                Vec3::new(0.05, y, len),
-                Quat::from_rotation_y(-t),
-                kind::METAL,
-                BRASS_RGBA,
-            );
-        }
+    let flat = Quat::from_rotation_x(FRAC_PI_2);
+    for (r, h) in [(2.75f32, 0.004f32), (2.5, 0.005)] {
+        let ring = lib.shape(Mesh::ring(&circle(r + 0.025, 96), &circle(r - 0.025, 96), h));
+        lib.decor(ring.inst(spot.at + Vec3::Y * (h * 0.5), spot.q * flat, kind::METAL, BRASS_RGBA));
     }
+    let (mut bright, mut dark) = (Mesh::default(), Mesh::default());
     for k in 0..8 {
         let t = k as f32 / 8.0 * TAU;
-        let main = k % 2 == 0;
-        let (len, half) = if main { (3.3f32, 0.34f32) } else { (2.3, 0.22) };
-        let dir = Vec2::new(libm::cosf(t), libm::sinf(t));
-        let side = Vec2::new(-dir.y, dir.x);
-        let tip = dir * len;
-        let foot = dir * 0.95;
-        for e in [-1.0f32, 1.0] {
-            let base = foot + side * half * e;
-            line_on_floor(lib, &spot, base, tip, 0.035, 0.007);
-        }
-        if main {
-            line_on_floor(lib, &spot, foot, tip, 0.02, 0.006);
+        // The cardinal points stand a hair above the others where they cross.
+        let (len, half, h) = if k % 2 == 0 {
+            (3.3f32, 0.34f32, 0.006f32)
+        } else {
+            (2.3, 0.22, 0.004)
+        };
+        let dir = Vec2::from_angle(t);
+        let waist = dir * (len * 0.2);
+        for (e, half_point) in [(1.0f32, &mut bright), (-1.0, &mut dark)] {
+            let outline = [Vec2::ZERO, dir * len, waist + dir.perp() * half * e];
+            half_point.add(&Mesh::prism(&outline, h), Vec3::Y * (h * 0.5), flat, Vec3::ONE);
         }
     }
+    let bright = lib.shape(bright);
+    lib.decor(bright.at(spot.at, spot.q, kind::METAL, BRASS_RGBA));
+    let dark = lib.shape(dark);
+    lib.decor(dark.at(spot.at, spot.q, kind::METAL, [0.3, 0.2, 0.08, 1.0]));
 }
 
-fn line_on_floor(lib: &mut Library, spot: &Spot, p: Vec2, q: Vec2, w: f32, h: f32) {
-    let d = q - p;
-    let m = (p + q) * 0.5;
-    spot.part(
-        lib,
-        Vec3::new(m.x, h * 0.5, m.y),
-        Vec3::new(d.length(), h, w),
-        Quat::from_rotation_y(-libm::atan2f(d.y, d.x)),
-        kind::METAL,
-        BRASS_RGBA,
-    );
-}
-
-/// The great globe on its stand over the compass rose: seas that glow faintly from
-/// within, a few lands, a brass horizon and meridian.
+/// The great globe on its stand over the compass rose, turning slowly on its tilted
+/// axis in the meridian ring: seas that glow faintly from within, lands and ice caps
+/// standing a little proud of them, a brass horizon on four curved legs.
 fn globe(lib: &mut Library, f: &RoomFrame) {
     let spot = Spot::new(f, GLOBE.0, GLOBE.1, 0.0);
     let (gx, go) = GLOBE;
     guard(lib, f, (gx - 1.05, gx + 1.05), (go - 1.05, go + 1.05), 2.45);
     let dark = rgba([0.09, 0.045, 0.02], 1.0);
     let wood = rgba(WALNUT, 1.0);
-    spot.part(
-        lib,
-        Vec3::Y * 0.05,
-        Vec3::new(1.3, 0.1, 1.3),
-        Quat::IDENTITY,
-        kind::WOOD,
-        dark,
-    );
-    spot.part(
-        lib,
-        Vec3::Y * 0.14,
-        Vec3::new(0.9, 0.08, 0.9),
-        Quat::IDENTITY,
-        kind::WOOD,
-        wood,
-    );
-    spot.part(
-        lib,
-        Vec3::Y * 0.4,
-        Vec3::new(0.16, 0.45, 0.16),
-        Quat::IDENTITY,
-        kind::WOOD,
-        wood,
-    );
+    let foot = [
+        (0.0, 0.0),
+        (0.64, 0.0),
+        (0.64, 0.05),
+        (0.6, 0.08),
+        (0.5, 0.1),
+        (0.46, 0.1),
+        (0.46, 0.14),
+        (0.42, 0.18),
+        (0.0, 0.18),
+    ];
+    let foot = lib.shape(Mesh::lathe(&foot.map(Vec2::from), 64));
+    lib.decor(foot.at(spot.at, spot.q, kind::WOOD, dark));
+    let column = [
+        (0.0, 0.0),
+        (0.1, 0.0),
+        (0.1, 0.04),
+        (0.07, 0.06),
+        (0.06, 0.12),
+        (0.085, 0.2),
+        (0.07, 0.3),
+        (0.045, 0.36),
+        (0.06, 0.4),
+        (0.06, 0.44),
+        (0.0, 0.44),
+    ];
+    let column = lib.shape(Mesh::lathe(&column.map(Vec2::from), 32));
+    lib.decor(column.at(spot.at + Vec3::Y * 0.18, spot.q, kind::WOOD, wood));
     let hc = 1.5;
     let r = 0.82;
-    // Legs from the plinth out to the horizon ring.
-    for (x, z) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-        let foot = spot.at + spot.q * Vec3::new(x * 0.36, 0.18, z * 0.36);
-        let head = spot.at + spot.q * Vec3::new(x * 0.66, hc - 0.03, z * 0.66);
-        lib.beam(foot, head, 0.07, 0.07, WALNUT);
+    // Legs from the foot out to the horizon, bowed outward at the knee.
+    let leg: Vec<Vec3> = (0..=12)
+        .map(|k| {
+            let s = k as f32 / 12.0;
+            let out = 0.51 + 0.42 * s + 0.07 * libm::sinf(s * PI);
+            Vec3::new(out, 0.18 + (hc - 0.21) * s, 0.0)
+        })
+        .collect();
+    let leg = lib.shape(Mesh::sweep(&leg, &[0.045, 0.03, 0.035], &circle(1.0, 10), true));
+    for k in 0..4 {
+        let turn = Quat::from_rotation_y(-(FRAC_PI_4 + k as f32 * FRAC_PI_2));
+        lib.decor(leg.at(spot.at, spot.q * turn, kind::WOOD, wood));
     }
-    // The horizon ring, and the meridian ring standing round the tilted axis.
-    let n = 20;
-    for k in 0..n {
-        let t = k as f32 / n as f32 * TAU;
-        let rr = 0.98;
-        spot.part(
-            lib,
-            Vec3::new(libm::cosf(t) * rr, hc, libm::sinf(t) * rr),
-            Vec3::new(0.13, 0.035, TAU * rr / n as f32 + 0.01),
-            Quat::from_rotation_y(-t),
+    let centre = spot.at + Vec3::Y * hc;
+    let horizon = lib.shape(Mesh::ring(&circle(1.045, 64), &circle(0.915, 64), 0.035));
+    let flat = Quat::from_rotation_x(FRAC_PI_2);
+    lib.decor(horizon.inst(centre, spot.q * flat, kind::METAL, BRASS_RGBA));
+    // The meridian stands round the axis, tilted as the earth's is.
+    let tilt = spot.q * Quat::from_rotation_z(0.41);
+    let meridian = lib.shape(Mesh::ring(&circle(0.975, 64), &circle(0.925, 64), 0.06));
+    lib.decor(meridian.inst(centre, tilt, kind::METAL, BRASS_RGBA));
+    let rod = lib.shape(Mesh::cylinder(12));
+    let rod_between = |p: Vec3, q: Vec3, d: f32| {
+        let v = q - p;
+        rod.sized(Vec3::new(d, v.length(), d)).inst(
+            (p + q) * 0.5,
+            Quat::from_rotation_arc(Vec3::Y, v.normalize()),
             kind::METAL,
             BRASS_RGBA,
-        );
-    }
-    let tilt = Quat::from_rotation_z(0.41);
-    let centre = Vec3::Y * hc;
-    let n = 22;
-    for k in 0..n {
-        let t = k as f32 / n as f32 * TAU;
-        let rr = r + 0.13;
-        spot.part(
-            lib,
-            centre + tilt * Vec3::new(libm::cosf(t) * rr, libm::sinf(t) * rr, 0.0),
-            Vec3::new(0.045, TAU * rr / n as f32 + 0.01, 0.06),
-            tilt * Quat::from_rotation_z(t),
-            kind::METAL,
-            BRASS_RGBA,
-        );
-    }
-    let foot = tilt * Vec3::new(0.0, -(r + 0.13), 0.0) + centre;
-    lib.beam(
-        spot.at + spot.q * (Vec3::Y * 0.62),
-        spot.at + spot.q * foot,
+        )
+    };
+    lib.decor(rod_between(
+        spot.at + Vec3::Y * 0.6,
+        centre + tilt * Vec3::new(0.0, -0.96, 0.0),
         0.05,
-        0.05,
-        BRASS,
+    ));
+    for p in [-1.0f32, 1.0] {
+        lib.decor(rod_between(
+            centre + tilt * (Vec3::Y * p * (r - 0.02)),
+            centre + tilt * (Vec3::Y * p * 0.95),
+            0.045,
+        ));
+    }
+    // The ball and what stands on it, turning once in two minutes.
+    let axis = tilt * Vec3::Y;
+    let m = lib.mover(
+        centre,
+        Motion::Spin {
+            axis,
+            rate: TAU / 120.0,
+        },
+        0.0,
+        None,
     );
-    // The ball: slices along its axis, each six turned squares whose corners round it
-    // out. Here and there one square is land, showing where its corners stand proud
-    // (a hair thinner, so its top stays under the sea's); the slices at the poles are
-    // ice.
-    let sea = [0.03, 0.13, 0.2, 0.6];
-    let land = [0.34, 0.31, 0.17, 0.15];
-    let ice = [0.62, 0.66, 0.66, 0.2];
-    // Which of each slice's squares are land, from pole to pole.
-    let lands: [u8; 12] = [
-        0, 0b000100, 0b100100, 0b000110, 0b010010, 0b110000, 0b011000, 0b001001, 0b000011, 0b000010, 0b100000, 0,
+    let ball = lib.shape(Mesh::sphere(64));
+    lib.moving(
+        m,
+        ball.sized(Vec3::splat(2.0 * r))
+            .inst(centre, tilt, kind::CRYSTAL, [0.015, 0.07, 0.13, 0.45]),
+    );
+    let (lands, ice) = lands_of_the_globe(r);
+    let lands = lib.shape(lands);
+    lib.moving(m, lands.at(centre, tilt, kind::CRYSTAL, [0.34, 0.31, 0.17, 0.15]));
+    let ice = lib.shape(ice);
+    lib.moving(m, ice.at(centre, tilt, kind::CRYSTAL, [0.62, 0.66, 0.66, 0.2]));
+}
+
+/// The globe's lands and its ice caps, on a ball of radius `r` about the origin with
+/// its axis up y: patches of its surface with ragged coasts, standing a few
+/// millimetres proud of the sea (each land a hair higher than the last, so none fight
+/// where they meet).
+fn lands_of_the_globe(r: f32) -> (Mesh, Mesh) {
+    // Latitude, longitude, and how far a land reaches (radians).
+    const LANDS: [(f32, f32, f32); 7] = [
+        (0.75, 0.2, 0.42),
+        (0.05, 0.75, 0.36),
+        (-0.55, 0.45, 0.28),
+        (0.55, 2.3, 0.55),
+        (-0.35, 2.95, 0.3),
+        (0.3, 4.3, 0.34),
+        (-0.6, 5.1, 0.3),
     ];
-    let slices = lands.len();
-    let t = 2.0 * r / slices as f32;
-    for (j, bits) in lands.into_iter().enumerate() {
-        let h = -r + (j as f32 + 0.5) * t;
-        let rad = (r * r - h * h).max(0.0).sqrt() * 1.03;
-        let polar = j == 0 || j == slices - 1;
-        for k in 0..6 {
-            let is_land = bits & (1 << k) != 0;
-            let (color, thick) = match (polar, is_land) {
-                (true, _) => (ice, t + 0.002),
-                (false, true) => (land, t - 0.004),
-                (false, false) => (sea, t + 0.002),
-            };
-            spot.part(
-                lib,
-                centre + tilt * Vec3::new(0.0, h, 0.0),
-                Vec3::new(rad * 1.457, thick, rad * 1.457),
-                tilt * Quat::from_rotation_y(k as f32 * PI / 12.0),
-                kind::CRYSTAL,
-                color,
-            );
+    let (mut lands, mut ice) = (Mesh::default(), Mesh::default());
+    for (k, &(lat, lon, size)) in LANDS.iter().enumerate() {
+        let c = Vec3::new(
+            libm::cosf(lat) * libm::cosf(lon),
+            libm::sinf(lat),
+            libm::cosf(lat) * libm::sinf(lon),
+        );
+        let coast = ragged(0x476c_6f62 ^ k as u64, size, 0.3);
+        patch(&mut lands, r, 0.005 + 0.001 * k as f32, c, coast);
+    }
+    for (k, pole) in [Vec3::Y, -Vec3::Y].into_iter().enumerate() {
+        let coast = ragged(0x4963_6563 ^ k as u64, 0.3, 0.2);
+        patch(&mut ice, r, 0.004, pole, coast);
+    }
+    (lands, ice)
+}
+
+/// A ragged outline round a point: how far it reaches at each bearing, about `size`
+/// and varying by up to about `rough` of it, from seed `seed`.
+fn ragged(seed: u64, size: f32, rough: f32) -> impl Fn(f32) -> f32 {
+    let mut r = StdRng::seed_from_u64(seed);
+    let waves = [(2.0f32, 1.0f32), (3.0, 0.7), (5.0, 0.4), (8.0, 0.2)]
+        .map(|(n, amp)| (n, amp * r.gen_range(0.5..1.0f32), r.gen_range(0.0..TAU)));
+    move |b: f32| {
+        let w: f32 = waves.iter().map(|&(n, amp, ph)| amp * libm::sinf(n * b + ph)).sum();
+        size * (1.0 + rough * w / 1.5)
+    }
+}
+
+/// A patch of a ball of radius `r` round the direction `centre`, reaching `reach(bearing)`
+/// radians from it, standing `rise` proud of the ball, with a little cliff round its
+/// edge; added to `m`.
+fn patch(m: &mut Mesh, r: f32, rise: f32, centre: Vec3, reach: impl Fn(f32) -> f32) {
+    let (spokes, rings) = (64usize, 6usize);
+    let e1 = centre.any_orthonormal_vector();
+    let e2 = centre.cross(e1);
+    let dir = |b: f32, d: f32| {
+        let t = e1 * libm::cosf(b) + e2 * libm::sinf(b);
+        centre * libm::cosf(d) + t * libm::sinf(d)
+    };
+    let top = r + rise;
+    let at = |m: &mut Mesh, p: Vec3, n: Vec3| {
+        m.verts.push(Vertex {
+            pos: p.into(),
+            normal: n.into(),
+        });
+        m.verts.len() as u32 - 1
+    };
+    let hub = at(m, centre * top, centre);
+    let mut rows = Vec::new();
+    for j in 1..=rings {
+        let row: Vec<u32> = (0..spokes)
+            .map(|i| {
+                let b = i as f32 / spokes as f32 * TAU;
+                let n = dir(b, reach(b) * j as f32 / rings as f32);
+                at(m, n * top, n)
+            })
+            .collect();
+        rows.push(row);
+    }
+    for i in 0..spokes {
+        let i1 = (i + 1) % spokes;
+        facet(m, [hub, rows[0][i], rows[0][i1]]);
+        for j in 1..rings {
+            let (a, b) = (&rows[j - 1], &rows[j]);
+            facet(m, [a[i], b[i], b[i1]]);
+            facet(m, [a[i], b[i1], a[i1]]);
         }
     }
-    for p in [-1.0f32, 1.0] {
-        spot.part(
-            lib,
-            centre + tilt * Vec3::new(0.0, p * (r + 0.07), 0.0),
-            Vec3::new(0.06, 0.16, 0.06),
-            tilt,
-            kind::METAL,
-            BRASS_RGBA,
-        );
+    // The cliff: from the coast down under the sea's surface, facing outward.
+    let coast: Vec<(u32, u32)> = (0..spokes)
+        .map(|i| {
+            let b = i as f32 / spokes as f32 * TAU;
+            let n = dir(b, reach(b));
+            let out = (n * n.dot(centre) - centre).normalize();
+            (at(m, n * top, out), at(m, n * (r - 0.003), out))
+        })
+        .collect();
+    for i in 0..spokes {
+        let ((a, b), (c, d)) = (coast[i], coast[(i + 1) % spokes]);
+        facet(m, [a, b, d]);
+        facet(m, [a, d, c]);
     }
+}
+
+/// A triangle of `m`'s, wound to face the way its corners' normals do.
+fn facet(m: &mut Mesh, [a, b, c]: [u32; 3]) {
+    let p = |i: u32| Vec3::from(m.verts[i as usize].pos);
+    let n = |i: u32| Vec3::from(m.verts[i as usize].normal);
+    let face = (p(b) - p(a)).cross(p(c) - p(a));
+    if face.dot(n(a) + n(b) + n(c)) >= 0.0 {
+        m.idx.extend_from_slice(&[a, b, c]);
+    } else {
+        m.idx.extend_from_slice(&[a, c, b]);
+    }
+}
+
+/// `n` points round a circle of radius `r` in xy, anticlockwise.
+fn circle(r: f32, n: usize) -> Vec<Vec2> {
+    (0..n)
+        .map(|k| Vec2::from_angle(k as f32 / n as f32 * TAU) * r)
+        .collect()
 }
 
 /// The long map table, with a chart spread on it, weights, dividers, rolled charts
@@ -708,18 +795,26 @@ fn table(lib: &mut Library, f: &RoomFrame) {
         kind::WOOD,
         DARK_WOOD,
     );
+    let leg = [
+        (0.0, 0.0),
+        (0.05, 0.0),
+        (0.05, 0.03),
+        (0.036, 0.05),
+        (0.03, 0.12),
+        (0.056, 0.26),
+        (0.05, 0.34),
+        (0.032, 0.42),
+        (0.03, 0.56),
+        (0.046, 0.6),
+        (0.058, 0.64),
+        (0.058, h - 0.22),
+        (0.0, h - 0.22),
+    ];
+    let leg = lib.shape(Mesh::lathe(&leg.map(Vec2::from), 24));
     for x in [-1.0f32, 1.0] {
         for z in [-1.0f32, 1.0] {
             let (a, o) = (ta + x * (hw - 0.2), to + z * (hd - 0.15));
-            slab(
-                lib,
-                f,
-                (a - 0.06, a + 0.06),
-                (o - 0.06, o + 0.06),
-                (0.0, h - 0.22),
-                kind::WOOD,
-                WALNUT,
-            );
+            lib.decor(leg.at(f.at(a, o, 0.0), Quat::IDENTITY, kind::WOOD, rgba(WALNUT, 1.0)));
         }
         let a = ta + x * (hw - 0.2);
         slab(
@@ -746,14 +841,16 @@ fn table(lib: &mut Library, f: &RoomFrame) {
         at: f.at(ta + 0.1, to, h),
         q: f.turn() * Quat::from_rotation_y(0.035),
     };
-    chart.part(
-        lib,
-        Vec3::Y * 0.004,
+    let mut sheet = Inst::new(
+        chart.at + Vec3::Y * 0.004,
+        chart.q,
         Vec3::new(3.7, 0.008, 1.05),
-        Quat::IDENTITY,
         kind::PARCHMENT,
         [0.8, 0.7, 0.5, 1.0],
+        0,
     );
+    sheet.param = 1;
+    lib.decor(sheet);
     let ink = rgba(SEPIA, 1.0);
     let coast = [
         (-1.75, 0.3),
@@ -779,15 +876,24 @@ fn table(lib: &mut Library, f: &RoomFrame) {
         let q = p + (Vec2::new(0.6, 0.27) - Vec2::new(-1.4, -0.25)) * 0.07;
         flat_stroke(lib, &chart, p, q, 0.0098, [0.55, 0.1, 0.06, 1.0]);
     }
+    // Lead weights on its corners.
+    let weight = [
+        (0.0, 0.0),
+        (0.045, 0.0),
+        (0.045, 0.045),
+        (0.035, 0.055),
+        (0.012, 0.06),
+        (0.012, 0.075),
+        (0.0, 0.08),
+    ];
+    let weight = lib.shape(Mesh::lathe(&weight.map(Vec2::from), 16));
     for (x, z) in [(-1.8f32, -0.47f32), (1.8, -0.47), (-1.8, 0.47), (1.8, 0.47)] {
-        chart.part(
-            lib,
-            Vec3::new(x, 0.035, z),
-            Vec3::new(0.09, 0.06, 0.09),
-            Quat::IDENTITY,
+        lib.decor(weight.at(
+            chart.at + chart.q * Vec3::new(x, 0.008, z),
+            chart.q,
             kind::METAL,
             [0.35, 0.33, 0.3, 1.0],
-        );
+        ));
     }
     // Dividers lying open on the chart.
     for e in [-1.0f32, 1.0] {
@@ -801,52 +907,43 @@ fn table(lib: &mut Library, f: &RoomFrame) {
         );
     }
     // Rolled charts at the far end.
+    let roll = lib.shape(Mesh::cylinder(16));
     for i in 0..2 {
         let c = f.at(ta - hw + 0.45 + i as f32 * 0.11, to, h + 0.04);
-        lib.decor(Inst::new(
+        lib.decor(roll.sized(Vec3::new(0.08, 0.9, 0.08)).inst(
             c,
-            f.turn() * Quat::from_rotation_z(FRAC_PI_4 + i as f32 * 0.3),
-            Vec3::new(0.075, 0.075, 0.9),
+            f.turn() * Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_y(i as f32 * 2.0),
             kind::PARCHMENT,
             [0.74, 0.62, 0.42, 1.0],
-            0,
         ));
     }
-    // A brass lamp at the near end.
+    // A brass oil lamp at the near end, its flame in a glass chimney.
     let lamp = Spot::new(f, ta + hw - 0.35, to - 0.2, 0.0);
-    let base = Vec3::Y * h;
-    lamp.part(
-        lib,
-        base + Vec3::Y * 0.015,
-        Vec3::new(0.16, 0.03, 0.16),
+    let base = lamp.at + Vec3::Y * h;
+    let font = [
+        (0.0, 0.0),
+        (0.08, 0.0),
+        (0.08, 0.012),
+        (0.05, 0.03),
+        (0.035, 0.07),
+        (0.06, 0.1),
+        (0.065, 0.13),
+        (0.05, 0.155),
+        (0.038, 0.16),
+        (0.038, 0.175),
+        (0.0, 0.175),
+    ];
+    let font = lib.shape(Mesh::lathe(&font.map(Vec2::from), 32));
+    lib.decor(font.at(base, Quat::IDENTITY, kind::METAL, BRASS_RGBA));
+    let chimney = [(0.03, 0.0), (0.05, 0.04), (0.048, 0.09), (0.026, 0.15), (0.025, 0.22)];
+    let chimney = lib.shape(Mesh::lathe(&chimney.map(Vec2::from), 32).two_sided());
+    lib.translucent(chimney.at(
+        base + Vec3::Y * 0.172,
         Quat::IDENTITY,
-        kind::METAL,
-        BRASS_RGBA,
-    );
-    lamp.part(
-        lib,
-        base + Vec3::Y * 0.09,
-        Vec3::new(0.09, 0.12, 0.09),
-        Quat::IDENTITY,
-        kind::METAL,
-        BRASS_RGBA,
-    );
-    lamp.part(
-        lib,
-        base + Vec3::Y * 0.2,
-        Vec3::new(0.035, 0.07, 0.035),
-        Quat::IDENTITY,
-        kind::EMISSIVE,
-        [1.0, 0.6, 0.22, 10.0],
-    );
-    lamp.part(
-        lib,
-        base + Vec3::Y * 0.3,
-        Vec3::new(0.11, 0.015, 0.11),
-        Quat::IDENTITY,
-        kind::METAL,
-        BRASS_RGBA,
-    );
+        kind::CLEAR,
+        [0.95, 0.92, 0.85, 0.08],
+    ));
+    flame(lib, base + Vec3::Y * 0.18, 0.06);
     lib.light(
         lamp.at + Vec3::Y * (h + 0.45),
         5.5,
@@ -871,91 +968,183 @@ fn flat_stroke(lib: &mut Library, chart: &Spot, p: Vec2, q: Vec2, y: f32, ink: [
 }
 
 /// A model ship sailing the air over the map table, heeled a little in a wind no one
-/// else feels.
+/// else feels, rising and falling and rocking as if on a slow swell, its pennant
+/// streaming: a round hull, two masts with their yards and bellied sails, a bowsprit
+/// and stays, and a lantern at the stern.
 fn ship(lib: &mut Library, f: &RoomFrame) {
     let s = Spot {
         at: f.at(TABLE.0 + 0.7, TABLE.1 - 0.1, 2.55),
         q: f.turn() * Quat::from_rotation_y(0.5) * Quat::from_rotation_x(0.1),
     };
-    let hull = rgba([0.22, 0.11, 0.05], 1.0);
-    let sail = [0.88, 0.84, 0.74, 1.0];
-    s.part(
-        lib,
-        Vec3::ZERO,
-        Vec3::new(0.9, 0.16, 0.24),
-        Quat::IDENTITY,
-        kind::WOOD,
-        hull,
-    );
-    s.part(
-        lib,
-        Vec3::new(0.45, 0.0, 0.0),
-        Vec3::new(0.17, 0.16, 0.17),
-        Quat::from_rotation_y(FRAC_PI_4),
-        kind::WOOD,
-        hull,
-    );
-    s.part(
-        lib,
-        Vec3::new(-0.36, 0.13, 0.0),
-        Vec3::new(0.22, 0.1, 0.25),
-        Quat::IDENTITY,
-        kind::WOOD,
-        hull,
-    );
-    s.part(
-        lib,
-        Vec3::new(0.0, -0.11, 0.0),
-        Vec3::new(0.8, 0.06, 0.05),
-        Quat::IDENTITY,
-        kind::WOOD,
-        rgba(DARK_WOOD, 1.0),
-    );
-    s.part(
-        lib,
-        Vec3::new(0.62, 0.12, 0.0),
-        Vec3::new(0.4, 0.02, 0.02),
-        Quat::from_rotation_z(0.35),
-        kind::WOOD,
-        hull,
-    );
-    for (x, tall) in [(0.18f32, 0.75f32), (-0.15, 0.62)] {
-        s.part(
-            lib,
-            Vec3::new(x, 0.08 + tall * 0.5, 0.0),
-            Vec3::new(0.025, tall, 0.025),
-            Quat::IDENTITY,
+    // In the ship's frame: x toward the bow, y up, z abeam.
+    let p = |v: Vec3| s.at + s.q * v;
+    let hull_rgba = rgba([0.22, 0.11, 0.05], 1.0);
+    let canvas = [0.88, 0.84, 0.74, 1.0];
+    let rope = [0.2, 0.15, 0.09, 1.0];
+    let swell = Motion::Bob {
+        amp: 0.05,
+        period: 8.0,
+        rock: 0.06,
+    };
+    let m = lib.mover(s.at, swell, 0.0, None);
+    let (stern, bow) = (-0.42f32, 0.44f32);
+    let deck = |x: f32| {
+        let t = (x - stern) / (bow - stern) * 2.0 - 1.0;
+        0.07 + 0.05 * t * t
+    };
+    let body = hull(lib, stern, bow, deck);
+    lib.moving(m, body.at(s.at, s.q, kind::WOOD, hull_rgba));
+    lib.moving(
+        m,
+        Inst::new(
+            p(Vec3::new(-0.32, deck(-0.32) + 0.04, 0.0)),
+            s.q,
+            Vec3::new(0.18, 0.08, 0.19),
             kind::WOOD,
-            hull,
-        );
+            hull_rgba,
+            0,
+        ),
+    );
+    let spar = lib.shape(Mesh::cylinder(10));
+    let spar_between = |a: Vec3, b: Vec3, d: f32, color: [f32; 4]| {
+        let v = b - a;
+        spar.sized(Vec3::new(d, v.length(), d)).inst(
+            p((a + b) * 0.5),
+            s.q * Quat::from_rotation_arc(Vec3::Y, v.normalize()),
+            kind::WOOD,
+            color,
+        )
+    };
+    let bowsprit = Vec3::new(0.8, 0.24, 0.0);
+    lib.moving(
+        m,
+        spar_between(Vec3::new(0.36, deck(0.36), 0.0), bowsprit, 0.018, hull_rgba),
+    );
+    let mut tops = Vec::new();
+    for (x, tall) in [(0.18f32, 0.75f32), (-0.15, 0.62)] {
+        let foot = Vec3::new(x, deck(x), 0.0);
+        let top = foot + Vec3::Y * tall;
+        tops.push(top);
+        lib.moving(m, spar_between(foot - Vec3::Y * 0.02, top, 0.022, hull_rgba));
         for (y, w) in [(0.32f32, 0.36f32), (0.58, 0.28)] {
             if y > tall {
                 continue;
             }
-            s.part(
-                lib,
-                Vec3::new(x + 0.02, 0.08 + y * tall / 0.75, 0.0),
-                Vec3::new(0.012, 0.2, w),
-                Quat::from_rotation_y(0.25),
-                kind::CLOTH,
-                sail,
+            let yard = foot + Vec3::Y * (0.1 + y * tall / 0.75);
+            // Braced round a little, as the sails are.
+            let brace = Quat::from_rotation_y(0.25);
+            let half = brace * Vec3::new(0.0, 0.0, w * 0.5 + 0.02);
+            lib.moving(m, spar_between(yard - half, yard + half, 0.012, hull_rgba));
+            let sail = lib.shape(bellied(w, 0.2));
+            lib.moving(
+                m,
+                sail.at(
+                    p(yard + Vec3::new(0.012, -0.1, 0.0)),
+                    s.q * brace * Quat::from_mat3(&Mat3::from_cols(Vec3::Z, Vec3::X, Vec3::Y)),
+                    kind::CLOTH,
+                    canvas,
+                ),
             );
         }
     }
-    s.part(
-        lib,
-        Vec3::new(0.24, 0.86, 0.0),
-        Vec3::new(0.14, 0.035, 0.008),
-        Quat::IDENTITY,
-        kind::CLOTH,
-        [0.6, 0.08, 0.06, 1.0],
+    // Stays from the mastheads to the bowsprit and the stern.
+    for (a, b) in [
+        (tops[0], bowsprit),
+        (tops[1], tops[0] - Vec3::Y * 0.2),
+        (tops[1], Vec3::new(stern + 0.02, deck(stern) + 0.02, 0.0)),
+    ] {
+        lib.moving(m, spar_between(a, b, 0.006, rope));
+    }
+    let lantern = lib.shape(Mesh::sphere(12));
+    lib.moving(
+        m,
+        lantern.sized(Vec3::new(0.04, 0.05, 0.04)).inst(
+            p(Vec3::new(stern - 0.01, deck(stern) + 0.07, 0.0)),
+            s.q,
+            kind::EMISSIVE,
+            [1.0, 0.65, 0.3, 6.0],
+        ),
     );
-    s.part(
-        lib,
-        Vec3::new(-0.49, 0.16, 0.0),
-        Vec3::new(0.03, 0.04, 0.03),
-        Quat::IDENTITY,
-        kind::EMISSIVE,
-        [1.0, 0.65, 0.3, 6.0],
+    // The pennant at the foremast's head, streaming forward and stirring.
+    let head = tops[0];
+    let stream = Motion::Swing {
+        axis: s.q * Vec3::Y,
+        amp: 0.2,
+        period: 4.5,
+    };
+    let pennant = lib.mover(p(head), stream, 1.3, Some(m));
+    lib.moving(
+        pennant,
+        Inst::new(
+            p(head + Vec3::new(0.08, -0.02, 0.0)),
+            s.q,
+            Vec3::new(0.15, 0.035, 0.006),
+            kind::CLOTH,
+            [0.6, 0.08, 0.06, 1.0],
+            0,
+        ),
+    );
+}
+
+/// The ship's hull from `stern` to `bow` along x, its deck at `deck(x)`: a round
+/// bottom swept along the deck, full aft and fining to a stem at the bow (the swept
+/// section keeps its deck on the path, so the bottom rises as it narrows).
+fn hull(lib: &mut Library, stern: f32, bow: f32, deck: impl Fn(f32) -> f32) -> Shape {
+    let n = 16;
+    let xs: Vec<f32> = (0..n)
+        .map(|k| stern + (bow - stern) * k as f32 / (n - 1) as f32)
+        .collect();
+    // The first step level, so the section starts (and stays) upright.
+    let path: Vec<Vec3> = (xs.iter().enumerate())
+        .map(|(k, &x)| Vec3::new(x, deck(xs[k.max(1)]), 0.0))
+        .collect();
+    let scale: Vec<f32> = (xs.iter())
+        .map(|&x| {
+            let t = (x - stern) / (bow - stern);
+            if t < 0.4 {
+                0.85 + 0.15 * t / 0.4
+            } else {
+                1.0 - 0.9 * libm::powf((t - 0.4) / 0.6, 1.6)
+            }
+        })
+        .collect();
+    // Across the sweep: x is up, y abeam. The deck closes the half-round section.
+    let section: Vec<Vec2> = (0..=12)
+        .map(|k| {
+            let a = k as f32 / 12.0 * PI;
+            Vec2::new(-0.15 * libm::sinf(a), 0.12 * libm::cosf(a))
+        })
+        .collect();
+    lib.shape(Mesh::sweep(&path, &scale, &section, true))
+}
+
+/// A sail `w` wide and `h` tall bellied out by the wind: a crescent across it (x),
+/// bulging toward +y, made `h` deep along z.
+fn bellied(w: f32, h: f32) -> Mesh {
+    let (belly, t) = (0.11 * w, 0.006);
+    let n = 10;
+    let bulge = |k: usize| {
+        let x = -w * 0.5 + w * k as f32 / n as f32;
+        Vec2::new(x, belly * (1.0 - (2.0 * x / w).powi(2)))
+    };
+    let mut outline: Vec<Vec2> = (0..=n).map(bulge).collect();
+    outline.extend((0..=n).rev().map(|k| bulge(k) - Vec2::Y * t));
+    Mesh::prism(&outline, h)
+}
+
+/// A candle's or lamp's flame standing `h` tall on `at`.
+fn flame(lib: &mut Library, at: Vec3, h: f32) {
+    let drop = [
+        (0.0, 0.0),
+        (0.22, 0.06),
+        (0.34, 0.2),
+        (0.3, 0.42),
+        (0.16, 0.72),
+        (0.0, 1.0),
+    ];
+    let drop = lib.shape(Mesh::lathe(&drop.map(Vec2::from), 12));
+    lib.translucent(
+        drop.scaled(h)
+            .at(at, Quat::IDENTITY, kind::FIRE, [1.0, 0.62, 0.25, 4.0]),
     );
 }

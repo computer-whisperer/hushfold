@@ -1,11 +1,12 @@
 //! The Arcanum: department 7, first floor, west side. A dim room hung with dark
 //! drapes, its walls lined with cases; in the middle a ward of cases stands square
-//! round a rune circle set glowing in the floor, a gate in each side and a stone
-//! pillar at each corner, crystals hanging still in the air over the circle.
-//! Grimoires lie chained to lecterns in the aisles.
+//! round a rune circle set glowing in the floor, a gate in each side and a round
+//! stone pillar at each corner; crystals float over the circle, bobbing and turning,
+//! the lesser ones circling the great. Grimoires lie chained to lecterns in the
+//! aisles.
 
 use super::*;
-use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
 /// The ward's middle, its sides' distance from it (to their cases' middles), and
 /// where its cases stand along a side (either side of the gate).
@@ -218,16 +219,52 @@ fn folds(lib: &mut Library, at: &Spot, w: f32, y0: f32) {
     );
 }
 
-/// The ward's corner pillars, each with a small crystal hanging over it.
+/// The ward's corner pillars, round on square plinths under square abaci (in the
+/// way as the square blocks they stand in), each with a small crystal floating over
+/// it.
 fn pillars(lib: &mut Library, f: &RoomFrame) {
     let (p0, p1) = PILLAR;
     let stone = [0.3, 0.28, 0.27];
-    for (sa, so) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+    let shaft = [
+        (0.0, 0.0),
+        (0.44, 0.0),
+        (0.44, 0.06),
+        (0.4, 0.1),
+        (0.4, 0.14),
+        (0.36, 0.18),
+        (0.355, 0.5),
+        (0.35, 1.5),
+        (0.33, 2.4),
+        (0.32, 2.62),
+        (0.36, 2.66),
+        (0.36, 2.7),
+        (0.0, 2.7),
+    ];
+    let shaft = lib.shape(Mesh::lathe(&shaft.map(Vec2::from), 48));
+    let capital = [
+        (0.0, 0.0),
+        (0.32, 0.0),
+        (0.34, 0.05),
+        (0.42, 0.2),
+        (0.48, 0.32),
+        (0.5, 0.4),
+        (0.0, 0.4),
+    ];
+    let capital = lib.shape(Mesh::lathe(&capital.map(Vec2::from), 48));
+    for (k, (sa, so)) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
+        .into_iter()
+        .enumerate()
+    {
         let (a0, a1) = (sa * p0, sa * p1);
         let (o0, o1) = (WARD + so * p0, WARD + so * p1);
         let (lo, hi) = f.boxed(a0, a1, o0, o1, 0.0, 3.4);
-        lib.solid(Inst::minmax(lo, hi, kind::STONE, stone), Stops::ALL);
+        lib.collide(lo, hi, Stops::ALL);
+        let (lo, hi) = f.boxed(a0, a1, o0, o1, 0.0, 0.3);
+        lib.decor(Inst::minmax(lo, hi, kind::STONE, stone));
         let (am, om) = ((a0 + a1) * 0.5, (o0 + o1) * 0.5);
+        let foot = f.at(am, om, 0.3);
+        lib.decor(shaft.at(foot, Quat::IDENTITY, kind::STONE, rgba(stone, 1.0)));
+        lib.decor(capital.at(foot + Vec3::Y * 2.7, Quat::IDENTITY, kind::STONE, rgba(stone, 1.0)));
         slab(
             lib,
             f,
@@ -237,71 +274,71 @@ fn pillars(lib: &mut Library, f: &RoomFrame) {
             kind::STONE,
             [0.36, 0.34, 0.32],
         );
-        crystal(lib, f, Vec3::new(am, 4.05, om), 0.6, sa * so * 0.3);
+        crystal(lib, f, Vec3::new(am, 4.05, om), 0.6, sa * so * 0.3, k, None);
     }
 }
 
-/// A crystal `size` long hanging still at `p` (a, height, o), leaning by `lean`.
-fn crystal(lib: &mut Library, f: &RoomFrame, p: Vec3, size: f32, lean: f32) {
-    let at = Spot {
-        at: f.at(p.x, p.z, p.y),
-        q: f.turn() * Quat::from_rotation_z(lean) * Quat::from_rotation_y(lean * 2.0),
+/// A crystal `size` long floating at `p` (a, height, o), leaning by `lean`: a
+/// six-sided prism pointed at both ends, bobbing gently and turning slowly on its own
+/// axis (each in its own time, by `k`), riding `orbit` if given.
+fn crystal(lib: &mut Library, f: &RoomFrame, p: Vec3, size: f32, lean: f32, k: usize, orbit: Option<u32>) {
+    let at = f.at(p.x, p.z, p.y);
+    let tilt = f.turn() * Quat::from_rotation_z(lean) * Quat::from_rotation_y(lean * 2.0);
+    let (r, tip) = (size * 0.15, size * 0.24);
+    let gem = [(0.0, 0.0), (r, tip), (r, size - tip), (0.0, size)];
+    let gem = lib.shape(Mesh::lathe(&gem.map(Vec2::from), 6));
+    let k = k as f32;
+    let float = Motion::Bob {
+        amp: 0.04 + 0.01 * (k % 3.0),
+        period: 6.5 + 0.8 * k,
+        rock: 0.04,
     };
-    let w = size * 0.3;
-    let body = size * 0.55;
-    for spin in [0.0f32, FRAC_PI_4] {
-        at.part(
-            lib,
-            Vec3::ZERO,
-            Vec3::new(w, body, w),
-            Quat::from_rotation_y(spin),
-            kind::CRYSTAL,
-            CRYSTAL_RGBA,
-        );
-    }
-    // Points: cubes stood on a corner.
-    let corner = Quat::from_rotation_arc(Vec3::ONE.normalize(), Vec3::Y);
-    for y in [-1.0f32, 1.0] {
-        at.part(
-            lib,
-            Vec3::Y * (y * body * 0.5),
-            Vec3::splat(w * 0.82),
-            corner,
-            kind::CRYSTAL,
-            CRYSTAL_RGBA,
-        );
-    }
+    let bob = lib.mover(at, float, k * 1.7, orbit);
+    let turn = Motion::Spin {
+        axis: tilt * Vec3::Y,
+        rate: (0.12 + 0.03 * (k % 4.0)) * if k % 2.0 == 0.0 { 1.0 } else { -1.0 },
+    };
+    let m = lib.mover(at, turn, 0.0, Some(bob));
+    lib.moving(m, gem.inst(at, tilt, kind::CRYSTAL, CRYSTAL_RGBA));
 }
 
-/// The great crystal over a low stone dais in the middle of the circle, and its
-/// lesser ones round it.
+/// The great crystal over a low round dais in the middle of the circle, and its
+/// lesser ones circling it slowly.
 fn crystals(lib: &mut Library, f: &RoomFrame) {
     guard(lib, f, (-0.65, 0.65), (WARD - 0.65, WARD + 0.65), 0.4);
-    let at = Spot::new(f, 0.0, WARD, 0.0);
     let stone = [0.3, 0.28, 0.27, 1.0];
-    at.block(lib, Vec3::Y * 0.15, Vec3::new(1.2, 0.3, 1.2), kind::STONE, stone);
-    at.part(
-        lib,
-        Vec3::Y * 0.15,
-        Vec3::new(0.9, 0.3, 0.9),
-        Quat::from_rotation_y(FRAC_PI_4),
-        kind::STONE,
-        stone,
-    );
-    at.block(
-        lib,
-        Vec3::Y * 0.34,
-        Vec3::new(0.8, 0.08, 0.8),
-        kind::STONE,
-        [0.36, 0.34, 0.32, 1.0],
-    );
-    at.block(lib, Vec3::Y * 0.385, Vec3::new(0.3, 0.01, 0.3), kind::EMISSIVE, RUNE);
-    crystal(lib, f, Vec3::new(0.0, 3.3, WARD), 1.1, 0.08);
+    let dais = [
+        (0.0, 0.0),
+        (0.62, 0.0),
+        (0.62, 0.12),
+        (0.58, 0.16),
+        (0.52, 0.18),
+        (0.5, 0.3),
+        (0.44, 0.34),
+        (0.4, 0.38),
+        (0.0, 0.38),
+    ];
+    let dais = lib.shape(Mesh::lathe(&dais.map(Vec2::from), 48));
+    let middle = f.at(0.0, WARD, 0.0);
+    lib.decor(dais.at(middle, Quat::IDENTITY, kind::STONE, stone));
+    let seal = lib.shape(Mesh::cylinder(32));
+    lib.decor(seal.sized(Vec3::new(0.3, 0.01, 0.3)).inst(
+        middle + Vec3::Y * 0.384,
+        Quat::IDENTITY,
+        kind::EMISSIVE,
+        RUNE,
+    ));
+    crystal(lib, f, Vec3::new(0.0, 3.3, WARD), 1.1, 0.08, 4, None);
+    let circling = Motion::Spin {
+        axis: Vec3::Y,
+        rate: TAU / 150.0,
+    };
+    let orbit = lib.mover(middle, circling, 0.0, None);
     for (k, (r, y, size)) in [
-        (1.5f32, 2.6f32, 0.45f32),
+        (1.5f32, 2.75f32, 0.45f32),
         (1.3, 3.7, 0.4),
         (1.7, 3.1, 0.5),
-        (1.2, 2.3, 0.35),
+        (1.2, 2.6, 0.35),
     ]
     .into_iter()
     .enumerate()
@@ -313,6 +350,8 @@ fn crystals(lib: &mut Library, f: &RoomFrame) {
             Vec3::new(libm::cosf(t) * r, y, WARD + libm::sinf(t) * r),
             size,
             0.25 + k as f32 * 0.2,
+            5 + k,
+            Some(orbit),
         );
     }
     lib.light(f.at(0.0, WARD, 1.4), 7.5, [0.65, 0.4, 1.0], 1.1, LightKind::Static);
@@ -334,15 +373,16 @@ fn rune_circle(lib: &mut Library, f: &RoomFrame) {
             RUNE,
         );
     };
-    let ring = |lib: &mut Library, r: f32, n: usize, w: f32, y: f32| {
-        for k in 0..n {
-            let (t0, t1) = (k as f32 / n as f32 * TAU, (k + 1) as f32 / n as f32 * TAU);
-            line(lib, Vec2::from_angle(t0) * r, Vec2::from_angle(t1) * r, w, y);
-        }
-    };
-    ring(lib, 2.9, 36, 0.05, 0.004);
-    ring(lib, 2.35, 30, 0.035, 0.005);
-    ring(lib, 1.0, 16, 0.03, 0.006);
+    for (r, w, h) in [(2.9f32, 0.05f32, 0.004f32), (2.35, 0.035, 0.005), (1.0, 0.03, 0.006)] {
+        let circle = |r: f32| -> Vec<Vec2> { (0..96).map(|k| Vec2::from_angle(k as f32 / 96.0 * TAU) * r).collect() };
+        let ring = lib.shape(Mesh::ring(&circle(r + w * 0.5), &circle(r - w * 0.5), h));
+        lib.decor(ring.inst(
+            at.at + Vec3::Y * (h * 0.5),
+            Quat::from_rotation_x(FRAC_PI_2),
+            kind::EMISSIVE,
+            RUNE,
+        ));
+    }
     // The star: each point joined to the point two on.
     for k in 0..7 {
         let p = Vec2::from_angle(k as f32 / 7.0 * TAU + FRAC_PI_2) * 2.3;
@@ -441,35 +481,66 @@ fn lectern(lib: &mut Library, f: &RoomFrame, s: f32, o: f32, k: usize) {
     );
     // The chain, from the book's spine down to a ring on the post.
     let from = at.at + at.q * (book + slope * Vec3::new(-0.21, 0.0, -0.1));
-    let to = at.at + at.q * Vec3::new(-0.18, 0.55, 0.0);
+    let to = at.at + at.q * Vec3::new(-0.19, 0.6, 0.07);
     let links = 8;
     let dir = (to - from).normalize();
+    let link = lib.shape(Mesh::torus(0.45, 12, 6));
     for i in 0..links {
         let t = (i as f32 + 0.5) / links as f32;
-        // A little sag in the middle.
+        // A little sag in the middle; each link turned square to the last.
         let p = from.lerp(to, t) - Vec3::Y * (t * (1.0 - t) * 0.25);
         let twist =
-            Quat::from_rotation_arc(Vec3::Y, dir) * Quat::from_rotation_y(if i % 2 == 0 { 0.0 } else { FRAC_PI_2 });
-        lib.decor(Inst::new(
-            p,
-            twist,
-            Vec3::new(0.035, 0.07, 0.012),
-            kind::METAL,
-            [0.3, 0.3, 0.32, 1.0],
-            0,
-        ));
+            Quat::from_rotation_arc(Vec3::Z, dir) * Quat::from_rotation_z(if i % 2 == 0 { 0.0 } else { FRAC_PI_2 });
+        lib.decor(
+            link.sized(Vec3::new(0.04, 0.01, 0.075))
+                .inst(p, twist, kind::METAL, [0.3, 0.3, 0.32, 1.0]),
+        );
     }
+    lib.decor(link.sized(Vec3::new(0.06, 0.012, 0.06)).inst(
+        to - at.q * Vec3::Z * 0.02,
+        at.q * Quat::from_rotation_x(FRAC_PI_2),
+        kind::METAL,
+        IRON,
+    ));
     if k.is_multiple_of(2) {
-        // A guttering candle.
+        // A guttering candle on an iron pricket, its flame.
         let c = Vec3::new(0.26, 1.15, -0.05);
-        at.block(lib, c, Vec3::new(0.05, 0.12, 0.05), kind::PLAIN, [0.75, 0.7, 0.58, 1.0]);
-        lib.decor(Inst::new(
-            at.at + at.q * (c + Vec3::Y * 0.09),
-            at.q * Quat::from_rotation_y(PI * 0.25),
-            Vec3::new(0.025, 0.05, 0.025),
-            kind::EMISSIVE,
-            [1.0, 0.55, 0.2, 12.0],
-            1,
+        let pricket = [
+            (0.0, 0.0),
+            (0.045, 0.0),
+            (0.045, 0.01),
+            (0.015, 0.02),
+            (0.012, 0.05),
+            (0.04, 0.06),
+            (0.0, 0.065),
+        ];
+        let pricket = lib.shape(Mesh::lathe(&pricket.map(Vec2::from), 16));
+        let foot = at.at + at.q * (c - Vec3::Y * 0.1);
+        lib.decor(pricket.at(foot, at.q, kind::METAL, IRON));
+        let wax = [
+            (0.0, 0.0),
+            (0.026, 0.0),
+            (0.026, 0.1),
+            (0.022, 0.112),
+            (0.015, 0.11),
+            (0.0, 0.106),
+        ];
+        let wax = lib.shape(Mesh::lathe(&wax.map(Vec2::from), 16));
+        lib.decor(wax.at(foot + Vec3::Y * 0.06, at.q, kind::PLAIN, [0.75, 0.7, 0.58, 1.0]));
+        let drop = [
+            (0.0, 0.0),
+            (0.22, 0.06),
+            (0.34, 0.2),
+            (0.3, 0.42),
+            (0.16, 0.72),
+            (0.0, 1.0),
+        ];
+        let drop = lib.shape(Mesh::lathe(&drop.map(Vec2::from), 12));
+        lib.translucent(drop.scaled(0.05).at(
+            foot + Vec3::Y * 0.17,
+            Quat::IDENTITY,
+            kind::FIRE,
+            [1.0, 0.55, 0.22, 4.0],
         ));
         lib.light(
             at.at + at.q * (c + Vec3::Y * 0.4),
