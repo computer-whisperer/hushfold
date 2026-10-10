@@ -25,11 +25,14 @@ const STILE_PROUD: f32 = 0.025;
 const FRIEZE_Y: f32 = 2.98;
 const CASE_FIELD: [f32; 3] = [0.25, 0.12, 0.05];
 const CASE_TRIM: [f32; 3] = [0.12, 0.06, 0.028];
+const LEATHER: [f32; 3] = [0.05, 0.1, 0.06];
+const WAX: [f32; 3] = [0.8, 0.75, 0.6];
+/// A shelf's label holder: brass, glowing a little (color.w is its brightness).
+const LABEL_GLOW: [f32; 4] = [1.0, 0.7, 0.3, 0.3];
 
 impl Library {
     /// A brass wall sconce with a candle flame, lighting the room in front of it: a
-    /// backplate on the wall 0.15 behind `p`, an arm out to a drip pan and a candle,
-    /// and the glow of its glass chimney round the flame.
+    /// backplate on the wall 0.15 behind `p`, and an arm out to a drip pan and a candle.
     pub(super) fn sconce(&mut self, p: Vec3, n: Vec3) {
         let across = Vec3::Y.cross(n).abs();
         // A box `w` across the wall, `out0..out1` out from `p`, `up0..up1` above it.
@@ -38,15 +41,7 @@ impl Library {
             let size = across * w + Vec3::Y * (up1 - up0) + n.abs() * (out1 - out0);
             lib.decor(Inst::aabox(c, size, k, rgb));
         };
-        let mut flame = Inst::aabox(
-            p + Vec3::Y * 0.24,
-            Vec3::new(0.035, 0.08, 0.035),
-            kind::EMISSIVE,
-            [1.0, 0.55, 0.18],
-        );
-        flame.color[3] = 12.0;
-        flame.param = 1;
-        self.decor(flame);
+        self.flame(p + Vec3::Y * 0.24, Vec3::new(0.035, 0.08, 0.035), 12.0);
         part(
             self,
             0.045,
@@ -62,14 +57,6 @@ impl Library {
         part(self, 0.065, (-0.138, -0.12), (-0.095, -0.025), kind::METAL, BRASS);
         part(self, 0.1, (-0.15, -0.138), (-0.2, 0.08), kind::METAL, BRASS);
         part(self, 0.05, (-0.15, -0.135), (0.08, 0.13), kind::METAL, BRASS);
-        self.static_trans.push(Inst::new(
-            p + Vec3::Y * 0.22,
-            Quat::IDENTITY,
-            Vec3::new(0.16, 0.38, 0.16),
-            kind::SHAFT,
-            [1.0, 0.62, 0.28, 0.35],
-            0,
-        ));
         self.light(
             p + n * 0.4 + Vec3::Y * 0.3,
             8.0,
@@ -83,62 +70,43 @@ impl Library {
     /// leather-topped table on turned legs with an apron and an H stretcher, and
     /// chairs with cushioned seats and a splat in the back.
     pub(super) fn reading_table(&mut self, c: Vec3) {
-        let part = |lib: &mut Self, at: Vec3, size: Vec3, k: u32, rgb| lib.decor(Inst::aabox(at, size, k, rgb));
-        // Its top, a moulding under the edge, and the leather, a hair proud of the wood.
-        part(
-            self,
-            c + Vec3::Y * 0.7775,
-            Vec3::new(2.0, 0.003, 0.84),
-            kind::CLOTH,
-            [0.05, 0.1, 0.06],
-        );
-        part(
-            self,
-            c + Vec3::Y * 0.748,
-            Vec3::new(2.4, 0.056, 1.2),
-            kind::WOOD,
-            WALNUT,
-        );
-        part(
-            self,
-            c + Vec3::Y * 0.705,
-            Vec3::new(2.34, 0.03, 1.14),
-            kind::WOOD,
-            CASE_TRIM,
-        );
+        // (centre above `c`, size, kind, colour), mirrored across x by `s` where it has
+        // one: the leather a hair proud of the top, the top, a moulding under its edge,
+        // the apron, and an H stretcher.
         for s in [-1.0f32, 1.0] {
-            part(
-                self,
-                c + Vec3::new(0.0, 0.635, s * 0.45),
-                Vec3::new(2.0, 0.11, 0.03),
-                kind::WOOD,
-                WALNUT,
-            );
-            part(
-                self,
-                c + Vec3::new(s * 1.05, 0.635, 0.0),
-                Vec3::new(0.03, 0.11, 0.8),
-                kind::WOOD,
-                WALNUT,
-            );
-            part(
-                self,
-                c + Vec3::new(s * 1.05, 0.12, 0.0),
-                Vec3::new(0.035, 0.04, 0.9),
-                kind::WOOD,
-                DARK_WOOD,
-            );
+            for (at, size, k, rgb) in [
+                (
+                    Vec3::new(0.0, 0.635, s * 0.45),
+                    Vec3::new(2.0, 0.11, 0.03),
+                    kind::WOOD,
+                    WALNUT,
+                ),
+                (
+                    Vec3::new(s * 1.05, 0.635, 0.0),
+                    Vec3::new(0.03, 0.11, 0.8),
+                    kind::WOOD,
+                    WALNUT,
+                ),
+                (
+                    Vec3::new(s * 1.05, 0.12, 0.0),
+                    Vec3::new(0.035, 0.04, 0.9),
+                    kind::WOOD,
+                    DARK_WOOD,
+                ),
+            ] {
+                self.decor(Inst::aabox(c + at, size, k, rgb));
+            }
         }
-        part(
-            self,
-            c + Vec3::Y * 0.1275,
-            Vec3::new(2.1, 0.035, 0.035),
-            kind::WOOD,
-            DARK_WOOD,
-        );
+        for (y, size, k, rgb) in [
+            (0.7775, Vec3::new(2.0, 0.003, 0.84), kind::CLOTH, LEATHER),
+            (0.748, Vec3::new(2.4, 0.056, 1.2), kind::WOOD, WALNUT),
+            (0.705, Vec3::new(2.34, 0.03, 1.14), kind::WOOD, CASE_TRIM),
+            (0.1275, Vec3::new(2.1, 0.035, 0.035), kind::WOOD, DARK_WOOD),
+        ] {
+            self.decor(Inst::aabox(c + Vec3::Y * y, size, k, rgb));
+        }
         for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-            let foot = c + Vec3::new(sx * 1.05, 0.0, sz * 0.45);
-            self.turned_leg(foot, 0.69, 0.1, DARK_WOOD);
+            self.turned_leg(c + Vec3::new(sx * 1.05, 0.0, sz * 0.45), 0.69, 0.1, DARK_WOOD);
         }
         self.collide(
             c - Vec3::new(1.25, 0.0, 0.65),
@@ -149,52 +117,36 @@ impl Library {
         for sz in [-1.0f32, 1.0] {
             for sx in [-0.6f32, 0.6] {
                 let ch = c + Vec3::new(sx, 0.0, sz * 1.0);
-                // The back is on the side away from the table (+sz).
-                let at = |x: f32, y: f32, z: f32| ch + Vec3::new(x, y, sz * z);
-                part(
-                    self,
-                    at(0.0, 0.4875, -0.02),
-                    Vec3::new(0.4, 0.035, 0.36),
-                    kind::CLOTH,
-                    [0.24, 0.05, 0.04],
-                );
-                part(
-                    self,
-                    at(0.0, 0.4475, 0.0),
-                    Vec3::new(0.46, 0.045, 0.44),
-                    kind::WOOD,
-                    chair,
-                );
-                part(self, at(0.0, 0.95, 0.2), Vec3::new(0.5, 0.1, 0.04), kind::WOOD, chair);
-                part(
-                    self,
-                    at(0.0, 0.685, 0.2),
-                    Vec3::new(0.14, 0.43, 0.02),
-                    kind::WOOD,
-                    chair,
-                );
-                for s in [-1.0f32, 1.0] {
-                    part(
-                        self,
-                        at(s * 0.2, 0.46, 0.2),
-                        Vec3::new(0.045, 0.92, 0.045),
-                        kind::WOOD,
-                        DARK_WOOD,
-                    );
-                    part(
-                        self,
-                        at(s * 0.2, 0.2125, -0.2),
+                // Laid out with its back toward +z, away from the table: a cushion on
+                // the seat, a crest rail and a splat between back posts that are the back
+                // legs, front legs, and stretchers along the sides.
+                for (x, y, z, size, k, rgb) in [
+                    (
+                        0.0,
+                        0.4875,
+                        -0.02,
+                        Vec3::new(0.4, 0.035, 0.36),
+                        kind::CLOTH,
+                        [0.24, 0.05, 0.04],
+                    ),
+                    (0.0, 0.4475, 0.0, Vec3::new(0.46, 0.045, 0.44), kind::WOOD, chair),
+                    (0.0, 0.95, 0.2, Vec3::new(0.5, 0.1, 0.04), kind::WOOD, chair),
+                    (0.0, 0.685, 0.2, Vec3::new(0.14, 0.43, 0.02), kind::WOOD, chair),
+                    (-0.2, 0.46, 0.2, Vec3::new(0.045, 0.92, 0.045), kind::WOOD, DARK_WOOD),
+                    (0.2, 0.46, 0.2, Vec3::new(0.045, 0.92, 0.045), kind::WOOD, DARK_WOOD),
+                    (
+                        -0.2,
+                        0.2125,
+                        -0.2,
                         Vec3::new(0.045, 0.425, 0.045),
                         kind::WOOD,
                         DARK_WOOD,
-                    );
-                    part(
-                        self,
-                        at(s * 0.2, 0.155, 0.0),
-                        Vec3::new(0.025, 0.03, 0.36),
-                        kind::WOOD,
-                        DARK_WOOD,
-                    );
+                    ),
+                    (0.2, 0.2125, -0.2, Vec3::new(0.045, 0.425, 0.045), kind::WOOD, DARK_WOOD),
+                    (-0.2, 0.155, 0.0, Vec3::new(0.025, 0.03, 0.36), kind::WOOD, DARK_WOOD),
+                    (0.2, 0.155, 0.0, Vec3::new(0.025, 0.03, 0.36), kind::WOOD, DARK_WOOD),
+                ] {
+                    self.decor(Inst::aabox(ch + Vec3::new(x, y, sz * z), size, k, rgb));
                 }
                 self.collide(
                     ch - Vec3::new(0.26, 0.0, 0.26),
@@ -203,46 +155,26 @@ impl Library {
                 );
             }
         }
-        // A brass candlestick.
+        // A brass candlestick: foot, stem, drip pan, candle.
         let candle = c + Vec3::new(0.7, TABLE_H, 0.0);
-        part(
-            self,
-            candle + Vec3::Y * 0.009,
-            Vec3::new(0.12, 0.018, 0.12),
-            kind::METAL,
-            BRASS,
-        );
-        part(
-            self,
-            candle + Vec3::Y * 0.069,
-            Vec3::new(0.025, 0.102, 0.025),
-            kind::METAL,
-            BRASS,
-        );
-        part(
-            self,
-            candle + Vec3::Y * 0.125,
-            Vec3::new(0.08, 0.01, 0.08),
-            kind::METAL,
-            BRASS,
-        );
-        part(
-            self,
-            candle + Vec3::Y * 0.195,
-            Vec3::new(0.04, 0.13, 0.04),
-            kind::PLAIN,
-            [0.8, 0.75, 0.6],
-        );
-        let mut flame = Inst::aabox(
-            candle + Vec3::Y * 0.285,
-            Vec3::new(0.025, 0.05, 0.025),
-            kind::EMISSIVE,
-            [1.0, 0.55, 0.18],
-        );
-        flame.color[3] = 14.0;
+        for (y, size, k, rgb) in [
+            (0.009, Vec3::new(0.12, 0.018, 0.12), kind::METAL, BRASS),
+            (0.069, Vec3::new(0.025, 0.102, 0.025), kind::METAL, BRASS),
+            (0.125, Vec3::new(0.08, 0.01, 0.08), kind::METAL, BRASS),
+            (0.195, Vec3::new(0.04, 0.13, 0.04), kind::PLAIN, WAX),
+        ] {
+            self.decor(Inst::aabox(candle + Vec3::Y * y, size, k, rgb));
+        }
+        self.flame(candle + Vec3::Y * 0.285, Vec3::new(0.025, 0.05, 0.025), 14.0);
+        self.light(candle + Vec3::Y * 0.35, 4.5, [1.0, 0.6, 0.28], 0.7, LightKind::Flicker);
+    }
+
+    /// A candle flame, flickering, `brightness` bright.
+    fn flame(&mut self, at: Vec3, size: Vec3, brightness: f32) {
+        let mut flame = Inst::aabox(at, size, kind::EMISSIVE, [1.0, 0.55, 0.18]);
+        flame.color[3] = brightness;
         flame.param = 1;
         self.decor(flame);
-        self.light(candle + Vec3::Y * 0.35, 4.5, [1.0, 0.6, 0.28], 0.7, LightKind::Flicker);
     }
 
     /// A two-tier brass chandelier at `ch` hung from `top_y`: a ring of candles, a
@@ -250,7 +182,8 @@ impl Library {
     /// faintly under the ring.
     pub(super) fn chandelier(&mut self, ch: Vec3, top_y: f32) {
         let brass = [BRASS[0], BRASS[1], BRASS[2], 1.0];
-        let candles = |lib: &mut Self, p: Vec3| {
+        // A candle in a cup standing on `p`.
+        let candle = |lib: &mut Self, p: Vec3| {
             lib.decor(Inst::aabox(
                 p + Vec3::Y * 0.04,
                 Vec3::new(0.08, 0.02, 0.08),
@@ -261,17 +194,9 @@ impl Library {
                 p + Vec3::Y * 0.12,
                 Vec3::new(0.04, 0.14, 0.04),
                 kind::PLAIN,
-                [0.8, 0.75, 0.6],
+                WAX,
             ));
-            let mut flame = Inst::aabox(
-                p + Vec3::Y * 0.22,
-                Vec3::new(0.03, 0.06, 0.03),
-                kind::EMISSIVE,
-                [1.0, 0.55, 0.18],
-            );
-            flame.color[3] = 14.0;
-            flame.param = 1;
-            lib.decor(flame);
+            lib.flame(p + Vec3::Y * 0.22, Vec3::new(0.03, 0.06, 0.03), 14.0);
         };
         // (radius, height above `ch`, segments, segment length).
         for (r, y, n, len) in [(1.3f32, 0.0f32, 12, 0.72f32), (0.7, 0.55, 8, 0.58)] {
@@ -287,7 +212,7 @@ impl Library {
                     brass,
                     0,
                 ));
-                candles(self, p + Vec3::Y * 0.025);
+                candle(self, p + Vec3::Y * 0.025);
                 if k % 2 == 0 {
                     // An arm out from the stem.
                     self.bar(
@@ -758,8 +683,7 @@ fn upright_frame(x: Vec3) -> Mat3 {
 /// on a wall at `z0`. The nearest parts come first, so they hide what is behind them
 /// before it is shaded.
 fn case_boxes(z0: f32, z1: f32, both: bool) -> Vec<(Vec3, Vec3, u32, [f32; 4])> {
-    let mut out = Vec::with_capacity(40);
-    let mut add = |(mn, mx): (Vec3, Vec3), k: u32, rgb: [f32; 3]| out.push((mn, mx, k, [rgb[0], rgb[1], rgb[2], 1.0]));
+    let mut out = Vec::with_capacity(41);
     let faces: &[f32] = if both { &[-1.0, 1.0] } else { &[1.0] };
     // `a..b` out from face `s`'s plane.
     let before = |s: f32, a: f32, b: f32| {
@@ -773,17 +697,21 @@ fn case_boxes(z0: f32, z1: f32, both: bool) -> Vec<(Vec3, Vec3, u32, [f32; 4])> 
         |x: Range<f32>, y0: f32, y1: f32, z: Range<f32>| (Vec3::new(x.start, y0, z.start), Vec3::new(x.end, y1, z.end));
     let wide = |hx: f32| -hx..hx;
     let pitch = UNIT_PITCH * 0.5;
+    // Label holders where each shelf's label hangs (the bottom one on the plinth),
+    // brass faintly aglow: the shelves' one touch of magic.
     for &s in faces {
-        // Brass label holders where each shelf's label hangs, the bottom one on the plinth.
         for row in 0..ROWS {
             let top = row_floor_y(row);
-            let holder = if row + 1 == ROWS {
+            let (lo, hi) = if row + 1 == ROWS {
                 bx(wide(0.06), 0.07, 0.13, before(s, 0.04, 0.046))
             } else {
                 bx(wide(0.06), top - 0.029, top - 0.001, before(s, 0.0, 0.006))
             };
-            add(holder, kind::METAL, BRASS);
+            out.push((lo, hi, kind::EMISSIVE, LABEL_GLOW));
         }
+    }
+    let mut add = |(mn, mx): (Vec3, Vec3), k: u32, rgb: [f32; 3]| out.push((mn, mx, k, [rgb[0], rgb[1], rgb[2], 1.0]));
+    for &s in faces {
         // A rail for a library ladder, resting on the stiles under their capitals.
         add(
             bx(wide(pitch), 2.885, 2.905, before(s, STILE_PROUD, STILE_PROUD + 0.02)),
