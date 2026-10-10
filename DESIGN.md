@@ -203,11 +203,13 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
   nothing.
 - Click shelf: aiming anywhere on a series run places a held book of that series
   into its exact slot (forgiving aim; the skill is finding the run).
-- Scroll/Q/E: cycle the active book. Its title and volume are on the arms card
-  (bottom left); where it goes (category, filing key, the room when you are
-  outside it, case and shelf with Sort Sense) is a line under the crosshair,
-  below the aim tip, so it reads against the shelf you look at, whose tip gives
-  its key range as its label does.
+- Scroll/Q/E: cycle the active book. The arms card (bottom left) has its title,
+  volume and place (category, department, filing key, or case and shelf with
+  Sort Sense). Where it goes is also a quiet line a fifth of the screen below the
+  crosshair (category, filing key, the room when you are outside it, case and
+  shelf with Sort Sense), out of the way of the aim but a short glance from it,
+  to read against the aim tip; a shelf's tip gives its key range as its label
+  does.
 - Tab: Grimoire (upgrades). Shift: hurry.
 - F9: cheats for trying late-game situations (`game/cheats.rs`): lumens, every
   skill, lifting veils (until the next load, since veil states follow from what

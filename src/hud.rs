@@ -2,7 +2,7 @@
 
 use crate::catalog;
 use crate::game::{Aim, Cheat, ECHO_SPEED, Game, Group, SPELLS, Tier, UPGRADES, Upg, spell_times, upg_costs, upg_def};
-use crate::library::{LabelKind, Layout};
+use crate::library::{LabelKind, Layout, ROWS};
 use crate::settings::Settings;
 use egui::{Align2, Color32, FontFamily, FontId, Pos2, Rect, RichText, Stroke, Vec2};
 use glam::{Mat4, Vec3, Vec4};
@@ -376,8 +376,13 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
             painter.circle_filled(c, 2.0, INK.gamma_multiply(0.7));
         }
     }
-    // Under it, where the active book goes, to read against what the tip says of
-    // what you look at.
+    if let Some((t, col)) = tip {
+        let galley = painter.layout_no_wrap(t, serif(15.0), col);
+        let r = Rect::from_center_size(c + Vec2::new(0.0, 30.0), galley.size() + Vec2::new(14.0, 6.0));
+        painter.rect_filled(r, 4.0, Color32::from_rgba_unmultiplied(10, 8, 6, 150));
+        painter.galley(r.min + Vec2::new(7.0, 3.0), galley, col);
+    }
+    // Lower down, out of the way of what you aim at, where the active book goes.
     let dest = g.active_book().map(|b| {
         let info = &g.lib.books[b as usize];
         let s = &g.lib.series[info.series as usize];
@@ -393,16 +398,12 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         }
         (t, bright(catalog::category_color(cat)))
     });
-    let mut top = c.y + 18.0;
-    for (t, col) in tip.into_iter().chain(dest) {
-        let galley = painter.layout_no_wrap(t, serif(15.0), col);
-        let r = Rect::from_min_size(
-            Pos2::new(c.x - galley.size().x * 0.5 - 7.0, top),
-            galley.size() + Vec2::new(14.0, 6.0),
-        );
-        painter.rect_filled(r, 4.0, Color32::from_rgba_unmultiplied(10, 8, 6, 150));
-        painter.galley(r.min + Vec2::new(7.0, 3.0), galley, col);
-        top = r.max.y + 4.0;
+    if let Some((t, col)) = dest {
+        let galley = painter.layout_no_wrap(t, serif(14.0), col);
+        let at = c + Vec2::new(0.0, screen.y * 0.2);
+        let r = Rect::from_center_size(at, galley.size() + Vec2::new(12.0, 4.0));
+        painter.rect_filled(r, 4.0, Color32::from_rgba_unmultiplied(10, 8, 6, 90));
+        painter.galley(r.min + Vec2::new(6.0, 2.0), galley, col);
     }
 
     // ---- Top-left: lumens and progress.
@@ -498,6 +499,26 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                         "Single volume".into()
                     };
                     ui.label(RichText::new(vol).font(serif(14.0)).color(INK));
+                    let cat = &g.lib.catalog.categories[s.category];
+                    let dept = &g.lib.catalog.departments[cat.dept].name;
+                    let place = if g.level(Upg::SortSense) > 0 {
+                        let f = &g.lib.faces[info.face as usize];
+                        format!(
+                            "{} · {} · case {}, shelf {} of {}",
+                            cat.name,
+                            dept,
+                            f.case_idx + 1,
+                            info.row as usize + 1,
+                            ROWS
+                        )
+                    } else {
+                        format!("{} · {} · under {}", cat.name, dept, s.shelf_key())
+                    };
+                    ui.label(
+                        RichText::new(place)
+                            .font(serif(14.0))
+                            .color(bright(catalog::category_color(cat))),
+                    );
                     // Strip of held spines.
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(360.0, 26.0), egui::Sense::hover());
                     let p = ui.painter();
