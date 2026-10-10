@@ -1,11 +1,14 @@
 //! The Clockworks: department 8, top floor, north side. Bays of cases stand along
 //! both side walls like the teeth of a wheel; two pillars of cases on the floor show
 //! their works through open fronts under clock turrets; the great clock fills the
-//! middle of the far wall with its pendulum below; a workbench and an automaton
-//! stand by the door; gears turn on the walls and under the ceiling, in trains that
-//! keep their teeth together, and the clocks keep time.
+//! middle of the far wall with its pendulum below; a workbench and an automaton (a
+//! brass owl looking about the room) stand by the door; gears turn on the walls and
+//! under the ceiling, meshing in trains that keep their teeth together, and the
+//! clocks keep time.
 
+use super::hearth_library::{circle, flame, pole, turned, turned_leg, turned_open};
 use super::*;
+use std::f32::consts::{FRAC_PI_2, PI};
 
 const BRASS_LIT: [f32; 3] = [0.72, 0.5, 0.2];
 const BRASS_OLD: [f32; 3] = [0.42, 0.28, 0.11];
@@ -177,7 +180,8 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
         );
         lib.decor(corner);
     }
-    // The clock turret over the near end, up to the ceiling, with a dial on its face.
+    // The clock turret over the near end, up to the ceiling, with a dial on its face
+    // between turned columns.
     let t = (a - hw + 0.3, a + hw - 0.3);
     lib.decor(piece(
         frame,
@@ -203,6 +207,30 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
         kind::WOOD,
         WALNUT,
     ));
+    let column = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.5, 0.0),
+            (0.5, 0.03),
+            (0.4, 0.05),
+            (0.34, 0.08),
+            (0.3, 0.9),
+            (0.36, 0.93),
+            (0.5, 0.96),
+            (0.5, 1.0),
+            (0.0, 1.0),
+        ],
+        16,
+    );
+    for s in [-1.0f32, 1.0] {
+        lib.decor(column.sized(Vec3::new(0.16, h - 0.24 - CASE_TOP - 0.12, 0.16)).at(
+            frame.at(a + s * (hw - 0.42), o0 - 0.02, CASE_TOP + 0.12),
+            Quat::IDENTITY,
+            kind::WOOD,
+            rgba(WALNUT, 1.0),
+        ));
+    }
     let n = -out;
     dial(
         lib,
@@ -212,7 +240,8 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
         (a > 0.0) as u32 * 5 + 2,
         0.0,
     );
-    // The movement standing on the pillar's top, behind the turret.
+    // The movement standing on the pillar's top, behind the turret: a great wheel
+    // driving a smaller one, each on a post.
     let top = CASE_TOP + 0.12;
     let mid = o0 + TURRET + (PILLAR_LEN - TURRET) * 0.5;
     lib.decor(piece(
@@ -223,27 +252,17 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
         kind::WOOD,
         WALNUT,
     ));
-    gear(
+    let great = gear(
         lib,
-        frame.at(a - 0.12, mid - 0.45, top + 0.95),
-        across,
-        wheel(0.85, 16, 0.07).old().turned(a),
+        wheel(0.85, 16, 0.07)
+            .old()
+            .turned(a)
+            .at(frame.at(a, mid - 0.45, top + 0.95), across),
     );
-    gear(
-        lib,
-        frame.at(a + 0.12, mid + 0.95, top + 0.62),
-        across,
-        wheel(0.52, 10, 0.06).turned(a * 2.0),
-    );
-    for (d_o, y0) in [(-0.45, 0.95), (0.95, 0.62)] {
-        lib.decor(piece(
-            frame,
-            (a - 0.03, a + 0.03),
-            (mid + d_o - 0.03, mid + d_o + 0.03),
-            (top, top + y0),
-            kind::METAL,
-            STEEL,
-        ));
+    let small = gear(lib, great.mesh(out * 1.4 - Vec3::Y * 0.35, 0.06, wheel(0.0, 10, 0.06)));
+    for p in [great.c, small.c] {
+        let foot = Vec3::new(p.x, frame.y + top, p.z);
+        pole(lib, foot, p, 0.06, kind::METAL, rgba(STEEL, 1.0));
     }
     // The open front: a plinth and posts round the works, a pendulum hanging in it.
     let face = o0 - 0.01;
@@ -275,17 +294,15 @@ fn pillar(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut H
         WALNUT,
     ));
     guard(lib, frame, (a - 1.08, a + 1.08), (o0 - 0.34, o0), 3.25);
-    gear(
+    let first = gear(
         lib,
-        frame.at(a - 0.35, face - 0.03, 2.35),
-        n,
-        wheel(0.42, 12, 0.04).turned(0.2),
+        wheel(0.42, 12, 0.04)
+            .turned(0.2)
+            .at(frame.at(a - 0.35, face - 0.03, 2.35), n),
     );
     gear(
         lib,
-        frame.at(a + 0.38, face - 0.03, 1.75),
-        n,
-        wheel(0.3, 8, 0.04).old().turned(0.5),
+        first.mesh(across * 0.73 - Vec3::Y * 0.6, 0.0, wheel(0.0, 8, 0.04).old()),
     );
     pendulum(lib, frame.at(a, face - 0.16, 2.9), n, 1.85, 0.2, 0.05);
 }
@@ -325,8 +342,8 @@ fn pendulum(lib: &mut Library, top: Vec3, n: Vec3, len: f32, r: f32, t: f32) {
 }
 
 /// A gear's make: radius to the roots of its teeth, how many teeth, thickness, its
-/// colour and material, how far it is turned (radians), and how fast it turns
-/// (radians a second; see `wheel`).
+/// colour and material, how far it is turned (radians), how fast it turns (radians a
+/// second; see `wheel`), and the mover that carries it, if any.
 #[derive(Clone, Copy)]
 struct Wheel {
     r: f32,
@@ -336,11 +353,14 @@ struct Wheel {
     kind: u32,
     phase: f32,
     rate: f32,
+    rides: Option<u32>,
 }
 
 /// How fast the teeth of the room's wheels go by (metres a second at their roots):
 /// meshing wheels turn at the rates that keep their teeth together.
 const TOOTH_SPEED: f32 = 0.035;
+/// How far a wheel's teeth stand proud of its roots, for its radius.
+const TOOTH: f32 = 0.13;
 
 /// A polished brass wheel, turning as one in a train would.
 fn wheel(r: f32, teeth: usize, t: f32) -> Wheel {
@@ -352,6 +372,7 @@ fn wheel(r: f32, teeth: usize, t: f32) -> Wheel {
         kind: kind::METAL,
         phase: 0.0,
         rate: TOOTH_SPEED / r,
+        rides: None,
     }
 }
 
@@ -368,12 +389,14 @@ impl Wheel {
         Wheel { phase, ..self }
     }
 
-    /// Turning the other way (as the next wheel in a train does).
-    fn backwards(self) -> Self {
-        Wheel {
-            rate: -self.rate,
-            ..self
-        }
+    /// Lying still.
+    fn still(self) -> Self {
+        Wheel { rate: 0.0, ..self }
+    }
+
+    /// Carried by mover `m` as it turns.
+    fn riding(self, m: u32) -> Self {
+        Wheel { rides: Some(m), ..self }
     }
 
     /// Glowing from inside, `w` brightly.
@@ -384,12 +407,59 @@ impl Wheel {
             ..self
         }
     }
+
+    /// Centred on `c`, turning about `axis`.
+    fn at(self, c: Vec3, axis: Vec3) -> Placed {
+        Placed { c, axis, w: self }
+    }
 }
 
-/// A gear centred on `c` turning about `axis`: a toothed rim, spokes and a hub (whole,
-/// when small).
-fn gear(lib: &mut Library, c: Vec3, axis: Vec3, g: Wheel) {
-    const TOOTH: f32 = 0.13;
+/// A wheel in its place: its middle, and the axis it turns about.
+#[derive(Clone, Copy)]
+struct Placed {
+    c: Vec3,
+    axis: Vec3,
+    w: Wheel,
+}
+
+impl Placed {
+    /// `next` meshing with this wheel off toward `dir` (in its plane), `lift` along
+    /// the axis: its radius set by its teeth to this one's pitch, its teeth between
+    /// this one's where they meet, turning the other way at the rate that keeps them
+    /// there.
+    fn mesh(self, dir: Vec3, lift: f32, next: Wheel) -> Placed {
+        let (a, na, nb) = (self.w, self.w.teeth as f32, next.teeth as f32);
+        let r = a.r * nb / na;
+        let d = (dir - self.axis * dir.dot(self.axis)).normalize();
+        let c = self.c + d * (a.r + r + TOOTH * a.r.max(r)) + self.axis * lift;
+        // The way to the other wheel, as an angle in the plane the teeth are laid out
+        // in (see `gear`).
+        let local = Quat::from_rotation_arc(Vec3::Z, self.axis).inverse() * d;
+        let th = libm::atan2f(local.y, local.x);
+        let (step_a, step_b) = (TAU / na, TAU / nb);
+        // How far past that line this wheel's nearest tooth stands (its middle a
+        // quarter step on from where it starts); the other's gap stands as far the
+        // other way, in its own steps.
+        let past = a.phase + 0.25 * step_a - th;
+        let phase = th + PI - past * step_b / step_a - 0.75 * step_b;
+        Placed {
+            c,
+            axis: self.axis,
+            w: Wheel {
+                r,
+                phase,
+                rate: -a.rate * na / nb,
+                rides: a.rides,
+                ..next
+            },
+        }
+    }
+}
+
+/// A gear in its place, turning: a toothed rim, spokes and a hub (whole, when small),
+/// its teeth starting at its phase and going round anticlockwise about its axis.
+fn gear(lib: &mut Library, p: Placed) -> Placed {
+    let (c, axis, g) = (p.c, p.axis, p.w);
     let spokes = if g.r > 0.4 {
         4
     } else if g.r > 0.12 {
@@ -402,8 +472,14 @@ fn gear(lib: &mut Library, c: Vec3, axis: Vec3, g: Wheel) {
     // axis, which an odd number of teeth leaves off the middle of its bounds.
     let size = Vec3::new(shape.size.x * g.r, shape.size.y * g.r, shape.size.z / 0.1 * g.t);
     let rot = Quat::from_rotation_arc(Vec3::Z, axis) * Quat::from_rotation_z(g.phase);
-    let m = lib.mover(c, Motion::Spin { axis, rate: g.rate }, 0.0, None);
-    lib.moving(m, shape.sized(size).at(c, rot, g.kind, g.col));
+    let i = shape.sized(size).at(c, rot, g.kind, g.col);
+    if g.rate == 0.0 && g.rides.is_none() {
+        lib.decor(i);
+    } else {
+        let m = lib.mover(c, Motion::Spin { axis, rate: g.rate }, 0.0, g.rides);
+        lib.moving(m, i);
+    }
+    p
 }
 
 /// A clock dial at `c` facing `n` (level): a cream face, a brass bezel, hour marks
@@ -423,23 +499,12 @@ fn dial(lib: &mut Library, c: Vec3, n: Vec3, r: f32, hour: u32, minute: f32) {
         [0.0; 4],
     ));
     let rim = (r * 0.09).max(0.04);
-    let circle = |k: f32| -> Vec<Vec2> {
-        (0..segs)
-            .map(|i| {
-                Vec2::new(
-                    libm::cosf(i as f32 * TAU / segs as f32),
-                    libm::sinf(i as f32 * TAU / segs as f32),
-                ) * k
-            })
-            .collect()
-    };
-    let bezel = lib.shape(Mesh::ring(&circle(r + rim), &circle(r - 0.01), 0.06));
+    let bezel = lib.shape(Mesh::ring(&circle(r + rim, segs), &circle(r - 0.01, segs), 0.06));
     lib.decor(bezel.inst(c + n * 0.01, facing, kind::METAL, rgba(BRASS_LIT, 1.0)));
-    // Hour marks, long at the quarters.
-    // Small dials only at the quarters.
+    // Hour marks, long at the quarters; small dials only at the quarters.
     let every = if r > 0.5 { 1 } else { 3 };
     for h in (0..12).step_by(every) {
-        let radial = dir(std::f32::consts::FRAC_PI_2 - h as f32 * TAU / 12.0);
+        let radial = dir(FRAC_PI_2 - h as f32 * TAU / 12.0);
         let len = if h % 3 == 0 { r * 0.2 } else { r * 0.11 };
         lib.decor(Inst::new(
             c + radial * (r * 0.9 - len * 0.5) + n * 0.016,
@@ -475,9 +540,14 @@ fn wall_clock(lib: &mut Library, c: Vec3, n: Vec3, r: f32, hour: u32) {
     dial(lib, c + n * 0.03, n, r, hour, (hour * 17 % 60) as f32);
 }
 
-/// The far wall's great clock: a dial over three metres across, its hours glowing,
-/// a pendulum in an open case under it, and moonlit windows either side with gears
-/// over them.
+/// The great clock's hours in Roman figures, its four as clockmakers write it.
+const NUMERALS: [&str; 12] = [
+    "XII", "I", "II", "III", "IIII", "V", "VI", "VII", "VIII", "IX", "X", "XI",
+];
+
+/// The far wall's great clock: a dial over three metres across, its hours glowing
+/// and figured, a pendulum in an open case under it, and moonlit windows either side
+/// with gears meshing over them.
 fn great_clock(lib: &mut Library, frame: &RoomFrame) {
     let out = frame.out();
     let n = -out;
@@ -493,13 +563,20 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
         CASEWORK,
     ));
     dial(lib, c, n, r, 10, 9.0);
-    // Glowing hours: the clock's touch of magic, the time it keeps for the books.
+    // Glowing hours: the clock's touch of magic, the time it keeps for the books;
+    // their figures inside them.
     let side = Vec3::Y.cross(n);
-    for h in 0..12 {
+    let figures = Style {
+        em: 0.17,
+        tracking: 0.02,
+        lettering: Lettering::Ink,
+        color: [0.06, 0.045, 0.035, 1.0],
+    };
+    for (h, figure) in NUMERALS.into_iter().enumerate() {
         let th = h as f32 * TAU / 12.0;
-        let p = c + (side * libm::sinf(th) + Vec3::Y * libm::cosf(th)) * (r * 0.7) + n * 0.03;
+        let radial = side * libm::sinf(th) + Vec3::Y * libm::cosf(th);
         let gem = Inst::new(
-            p,
+            c + radial * (r * 0.7) + n * 0.03,
             on_plane(side + Vec3::Y, n),
             Vec3::new(0.1, 0.1, 0.02),
             kind::CRYSTAL,
@@ -507,6 +584,7 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
             0,
         );
         lib.decor(gem);
+        lib.inscribe(figure, figures, c + radial * (r * 0.53) + n * 0.01, n, 0.4);
     }
     // The pendulum's case: a plinth, posts, a back panel and a crown under the dial.
     let d = wall - 0.28;
@@ -540,7 +618,7 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
     guard(lib, frame, (-0.9, 0.9), (d - 0.02, wall), 2.22);
     pendulum(lib, frame.at(0.0, wall - 0.15, 2.08), n, 1.42, 0.25, 0.06);
     lib.light(c + n * 1.6, 6.0, [1.0, 0.8, 0.55], 0.6, LightKind::Static);
-    // Moonlit windows either side, with gears above them.
+    // Moonlit windows either side, with a pair of wheels meshing above each.
     for s in [-1.0f32, 1.0] {
         let a = s * 4.75;
         let wc = frame.at(a, wall - 0.02, 2.75);
@@ -566,22 +644,21 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
             [0.35, 0.45, 0.9, 0.04],
             0,
         ));
-        gear(
+        let big = gear(
             lib,
-            frame.at(a - s * 0.3, wall - 0.05, 4.85),
-            n,
-            wheel(0.5, 12, 0.05).old().turned(0.4),
+            wheel(0.5, 12, 0.05)
+                .old()
+                .turned(0.4)
+                .at(frame.at(a - s * 0.3, wall - 0.05, 4.85), n),
         );
         gear(
             lib,
-            frame.at(a + s * 0.42, wall - 0.09, 4.62),
-            n,
-            wheel(0.28, 8, 0.05).turned(1.1),
+            big.mesh(frame.across() * (s * 0.72) - Vec3::Y * 0.23, 0.03, wheel(0.0, 8, 0.05)),
         );
     }
 }
 
-/// Panelling, great gears and a clock either side of the door.
+/// Panelling, a great wheel driving a small one and a clock either side of the door.
 fn near_wall(lib: &mut Library, frame: &RoomFrame) {
     let near = RoomFrame::O_NEAR;
     let inner = RoomFrame::A_HALF - UNIT_PITCH * 2.0;
@@ -595,17 +672,16 @@ fn near_wall(lib: &mut Library, frame: &RoomFrame) {
     let n = frame.out();
     for s in [-1.0f32, 1.0] {
         let a = d + s * 4.6;
-        gear(
+        let great = gear(
             lib,
-            frame.at(a, near + 0.06, 3.9),
-            n,
-            wheel(1.15, 18, 0.08).old().turned(0.2),
+            wheel(1.15, 18, 0.08)
+                .old()
+                .turned(0.2)
+                .at(frame.at(a, near + 0.06, 3.9), n),
         );
         gear(
             lib,
-            frame.at(a + s * 1.45, near + 0.1, 4.8),
-            n,
-            wheel(0.52, 10, 0.06).turned(0.5),
+            great.mesh(frame.across() * (s * 1.45) + Vec3::Y * 0.9, 0.04, wheel(0.0, 8, 0.06)),
         );
         wall_clock(
             lib,
@@ -617,12 +693,15 @@ fn near_wall(lib: &mut Library, frame: &RoomFrame) {
     }
 }
 
-/// The workshop by the door: a workbench with a vice, tools, a lamp and a mechanism
-/// half built, a stool; and an automaton (a brass owl) on a plinth across the way.
+/// The workshop by the door: a workbench with a vice, tools, an oil lamp and a
+/// mechanism half built, a stool; and an automaton (a brass owl) on a plinth across
+/// the way.
 fn workshop(lib: &mut Library, frame: &RoomFrame) {
     let (out, across) = (frame.out(), frame.across());
     let (a0, a1, o0, o1) = (-6.6, -3.8, 16.75, 17.65);
     let top = 0.92;
+    let steel = rgba(STEEL, 1.0);
+    let brass = rgba(BRASS_LIT, 1.0);
     lib.decor(piece(
         frame,
         (a0, a1),
@@ -656,7 +735,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
     ));
     guard(lib, frame, (a0, a1), (o0, o1), top);
     let on = |a: f32, o: f32, dy: f32| frame.at(a, o, top + dy);
-    // A vice at the end, tools laid along the edge.
+    // A vice at the end, its screw and tommy bar; tools laid along the edge.
     lib.decor(piece(
         frame,
         (a1 - 0.35, a1 - 0.05),
@@ -673,35 +752,57 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
         kind::METAL,
         STEEL,
     ));
-    let turn = Quat::from_mat3(&Mat3::from_cols(across, Vec3::Y, -out));
-    let tools = [
-        (-6.3, 0.32, 0.03, STEEL),
-        (-6.05, 0.26, 0.02, BRASS_LIT),
-        (-5.85, 0.3, 0.025, STEEL),
-    ];
-    for (k, (a, len, w, rgb)) in tools.into_iter().enumerate() {
-        let q = turn * Quat::from_rotation_y(0.2 * k as f32 - 0.2);
-        lib.decor(Inst::new(
-            on(a, o0 + 0.2, 0.012),
-            q,
-            Vec3::new(w, 0.02, len),
-            kind::METAL,
-            rgba(rgb, 1.0),
-            0,
-        ));
+    let screw = (on(a1 - 0.5, o0 + 0.175, 0.08), on(a1 - 0.3, o0 + 0.175, 0.08));
+    pole(lib, screw.0, screw.1, 0.025, kind::METAL, steel);
+    pole(lib, screw.0 - out * 0.1, screw.0 + out * 0.1, 0.012, kind::METAL, steel);
+    let wood = rgba([0.4, 0.22, 0.09], 1.0);
+    let edge = |a: f32| on(a, o0 + 0.2, 0.014);
+    // A screwdriver: a turned handle and a steel blade.
+    let handle = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.3, 0.0),
+            (0.45, 0.1),
+            (0.5, 0.5),
+            (0.42, 0.85),
+            (0.25, 1.0),
+            (0.0, 1.0),
+        ],
+        12,
+    );
+    let (p, dir) = (edge(-6.3), (-out * 0.95 + across * 0.3).normalize());
+    let along = Quat::from_rotation_arc(Vec3::Y, dir);
+    lib.decor(handle.sized(Vec3::new(0.03, 0.11, 0.03)).at(p, along, kind::WOOD, wood));
+    pole(lib, p + dir * 0.11, p + dir * 0.27, 0.006, kind::METAL, steel);
+    // A hammer: a handle and a head across its end.
+    let (p, dir) = (edge(-6.05), (-out * 0.9 - across * 0.4).normalize());
+    pole(lib, p, p + dir * 0.28, 0.022, kind::WOOD, wood);
+    lib.decor(Inst::new(
+        p + dir * 0.28,
+        Quat::from_rotation_arc(Vec3::Y, dir.cross(Vec3::Y)),
+        Vec3::new(0.03, 0.1, 0.03),
+        kind::METAL,
+        steel,
+        0,
+    ));
+    // Brass dividers, opened a little.
+    let (p, dir) = (edge(-5.8), (-out * 0.95 + across * 0.3).normalize());
+    for s in [-1.0f32, 1.0] {
+        let leg = (dir + Vec3::Y.cross(dir) * (s * 0.12)).normalize();
+        pole(lib, p, p + leg * 0.2, 0.007, kind::METAL, brass);
     }
-    // The mechanism: an open brass frame with gears in it, loose wheels beside it.
+    let pin = lib.shape(Mesh::cylinder(12));
+    lib.decor(
+        pin.sized(Vec3::new(0.02, 0.01, 0.02))
+            .inst(p, Quat::IDENTITY, kind::METAL, brass),
+    );
+    // The mechanism: an open brass frame with a pair of wheels in it, a loose wheel
+    // lying beside it.
     let m = (-5.2, (o0 + o1) * 0.5);
     for (da, d_o) in [(-0.22, -0.16), (0.22, -0.16), (-0.22, 0.16), (0.22, 0.16)] {
-        let (pa, po) = (m.0 + da, m.1 + d_o);
-        lib.decor(piece(
-            frame,
-            (pa - 0.015, pa + 0.015),
-            (po - 0.015, po + 0.015),
-            (top, top + 0.42),
-            kind::METAL,
-            BRASS_LIT,
-        ));
+        let foot = on(m.0 + da, m.1 + d_o, 0.0);
+        pole(lib, foot, foot + Vec3::Y * 0.42, 0.025, kind::METAL, brass);
     }
     lib.decor(piece(
         frame,
@@ -711,69 +812,92 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
         kind::METAL,
         BRASS_LIT,
     ));
-    gear(lib, on(m.0, m.1 - 0.05, 0.22), out, wheel(0.15, 8, 0.02));
+    let driver = gear(lib, wheel(0.11, 8, 0.02).at(on(m.0 - 0.07, m.1 - 0.05, 0.2), out));
     gear(
         lib,
-        on(m.0 + 0.1, m.1 + 0.08, 0.3),
-        out,
-        wheel(0.09, 8, 0.02).old().turned(0.3),
+        driver.mesh(across * 0.8 + Vec3::Y * 0.45, 0.02, wheel(0.0, 6, 0.02).old()),
     );
     gear(
         lib,
-        on(-4.45, o0 + 0.3, 0.012),
-        Vec3::Y,
-        wheel(0.12, 9, 0.02).turned(0.4),
+        wheel(0.12, 9, 0.02)
+            .turned(0.4)
+            .still()
+            .at(on(-4.45, o0 + 0.3, 0.012), Vec3::Y),
     );
-    // A wheel that turns itself, hovering over the work: the bench's bit of magic.
+    // A wheel that turns itself, floating over the work: the bench's bit of magic.
+    let hover = on(-4.6, m.1, 0.7);
+    let float = Motion::Bob {
+        amp: 0.03,
+        period: 5.0,
+        rock: 0.05,
+    };
+    let floating = lib.mover(hover, float, 0.0, None);
     gear(
         lib,
-        on(-4.6, m.1, 0.7),
-        out,
-        wheel(0.17, 8, 0.03).glowing(0.9).turned(0.6),
+        wheel(0.17, 8, 0.03)
+            .glowing(0.9)
+            .turned(0.6)
+            .riding(floating)
+            .at(hover, out),
     );
-    lib.light(on(-4.6, m.1, 0.7), 2.5, GLOW, 0.5, LightKind::Static);
-    // An oil lamp.
+    lib.light_riding(floating, hover, 2.5, GLOW, 0.5, LightKind::Static);
+    // An oil lamp: a brass font, a glass chimney, its flame.
     let lamp = on(-6.35, o1 - 0.2, 0.0);
-    lib.decor(Inst::aabox(
-        lamp + Vec3::Y * 0.05,
-        Vec3::new(0.14, 0.1, 0.14),
-        kind::METAL,
-        BRASS_LIT,
-    ));
-    let mut chimney = Inst::aabox(
-        lamp + Vec3::Y * 0.17,
-        Vec3::new(0.09, 0.14, 0.09),
-        kind::EMISSIVE,
-        [1.0, 0.7, 0.35],
+    let font = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.07, 0.0),
+            (0.07, 0.01),
+            (0.04, 0.03),
+            (0.035, 0.05),
+            (0.065, 0.08),
+            (0.06, 0.11),
+            (0.035, 0.13),
+            (0.0, 0.13),
+        ],
+        24,
     );
-    chimney.color[3] = 2.0;
-    chimney.param = 1;
-    lib.decor(chimney);
-    lib.light(lamp + Vec3::Y * 0.4, 4.5, [1.0, 0.62, 0.3], 0.8, LightKind::Flicker);
-    // A stool at the bench.
-    let st = (-5.0, o0 - 0.5);
-    lib.decor(piece(
-        frame,
-        (st.0 - 0.2, st.0 + 0.2),
-        (st.1 - 0.2, st.1 + 0.2),
-        (0.62, 0.67),
-        kind::WOOD,
-        WALNUT,
+    lib.decor(font.at(lamp, Quat::IDENTITY, kind::METAL, brass));
+    let chimney = turned_open(
+        lib,
+        &[(0.032, 0.0), (0.045, 0.04), (0.045, 0.08), (0.025, 0.14), (0.025, 0.2)],
+        24,
+    );
+    lib.translucent(chimney.at(
+        lamp + Vec3::Y * 0.13,
+        Quat::IDENTITY,
+        kind::CLEAR,
+        [0.95, 0.9, 0.8, 0.08],
     ));
-    for (da, d_o) in [(-0.15, -0.15), (0.15, -0.15), (-0.15, 0.15), (0.15, 0.15)] {
-        let (pa, po) = (st.0 + da, st.1 + d_o);
-        lib.decor(piece(
-            frame,
-            (pa - 0.025, pa + 0.025),
-            (po - 0.025, po + 0.025),
-            (0.0, 0.62),
+    lib.translucent(flame(lamp + Vec3::Y * 0.135, 0.022, 0.05));
+    lib.light(lamp + Vec3::Y * 0.4, 4.5, [1.0, 0.62, 0.3], 0.8, LightKind::Flicker);
+    // A stool at the bench: a round seat on turned legs.
+    let st = (-5.0, o0 - 0.5);
+    let seat = lib.shape(Mesh::cylinder(24));
+    lib.decor(seat.sized(Vec3::new(0.38, 0.05, 0.38)).inst(
+        frame.at(st.0, st.1, 0.645),
+        Quat::IDENTITY,
+        kind::WOOD,
+        rgba(WALNUT, 1.0),
+    ));
+    let leg = turned_leg(lib);
+    for (da, d_o) in [(-0.12, -0.12), (0.12, -0.12), (-0.12, 0.12), (0.12, 0.12)] {
+        lib.decor(leg.sized(Vec3::new(0.05, 0.62, 0.05)).at(
+            frame.at(st.0 + da, st.1 + d_o, 0.0),
+            Quat::IDENTITY,
             kind::WOOD,
-            DARK_WOOD,
+            rgba(DARK_WOOD, 1.0),
         ));
     }
     guard(lib, frame, (st.0 - 0.22, st.0 + 0.22), (st.1 - 0.22, st.1 + 0.22), 0.67);
-    // The automaton: a brass owl on a plinth, its eyes lit.
-    let (pa, po) = (5.6, 18.6);
+    owl(lib, frame, 5.6, 18.6);
+}
+
+/// The automaton: a brass owl on a plinth at `pa`, `po`, its eyes lit, turning its
+/// head now and then to look about the room.
+fn owl(lib: &mut Library, frame: &RoomFrame, pa: f32, po: f32) {
+    let across = frame.across();
     lib.solid(
         piece(
             frame,
@@ -794,68 +918,124 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
         [0.48, 0.45, 0.4],
     ));
     let base = frame.at(pa, po, 1.06);
-    let face = -out;
-    let owl = |lib: &mut Library, off: Vec3, size: Vec3, rgb: [f32; 3], q: Quat| {
-        lib.decor(Inst::new(base + off, turn * q, size, kind::METAL, rgba(rgb, 1.0), 0));
-    };
-    owl(
+    // It faces the door, as the room's frame does (z toward the door).
+    let face = -frame.out();
+    let turn = frame.turn();
+    let (old, lit, steel) = (rgba(BRASS_OLD, 1.0), rgba(BRASS_LIT, 1.0), rgba(STEEL, 1.0));
+    let perch = turned(
         lib,
-        Vec3::Y * 0.28,
-        Vec3::new(0.34, 0.46, 0.3),
-        BRASS_OLD,
-        Quat::IDENTITY,
+        &[(0.0, 0.0), (0.5, 0.0), (0.5, 0.3), (0.4, 0.5), (0.42, 1.0), (0.0, 1.0)],
+        24,
     );
-    owl(
-        lib,
-        Vec3::Y * 0.27 + face * 0.04,
-        Vec3::new(0.26, 0.4, 0.3),
-        BRASS_LIT,
-        Quat::from_rotation_y(0.785),
+    lib.decor(
+        perch
+            .sized(Vec3::new(0.3, 0.05, 0.3))
+            .at(base, Quat::IDENTITY, kind::METAL, old),
     );
-    owl(
+    // The body, an egg of old brass, a brighter breast on it, wings folded at its
+    // sides, talons gripping the perch.
+    let body = turned(
         lib,
-        Vec3::Y * 0.62,
-        Vec3::new(0.3, 0.24, 0.26),
-        BRASS_OLD,
-        Quat::from_rotation_y(0.785),
+        &[
+            (0.0, 0.0),
+            (0.3, 0.0),
+            (0.42, 0.08),
+            (0.49, 0.25),
+            (0.5, 0.42),
+            (0.46, 0.6),
+            (0.38, 0.76),
+            (0.25, 0.9),
+            (0.0, 0.96),
+        ],
+        32,
+    );
+    let foot = base + Vec3::Y * 0.05;
+    lib.decor(body.sized(Vec3::new(0.32, 0.46, 0.28)).at(foot, turn, kind::METAL, old));
+    let round = lib.shape(Mesh::sphere(24));
+    lib.decor(
+        round
+            .sized(Vec3::new(0.22, 0.3, 0.1))
+            .inst(foot + Vec3::Y * 0.21 + face * 0.1, turn, kind::METAL, lit),
     );
     for s in [-1.0f32, 1.0] {
-        // Ear tufts and folded wings.
-        owl(
-            lib,
-            Vec3::Y * 0.77 + across * (s * 0.1),
-            Vec3::new(0.05, 0.12, 0.05),
-            BRASS_LIT,
-            Quat::from_rotation_z(-s * 0.4),
-        );
-        owl(
-            lib,
-            Vec3::Y * 0.3 + across * (s * 0.17),
-            Vec3::new(0.05, 0.36, 0.24),
-            BRASS_LIT,
-            Quat::from_rotation_z(s * 0.15),
-        );
-        let eye = base + Vec3::Y * 0.64 + across * (s * 0.075) + face * 0.19;
-        let lit = turn * Quat::from_rotation_z(0.785);
-        lib.decor(Inst::new(
-            eye,
+        // Folded along its side, leaning out a little at the top and trailing behind.
+        let fold = turn * Quat::from_rotation_z(-s * 0.12) * Quat::from_rotation_x(-0.25);
+        lib.decor(round.sized(Vec3::new(0.07, 0.36, 0.22)).inst(
+            foot + Vec3::Y * 0.21 + across * (s * 0.135) - face * 0.03,
+            fold,
+            kind::METAL,
             lit,
-            Vec3::new(0.06, 0.06, 0.03),
-            kind::CRYSTAL,
-            [1.0, 0.75, 0.25, 2.5],
-            0,
         ));
+        for k in 0..3 {
+            let toe = foot + across * (s * 0.05 + (k as f32 - 1.0) * 0.022) + face * 0.11;
+            pole(lib, toe, toe + face * 0.05 - Vec3::Y * 0.04, 0.014, kind::METAL, steel);
+        }
     }
-    owl(
-        lib,
-        Vec3::Y * 0.57 + face * 0.17,
-        Vec3::new(0.05, 0.08, 0.06),
-        STEEL,
-        Quat::from_rotation_x(0.5),
+    // The head, looking about: a slow turn, and a glance on top of it.
+    let neck = foot + Vec3::Y * 0.44;
+    let look = Motion::Swing {
+        axis: Vec3::Y,
+        amp: 0.6,
+        period: 13.0,
+    };
+    let glance = Motion::Swing {
+        axis: Vec3::Y,
+        amp: 0.3,
+        period: 5.3,
+    };
+    let looking = lib.mover(neck, look, 0.0, None);
+    let head = lib.mover(neck, glance, 1.7, Some(looking));
+    let crown = neck + Vec3::Y * 0.12;
+    lib.moving(
+        head,
+        round
+            .sized(Vec3::new(0.28, 0.23, 0.25))
+            .inst(crown, turn, kind::METAL, old),
+    );
+    let disc = lib.shape(Mesh::cylinder(24));
+    let flat = Quat::from_rotation_arc(Vec3::Y, face);
+    let cone = lib.shape(Mesh::cone(12));
+    for s in [-1.0f32, 1.0] {
+        let eye = crown + Vec3::Y * 0.015 + across * (s * 0.065) + face * 0.105;
+        lib.moving(
+            head,
+            disc.sized(Vec3::new(0.12, 0.012, 0.12))
+                .inst(eye, flat, kind::METAL, lit),
+        );
+        lib.moving(
+            head,
+            disc.sized(Vec3::new(0.055, 0.012, 0.055)).inst(
+                eye + face * 0.008,
+                flat,
+                kind::CRYSTAL,
+                [1.0, 0.75, 0.25, 2.5],
+            ),
+        );
+        let tuft = (Vec3::Y + across * (s * 0.45)).normalize();
+        lib.moving(
+            head,
+            cone.sized(Vec3::new(0.05, 0.1, 0.035)).inst(
+                crown + Vec3::Y * 0.11 + across * (s * 0.085),
+                Quat::from_rotation_arc(Vec3::Y, tuft),
+                kind::METAL,
+                lit,
+            ),
+        );
+    }
+    let beak = (face * 0.6 - Vec3::Y * 0.8).normalize();
+    lib.moving(
+        head,
+        cone.sized(Vec3::new(0.035, 0.06, 0.035)).inst(
+            crown - Vec3::Y * 0.035 + face * 0.13,
+            Quat::from_rotation_arc(Vec3::Y, beak),
+            kind::METAL,
+            steel,
+        ),
     );
 }
 
-/// Beams across the ceiling, and trains of flat gears meshing under it.
+/// Beams across the ceiling, and trains of flat gears meshing under it, each wheel on
+/// an arbor up into the ceiling.
 fn ceiling(lib: &mut Library, frame: &RoomFrame) {
     let h = RoomFrame::HEIGHT;
     let inner = RoomFrame::A_HALF;
@@ -869,36 +1049,27 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
             [0.11, 0.055, 0.025],
         ));
     }
-    // Down the middle between the pillars, and across the far end.
     let y = h - 0.42;
-    let middle: &[(f32, usize)] = &[(0.7, 14), (0.38, 8), (0.9, 18)];
-    let far: &[(f32, usize)] = &[(0.55, 12), (0.3, 8), (0.7, 16), (0.3, 8), (0.55, 12)];
-    for (wheels, along_o) in [(middle, true), (far, false)] {
-        // Centres along the train, each wheel meshing with the last.
-        let mut at = vec![0.0f32];
-        for w in wheels.windows(2) {
-            at.push(at[at.len() - 1] + w[0].0 + w[1].0 + 0.1);
-        }
-        let shift = if along_o { 22.0 } else { -at[at.len() - 1] * 0.5 };
-        for (k, (&(r, teeth), &p)) in wheels.iter().zip(&at).enumerate() {
-            let wobble = if k % 2 == 0 { 0.0 } else { 0.22 };
-            let (a, o) = if along_o {
-                (wobble, shift + p)
-            } else {
-                (shift + p, 29.1 + wobble)
-            };
-            let g = wheel(r, teeth, 0.05).turned(k as f32 * 0.4);
-            let g = if k % 2 == 0 { g.old() } else { g.backwards() };
-            gear(lib, frame.at(a, o, y - 0.03 * (k % 2) as f32), Vec3::Y, g);
-            // Its arbor, up into the ceiling.
-            lib.decor(piece(
-                frame,
-                (a - 0.03, a + 0.03),
-                (o - 0.03, o + 0.03),
-                (y, h),
-                kind::METAL,
-                STEEL,
-            ));
+    let (out, across) = (frame.out(), frame.across());
+    // Down the middle between the pillars, and across the far end: each wheel set a
+    // little to one side of the last and a hair above or below it, old brass and
+    // polished in turn.
+    let trains: [(Vec3, Vec3, Vec3, f32, &[usize]); 2] = [
+        (frame.at(0.0, 22.0, y), out, across, 0.7, &[14, 8, 18]),
+        (frame.at(-2.15, 29.1, y), across, out, 0.55, &[12, 8, 16, 8, 12]),
+    ];
+    for (start, along, aside, r, teeth) in trains {
+        let mut p = wheel(r, teeth[0], 0.05).old().at(start, Vec3::Y);
+        for (k, &n) in teeth.iter().enumerate() {
+            if k > 0 {
+                let (side, lift) = if k % 2 == 1 { (0.19, -0.03) } else { (-0.19, 0.03) };
+                let next = wheel(0.0, n, 0.05);
+                let next = if k % 2 == 0 { next.old() } else { next };
+                p = p.mesh(along + aside * side, lift, next);
+            }
+            gear(lib, p);
+            let arbor = Vec3::new(p.c.x, frame.y + h, p.c.z);
+            pole(lib, p.c, arbor, 0.06, kind::METAL, rgba(STEEL, 1.0));
         }
     }
 }

@@ -1,11 +1,16 @@
 //! The Hearth Library: department 11, top floor, west side. Wall cases all round
 //! the room; at the far wall an inglenook, two runs of cases standing out either
-//! side of a great fireplace, armchairs and a tea table on a rug before the fire, a
-//! sofa across its mouth; two short screens of cases by the door; reading chairs, a
-//! spinning wheel and a barrel about the room, herbs drying from the beams. Candles
-//! float over the hearth, and a pair of needles knits on its own by a chair.
+//! side of a great fireplace, its fire burning and its smoke going up the flue,
+//! armchairs and a tea table on a rug before it, a sofa across its mouth; two short
+//! screens of cases by the door; reading chairs, a spinning wheel turning and a
+//! barrel about the room, herbs drying from the beams and stirring in the warm air.
+//! Candles float over the hearth, bobbing, and a pair of needles knits on its own by
+//! a chair.
+//!
+//! The candles, flames and turned pieces the top floor's rooms share are made here.
 
 use super::*;
+use std::f32::consts::{FRAC_PI_2, PI};
 
 /// A wall case's depth from the wall to its face.
 const WALL_D: f32 = 0.04 + FACE_DEPTH;
@@ -22,8 +27,13 @@ const STONE_WARM: [f32; 3] = [0.46, 0.4, 0.34];
 const SOOT: [f32; 3] = [0.05, 0.04, 0.035];
 const IRON: [f32; 3] = [0.1, 0.1, 0.11];
 const BRASS: [f32; 3] = [0.7, 0.5, 0.2];
+const COPPER: [f32; 3] = [0.55, 0.3, 0.15];
+const CHINA: [f32; 3] = [0.85, 0.85, 0.8];
 const UPHOLSTERY: [f32; 3] = [0.28, 0.065, 0.05];
 const GREEN_CLOTH: [f32; 3] = [0.14, 0.26, 0.14];
+/// Candle wax, and a candle's flame: its colour and brightness.
+pub(super) const WAX: [f32; 3] = [0.85, 0.8, 0.65];
+pub(super) const FLAME: [f32; 4] = [1.0, 0.62, 0.25, 4.0];
 
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     debug_assert!(
@@ -52,23 +62,161 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     ceiling(lib, frame);
 }
 
-/// A candle standing at `p`, `h` tall, its flame lit.
-fn candle(lib: &mut Library, p: Vec3, h: f32) {
-    lib.decor(Inst::aabox(
+/// Down where its kind is drawn: in the translucent pass (flames, mist, clear glass)
+/// or with the rest.
+pub(super) fn lay(lib: &mut Library, i: Inst) {
+    if kind::translucent(i.kind) {
+        lib.translucent(i);
+    } else {
+        lib.decor(i);
+    }
+}
+
+/// `n` points round a circle of radius `r` in xy, anticlockwise from +x.
+pub(super) fn circle(r: f32, n: usize) -> Vec<Vec2> {
+    (0..n)
+        .map(|k| {
+            let a = k as f32 / n as f32 * TAU;
+            Vec2::new(libm::cosf(a), libm::sinf(a)) * r
+        })
+        .collect()
+}
+
+/// A solid turned from `profile`, (radius, height) pairs up its outside (`Mesh::lathe`).
+pub(super) fn turned(lib: &mut Library, profile: &[(f32, f32)], segs: usize) -> Shape {
+    lib.shape(Mesh::lathe(&profile_of(profile), segs))
+}
+
+/// An open shell turned from `profile` (a glass, a bowl), seen from both sides.
+pub(super) fn turned_open(lib: &mut Library, profile: &[(f32, f32)], segs: usize) -> Shape {
+    lib.shape(Mesh::lathe(&profile_of(profile), segs).two_sided())
+}
+
+pub(super) fn profile_of(profile: &[(f32, f32)]) -> Vec<Vec2> {
+    profile.iter().map(|&(r, h)| Vec2::new(r, h)).collect()
+}
+
+/// A round rod from `p` to `q`, `d` across.
+pub(super) fn pole_inst(lib: &mut Library, p: Vec3, q: Vec3, d: f32, kind: u32, col: [f32; 4]) -> Inst {
+    let segs = if d < 0.03 {
+        8
+    } else if d < 0.1 {
+        12
+    } else {
+        24
+    };
+    let v = q - p;
+    let len = v.length();
+    lib.shape(Mesh::cylinder(segs)).sized(Vec3::new(d, len, d)).inst(
+        (p + q) * 0.5,
+        Quat::from_rotation_arc(Vec3::Y, v / len),
+        kind,
+        col,
+    )
+}
+
+pub(super) fn pole(lib: &mut Library, p: Vec3, q: Vec3, d: f32, kind: u32, col: [f32; 4]) {
+    let i = pole_inst(lib, p, q, d, kind, col);
+    lib.decor(i);
+}
+
+/// A turned leg 1 high and 1 across at its widest (the block at its top), to be sized.
+pub(super) fn turned_leg(lib: &mut Library) -> Shape {
+    let profile = [
+        (0.0, 0.0),
+        (0.3, 0.0),
+        (0.34, 0.03),
+        (0.26, 0.07),
+        (0.2, 0.2),
+        (0.24, 0.34),
+        (0.36, 0.44),
+        (0.24, 0.55),
+        (0.19, 0.68),
+        (0.24, 0.8),
+        (0.34, 0.84),
+        (0.5, 0.86),
+        (0.5, 1.0),
+        (0.0, 1.0),
+    ];
+    turned(lib, &profile, 12)
+}
+
+/// A bun foot 1 high and 1 across, to be sized.
+fn bun_foot(lib: &mut Library) -> Shape {
+    let profile = [
+        (0.0, 0.0),
+        (0.3, 0.0),
+        (0.46, 0.12),
+        (0.5, 0.32),
+        (0.44, 0.52),
+        (0.32, 0.62),
+        (0.3, 0.82),
+        (0.4, 0.86),
+        (0.4, 1.0),
+        (0.0, 1.0),
+    ];
+    turned(lib, &profile, 12)
+}
+
+/// A candle's flame standing on `p`, `w` across and `h` tall.
+pub(super) fn flame(p: Vec3, w: f32, h: f32) -> Inst {
+    Inst::new(
         p + Vec3::Y * (h * 0.5),
-        Vec3::new(0.045, h, 0.045),
-        kind::PLAIN,
-        [0.85, 0.8, 0.65],
-    ));
-    let mut flame = Inst::aabox(
-        p + Vec3::Y * (h + 0.04),
-        Vec3::new(0.025, 0.055, 0.025),
-        kind::EMISSIVE,
-        [1.0, 0.55, 0.18],
+        Quat::IDENTITY,
+        Vec3::new(w, h, w),
+        kind::FIRE,
+        FLAME,
+        0,
+    )
+}
+
+/// A candle standing at `p`, `h` tall: its wax and its flame, for laying down (`lay`)
+/// or for a mover to carry.
+pub(super) fn candle_parts(lib: &mut Library, p: Vec3, h: f32) -> [Inst; 2] {
+    let wax = turned(lib, &[(0.0, 0.0), (0.5, 0.0), (0.5, 0.95), (0.4, 1.0), (0.0, 0.97)], 12);
+    [
+        wax.sized(Vec3::new(0.045, h, 0.045))
+            .at(p, Quat::IDENTITY, kind::PLAIN, rgba(WAX, 1.0)),
+        flame(p + Vec3::Y * (h + 0.004), 0.026, 0.06),
+    ]
+}
+
+/// A candle standing at `p`, `h` tall, lit.
+pub(super) fn candle(lib: &mut Library, p: Vec3, h: f32) {
+    for i in candle_parts(lib, p, h) {
+        lay(lib, i);
+    }
+}
+
+/// A candle in a hurricane glass on a brass foot, standing at `p`.
+pub(super) fn hurricane_lamp(lib: &mut Library, p: Vec3) {
+    let foot = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.075, 0.0),
+            (0.075, 0.012),
+            (0.06, 0.025),
+            (0.052, 0.04),
+            (0.0, 0.04),
+        ],
+        24,
     );
-    flame.color[3] = 14.0;
-    flame.param = 1;
-    lib.decor(flame);
+    lib.decor(foot.at(p, Quat::IDENTITY, kind::METAL, rgba(BRASS, 1.0)));
+    candle(lib, p + Vec3::Y * 0.04, 0.16);
+    let glass = turned_open(
+        lib,
+        &[
+            (0.046, 0.0),
+            (0.06, 0.05),
+            (0.07, 0.13),
+            (0.058, 0.22),
+            (0.045, 0.28),
+            (0.046, 0.3),
+        ],
+        24,
+    );
+    lib.translucent(glass.at(p + Vec3::Y * 0.04, Quat::IDENTITY, kind::CLEAR, [0.9, 0.85, 0.75, 0.08]));
 }
 
 /// Wall cases round the room: two either side of the door, six down each side wall,
@@ -154,7 +302,7 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
     }
 }
 
-/// Panelling where the walls show, and a painting over the door's panelling.
+/// Panelling where the walls show.
 fn walls(lib: &mut Library, frame: &RoomFrame) {
     let side = frame.side;
     let (near, far) = (RoomFrame::O_NEAR, RoomFrame::O_FAR);
@@ -178,8 +326,8 @@ fn walls(lib: &mut Library, frame: &RoomFrame) {
 }
 
 /// The great fireplace: a stone chimney breast to the ceiling, a firebox with logs
-/// burning on firedogs and a kettle hung over them, a hearthstone, a mantel with
-/// candles and a clock, a painting over it.
+/// burning on firedogs, smoke going up the flue and a kettle hung over the fire, a
+/// hearthstone, a mantel with candles, a clock and jars, a painting over it.
 fn fireplace(lib: &mut Library, frame: &RoomFrame) {
     let far = RoomFrame::O_FAR;
     let h = RoomFrame::HEIGHT;
@@ -247,8 +395,9 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::STONE,
         [0.12, 0.09, 0.07],
     ));
-    // Firedogs, logs, embers and flames.
+    // Firedogs with brass knobs, logs, embers, the fire and its smoke.
     let fire_o = far - 0.27;
+    let knob = lib.shape(Mesh::sphere(12));
     for s in [-1.0f32, 1.0] {
         let x = s * 0.5;
         lib.decor(piece(
@@ -267,29 +416,29 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
             kind::METAL,
             IRON,
         ));
-        lib.decor(piece(
-            frame,
-            (x - 0.045, x + 0.045),
-            (fire_o - 0.25, fire_o - 0.16),
-            (0.34, 0.39),
+        lib.decor(knob.sized(Vec3::splat(0.085)).inst(
+            frame.at(x, fire_o - 0.205, 0.375),
+            Quat::IDENTITY,
             kind::METAL,
-            BRASS,
+            rgba(BRASS, 1.0),
         ));
     }
     let q = frame.turn();
+    let log = lib.shape(Mesh::cylinder(12));
     for (k, (da, dy, yaw)) in [(0.0f32, 0.17f32, 0.08f32), (-0.12, 0.27, -0.25), (0.15, 0.26, 0.3)]
         .into_iter()
         .enumerate()
     {
-        let log = Inst::new(
+        let lie = q
+            * Quat::from_rotation_y(FRAC_PI_2 + yaw)
+            * Quat::from_rotation_z(0.05 * k as f32)
+            * Quat::from_rotation_x(FRAC_PI_2);
+        lib.decor(log.sized(Vec3::new(0.15, 1.0, 0.13)).inst(
             frame.at(da, fire_o + 0.02 * k as f32, dy),
-            q * Quat::from_rotation_y(1.571 + yaw) * Quat::from_rotation_z(0.05 * k as f32),
-            Vec3::new(0.15, 0.13, 1.0),
+            lie,
             kind::WOOD,
             [0.12, 0.06, 0.03, 1.0],
-            0,
-        );
-        lib.decor(log);
+        ));
     }
     let mut embers = piece(
         frame,
@@ -302,32 +451,29 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
     embers.color[3] = 1.6;
     embers.param = 1;
     lib.decor(embers);
-    let flames = [
-        (0.0, 0.62, 0.22, 0.0),
-        (-0.22, 0.5, 0.17, 0.25),
-        (0.24, 0.48, 0.16, -0.3),
-        (-0.4, 0.34, 0.12, 0.4),
-        (0.42, 0.36, 0.12, -0.35),
-        (0.1, 0.42, 0.14, 0.6),
-    ];
-    for (k, (da, tall, w, lean)) in flames.into_iter().enumerate() {
-        let col = if k % 2 == 0 {
-            [1.0, 0.42, 0.08]
-        } else {
-            [1.0, 0.62, 0.18]
-        };
-        let base = frame.at(da, fire_o - 0.02 + 0.03 * (k % 3) as f32, 0.28);
-        let rot = q * Quat::from_rotation_z(lean * 0.4) * Quat::from_rotation_y(0.785);
-        let f = Inst::new(
-            base + Vec3::Y * (tall * 0.5),
-            rot,
-            Vec3::new(w, tall, w),
-            kind::EMISSIVE,
-            [col[0], col[1], col[2], 2.6],
+    // A broad body of flame over the logs, a tongue either side.
+    for (da, d_o, w, tall, yaw) in [
+        (0.0f32, 0.0f32, 0.95f32, 0.72f32, 0.0f32),
+        (-0.34, 0.03, 0.42, 0.5, 0.35),
+        (0.32, -0.02, 0.4, 0.56, -0.3),
+    ] {
+        lib.translucent(Inst::new(
+            frame.at(da, fire_o + d_o, 0.12 + tall * 0.5),
+            q * Quat::from_rotation_y(yaw),
+            Vec3::new(w, tall, 0.34),
+            kind::FIRE,
+            [1.0, 0.48, 0.14, 1.5],
             1,
-        );
-        lib.decor(f);
+        ));
     }
+    lib.translucent(Inst::new(
+        frame.at(0.0, far - 0.25, 1.08),
+        q,
+        Vec3::new(0.8, 0.5, 0.3),
+        kind::MIST,
+        [0.3, 0.28, 0.27, 0.6],
+        0,
+    ));
     lib.light(
         frame.at(0.0, face - 0.6, 0.8),
         10.0,
@@ -336,61 +482,28 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         LightKind::Flicker,
     );
     // A kettle on a crane over the fire.
+    let iron = rgba(IRON, 1.0);
     let pivot = frame.at(-open + 0.08, fire_o, 0.0);
-    rod(
-        lib,
-        pivot,
-        pivot + Vec3::Y * 1.1,
-        0.04,
-        0.04,
-        kind::METAL,
-        rgba(IRON, 1.0),
-    );
-    rod(
+    pole(lib, pivot, pivot + Vec3::Y * 1.1, 0.04, kind::METAL, iron);
+    pole(
         lib,
         pivot + Vec3::Y * 1.05,
         frame.at(-0.15, fire_o, 1.05),
         0.035,
-        0.035,
         kind::METAL,
-        rgba(IRON, 1.0),
+        iron,
     );
-    rod(
+    pole(
         lib,
-        frame.at(-0.2, fire_o, 1.05),
-        frame.at(-0.2, fire_o, 0.86),
-        0.015,
+        frame.at(-0.2, fire_o, 1.07),
+        frame.at(-0.2, fire_o, 0.9),
         0.015,
         kind::METAL,
-        rgba(IRON, 1.0),
+        iron,
     );
-    let kettle = frame.at(-0.2, fire_o, 0.74);
-    lib.decor(Inst::new(
-        kettle,
-        Quat::from_rotation_y(0.4),
-        Vec3::new(0.26, 0.2, 0.26),
-        kind::METAL,
-        [0.55, 0.3, 0.15, 1.0],
-        0,
-    ));
-    lib.decor(Inst::new(
-        kettle + Vec3::Y * 0.12,
-        Quat::from_rotation_y(0.4),
-        Vec3::new(0.14, 0.05, 0.14),
-        kind::METAL,
-        [0.55, 0.3, 0.15, 1.0],
-        0,
-    ));
-    rod(
-        lib,
-        kettle + q * Vec3::new(0.12, 0.0, 0.0),
-        kettle + q * Vec3::new(0.24, 0.1, 0.0),
-        0.03,
-        0.03,
-        kind::METAL,
-        [0.55, 0.3, 0.15, 1.0],
-    );
-    // The mantel: a shelf on corbels, candles, a clock, jars of remedies.
+    kettle(lib, frame.at(-0.2, fire_o, 0.6), q * Quat::from_rotation_y(0.4));
+    // The mantel: a shelf on corbels, candles in brass sticks, a clock, jars of
+    // remedies.
     let my = top + 0.45;
     lib.decor(piece(
         frame,
@@ -400,6 +513,22 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::WOOD,
         WALNUT,
     ));
+    let stick = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.5, 0.0),
+            (0.5, 0.08),
+            (0.2, 0.18),
+            (0.14, 0.5),
+            (0.2, 0.74),
+            (0.16, 0.84),
+            (0.36, 0.92),
+            (0.36, 1.0),
+            (0.0, 1.0),
+        ],
+        16,
+    );
     for s in [-1.0f32, 1.0] {
         let x = s * (BREAST - 0.15);
         lib.decor(piece(
@@ -410,36 +539,53 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
             kind::WOOD,
             WALNUT,
         ));
-        candle(lib, frame.at(s * 1.75, face - 0.12, my), 0.24);
-        candle(lib, frame.at(s * 1.55, face - 0.12, my), 0.17);
+        for (a, tall) in [(1.75, 0.24), (1.55, 0.17)] {
+            let foot = frame.at(s * a, face - 0.12, my);
+            lib.decor(
+                stick
+                    .sized(Vec3::new(0.09, 0.14, 0.09))
+                    .at(foot, Quat::IDENTITY, kind::METAL, rgba(BRASS, 1.0)),
+            );
+            candle(lib, foot + Vec3::Y * 0.14, tall);
+        }
     }
-    lib.decor(piece(
-        frame,
-        (-0.2, 0.2),
-        (face - 0.18, face - 0.02),
-        (my, my + 0.34),
-        kind::WOOD,
-        [0.22, 0.1, 0.04],
-    ));
-    lib.decor(piece(
-        frame,
-        (-0.13, 0.13),
-        (face - 0.185, face - 0.17),
-        (my + 0.12, my + 0.3),
-        kind::PAPER,
-        [0.0; 3],
-    ));
+    mantel_clock(lib, frame, frame.at(0.0, face - 0.1, my), -frame.out());
+    let jar = turned_open(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.47, 0.0),
+            (0.5, 0.06),
+            (0.5, 0.84),
+            (0.4, 0.92),
+            (0.36, 1.0),
+        ],
+        16,
+    );
+    let plug = lib.shape(Mesh::cylinder(12));
     for (k, a) in [-1.1f32, -0.9, 0.85, 1.05].into_iter().enumerate() {
         let col = [[0.3, 0.45, 0.25], [0.5, 0.3, 0.15], [0.35, 0.3, 0.5], [0.55, 0.45, 0.2]][k];
-        lib.decor(piece(
-            frame,
-            (a - 0.06, a + 0.06),
-            (face - 0.16, face - 0.04),
-            (my, my + 0.16 + 0.03 * k as f32),
-            kind::CRYSTAL,
-            col,
+        let tall = 0.16 + 0.03 * k as f32;
+        let foot = frame.at(a, face - 0.1, my);
+        lib.translucent(jar.sized(Vec3::new(0.11, tall, 0.11)).at(
+            foot,
+            Quat::IDENTITY,
+            kind::CLEAR,
+            [0.8, 0.88, 0.8, 0.12],
         ));
-        lib.static_insts.last_mut().unwrap().color[3] = 0.1;
+        let fill = tall * (0.45 + 0.15 * (k % 2) as f32);
+        lib.decor(plug.sized(Vec3::new(0.095, fill, 0.095)).inst(
+            foot + Vec3::Y * (0.006 + fill * 0.5),
+            Quat::IDENTITY,
+            kind::PLAIN,
+            rgba(col, 1.0),
+        ));
+        lib.decor(plug.sized(Vec3::new(0.08, 0.035, 0.08)).inst(
+            foot + Vec3::Y * (tall + 0.008),
+            Quat::IDENTITY,
+            kind::WOOD,
+            [0.5, 0.36, 0.2, 1.0],
+        ));
     }
     // A painting over it: hills under a moon.
     let (py, ph, pw) = (3.6, 1.3, 2.0);
@@ -478,15 +624,105 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
     lib.decor(moon);
 }
 
+/// A copper kettle with its foot at `p`, turned by `rot` (its spout along x): a round
+/// body, a lid with a knob, a spout, and a bail over it to hang it by.
+fn kettle(lib: &mut Library, p: Vec3, rot: Quat) {
+    let mut m = Mesh::lathe(
+        &profile_of(&[
+            (0.0, 0.0),
+            (0.09, 0.0),
+            (0.12, 0.03),
+            (0.135, 0.08),
+            (0.125, 0.13),
+            (0.09, 0.17),
+            (0.05, 0.185),
+            (0.05, 0.2),
+            (0.03, 0.205),
+            (0.025, 0.225),
+            (0.0, 0.23),
+        ]),
+        24,
+    );
+    let spout: Vec<Vec3> = (0..6)
+        .map(|k| {
+            let t = k as f32 / 5.0;
+            Vec3::new(0.1 + 0.12 * t, 0.05 + 0.1 * t + 0.04 * t * t, 0.0)
+        })
+        .collect();
+    m.add(
+        &Mesh::sweep(&spout, &[0.022, 0.011], &circle(1.0, 8), true),
+        Vec3::ZERO,
+        Quat::IDENTITY,
+        Vec3::ONE,
+    );
+    let bail: Vec<Vec3> = (0..=12)
+        .map(|k| {
+            let a = k as f32 / 12.0 * PI;
+            Vec3::new(0.0, 0.17 + 0.13 * libm::sinf(a), 0.13 * libm::cosf(a))
+        })
+        .collect();
+    m.add(
+        &Mesh::sweep(&bail, &[0.006], &circle(1.0, 6), true),
+        Vec3::ZERO,
+        Quat::IDENTITY,
+        Vec3::ONE,
+    );
+    let kettle = lib.shape(m);
+    lib.decor(kettle.at(p, rot, kind::METAL, rgba(COPPER, 1.0)));
+}
+
+/// A mantel clock with its foot's middle at `p`, facing `n` (toward the room): an
+/// arched case on a plinth, a dial keeping time.
+fn mantel_clock(lib: &mut Library, frame: &RoomFrame, p: Vec3, n: Vec3) {
+    let q = frame.turn();
+    let (w, shoulder, d) = (0.18f32, 0.17f32, 0.15f32);
+    let mut outline = vec![Vec2::new(-w, 0.0)];
+    outline.extend((0..=16).map(|k| {
+        let a = k as f32 / 16.0 * PI;
+        Vec2::new(w * libm::cosf(a), shoulder + w * libm::sinf(a))
+    }));
+    outline.insert(1, Vec2::new(w, 0.0));
+    let case = lib.shape(Mesh::prism(&outline, d));
+    lib.decor(case.at(p + Vec3::Y * 0.03, q, kind::WOOD, [0.22, 0.1, 0.04, 1.0]));
+    lib.decor(Inst::new(
+        p + Vec3::Y * 0.015,
+        q,
+        Vec3::new(2.0 * w + 0.05, 0.03, d + 0.04),
+        kind::WOOD,
+        rgba(WALNUT, 1.0),
+        0,
+    ));
+    let c = p + Vec3::Y * (0.03 + shoulder) + n * (d * 0.5);
+    let up = Quat::from_rotation_arc(Vec3::Y, n);
+    let disc = lib.shape(Mesh::cylinder(32));
+    lib.decor(
+        disc.sized(Vec3::new(0.2, 0.01, 0.2))
+            .inst(c + n * 0.005, up, kind::PAPER, [0.0; 4]),
+    );
+    let bezel = lib.shape(Mesh::torus(0.2, 32, 8));
+    let brass = rgba(BRASS, 1.0);
+    lib.decor(
+        bezel
+            .sized(Vec3::new(0.23, 0.02, 0.23))
+            .inst(c + n * 0.01, up, kind::METAL, brass),
+    );
+    lib.clock_hands(
+        (c + n * 0.01, n, 0.09),
+        (11.0, 20.0),
+        ([0.06, 0.06, 0.08, 1.0], brass),
+        false,
+    );
+}
+
 /// An armchair at `a`, `o` facing along `facing` (±1, across the room): a seat,
-/// a high back, arms and short legs, upholstered in `rgb`.
+/// a high back, rolled arms and turned feet, upholstered in `rgb`.
 fn armchair(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, facing: f32, rgb: [f32; 3]) {
     // Laid out with the chair facing +x (across), then turned.
     let q = frame.turn()
         * if facing > 0.0 {
             Quat::IDENTITY
         } else {
-            Quat::from_rotation_y(std::f32::consts::PI)
+            Quat::from_rotation_y(PI)
         };
     let c = frame.at(a, o, 0.0);
     let put = |lib: &mut Library, off: Vec3, size: Vec3, kind: u32, col: [f32; 3]| {
@@ -520,35 +756,44 @@ fn armchair(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, facing: f32, r
         kind::CLOTH,
         rgb,
     );
+    let roll = lib.shape(Mesh::cylinder(16));
+    let foot = bun_foot(lib);
+    let along = q * Quat::from_rotation_z(FRAC_PI_2);
     for s in [-1.0f32, 1.0] {
         put(
             lib,
-            Vec3::new(0.03, 0.55, s * 0.38),
-            Vec3::new(0.74, 0.2, 0.15),
+            Vec3::new(0.03, 0.53, s * 0.38),
+            Vec3::new(0.74, 0.16, 0.15),
             kind::CLOTH,
             rgb,
         );
-        put(
-            lib,
-            Vec3::new(0.37, 0.6, s * 0.38),
-            Vec3::new(0.08, 0.12, 0.17),
+        lib.decor(roll.sized(Vec3::new(0.17, 0.76, 0.17)).inst(
+            c + q * Vec3::new(0.03, 0.62, s * 0.38),
+            along,
+            kind::CLOTH,
+            rgba(rgb, 1.0),
+        ));
+        // The arm's turned face, a disc of wood on the roll's end.
+        lib.decor(roll.sized(Vec3::new(0.15, 0.025, 0.15)).inst(
+            c + q * Vec3::new(0.415, 0.62, s * 0.38),
+            along,
             kind::WOOD,
-            WALNUT,
-        );
+            rgba(WALNUT, 1.0),
+        ));
         for x in [-0.3f32, 0.3] {
-            put(
-                lib,
-                Vec3::new(x, 0.1, s * 0.34),
-                Vec3::new(0.07, 0.2, 0.07),
+            lib.decor(foot.sized(Vec3::new(0.09, 0.21, 0.09)).at(
+                c + q * Vec3::new(x, 0.0, s * 0.34),
+                q,
                 kind::WOOD,
-                DARK_WOOD,
-            );
+                rgba(DARK_WOOD, 1.0),
+            ));
         }
     }
     guard(lib, frame, (a - 0.45, a + 0.45), (o - 0.47, o + 0.47), 1.35);
 }
 
-/// A sofa across the inglenook's mouth at `a`, `o`, facing the fire, cushions on it.
+/// A sofa across the inglenook's mouth at `a`, `o`, facing the fire, on turned feet,
+/// its arms rolled, cushions on it.
 fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let (hw, hd) = (1.5, 0.45);
     lib.decor(piece(
@@ -579,24 +824,31 @@ fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::CLOTH,
         UPHOLSTERY,
     ));
+    let roll = lib.shape(Mesh::cylinder(16));
+    let foot = bun_foot(lib);
+    let along = Quat::from_rotation_arc(Vec3::Y, frame.out());
     for s in [-1.0f32, 1.0] {
         let x = a + s * (hw - 0.09);
         lib.decor(piece(
             frame,
             (x - 0.1, x + 0.1),
             (o - hd, o + hd),
-            (0.42, 0.66),
+            (0.42, 0.6),
             kind::CLOTH,
             UPHOLSTERY,
         ));
+        lib.decor(roll.sized(Vec3::new(0.22, 2.0 * hd + 0.02, 0.22)).inst(
+            frame.at(x, o + 0.01, 0.63),
+            along,
+            kind::CLOTH,
+            rgba(UPHOLSTERY, 1.0),
+        ));
         for y in [o - hd + 0.06, o + hd - 0.06] {
-            lib.decor(piece(
-                frame,
-                (x - 0.035, x + 0.035),
-                (y - 0.035, y + 0.035),
-                (0.0, 0.1),
+            lib.decor(foot.sized(Vec3::new(0.08, 0.1, 0.08)).at(
+                frame.at(x, y, 0.0),
+                Quat::IDENTITY,
                 kind::WOOD,
-                DARK_WOOD,
+                rgba(DARK_WOOD, 1.0),
             ));
         }
     }
@@ -624,78 +876,164 @@ fn sofa(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     guard(lib, frame, (a - hw, a + hw), (o - hd - 0.03, o + hd), 1.0);
 }
 
-/// A low round tea table at `a`, `o`: a teapot and cups, a candle.
+/// A low round tea table at `a`, `o` on a turned pedestal: a teapot steaming, cups
+/// on saucers, a candle.
 fn tea_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let top = 0.5;
-    for k in 0..2 {
-        let q = Quat::from_rotation_y(0.2 + k as f32 * 0.785);
-        lib.decor(Inst::new(
-            frame.at(a, o, top - 0.025 + 0.002 * k as f32),
-            q,
-            Vec3::new(0.62, 0.05, 0.62),
-            kind::WOOD,
-            rgba(WALNUT, 1.0),
-            0,
-        ));
-    }
-    lib.decor(piece(
-        frame,
-        (a - 0.05, a + 0.05),
-        (o - 0.05, o + 0.05),
-        (0.06, top - 0.05),
+    let board = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.29, 0.0),
+            (0.31, 0.012),
+            (0.32, 0.03),
+            (0.3, 0.045),
+            (0.0, 0.045),
+        ],
+        40,
+    );
+    lib.decor(board.at(
+        frame.at(a, o, top - 0.045),
+        Quat::IDENTITY,
         kind::WOOD,
-        DARK_WOOD,
+        rgba(WALNUT, 1.0),
     ));
-    lib.decor(Inst::new(
-        frame.at(a, o, 0.03),
-        Quat::from_rotation_y(0.5),
-        Vec3::new(0.4, 0.06, 0.4),
+    let stem = turned_leg(lib);
+    lib.decor(stem.sized(Vec3::new(0.12, top - 0.1, 0.12)).at(
+        frame.at(a, o, 0.055),
+        Quat::IDENTITY,
         kind::WOOD,
         rgba(DARK_WOOD, 1.0),
-        0,
     ));
-    guard(lib, frame, (a - 0.36, a + 0.36), (o - 0.36, o + 0.36), top);
-    let china = [0.85, 0.85, 0.8];
-    let pot = frame.at(a - 0.08, o - 0.05, top + 0.09);
-    lib.decor(Inst::new(
-        pot,
-        Quat::from_rotation_y(0.6),
-        Vec3::new(0.16, 0.14, 0.16),
-        kind::PLAIN,
-        rgba(china, 1.0),
-        0,
-    ));
-    lib.decor(Inst::new(
-        pot + Vec3::Y * 0.09,
-        Quat::from_rotation_y(0.6),
-        Vec3::new(0.06, 0.04, 0.06),
-        kind::PLAIN,
-        rgba(china, 1.0),
-        0,
-    ));
-    rod(
+    let base = turned(
         lib,
-        pot + frame.turn() * Vec3::new(0.07, -0.02, 0.0),
-        pot + frame.turn() * Vec3::new(0.15, 0.05, 0.0),
-        0.025,
-        0.025,
-        kind::PLAIN,
-        rgba(china, 1.0),
+        &[
+            (0.0, 0.0),
+            (0.2, 0.0),
+            (0.2, 0.02),
+            (0.16, 0.04),
+            (0.07, 0.055),
+            (0.0, 0.055),
+        ],
+        32,
     );
-    for (da, d_o) in [(0.17f32, 0.12f32), (0.1, -0.2)] {
-        lib.decor(piece(
-            frame,
-            (a + da - 0.04, a + da + 0.04),
-            (o + d_o - 0.04, o + d_o + 0.04),
-            (top, top + 0.06),
-            kind::PLAIN,
-            china,
+    lib.decor(base.at(frame.at(a, o, 0.0), Quat::IDENTITY, kind::WOOD, rgba(DARK_WOOD, 1.0)));
+    guard(lib, frame, (a - 0.36, a + 0.36), (o - 0.36, o + 0.36), top);
+    let turn = frame.turn() * Quat::from_rotation_y(0.6);
+    let pot = frame.at(a - 0.08, o - 0.05, top);
+    teapot(lib, pot, turn);
+    let steam = |lib: &mut Library, p: Vec3, w: f32, h: f32| {
+        lib.translucent(Inst::new(
+            p + Vec3::Y * (h * 0.5),
+            Quat::IDENTITY,
+            Vec3::new(w, h, w),
+            kind::MIST,
+            [0.8, 0.8, 0.8, 0.25],
+            0,
         ));
+    };
+    steam(lib, pot + turn * Vec3::new(0.15, 0.125, 0.0), 0.05, 0.2);
+    let v = Vec2::new;
+    let cup = {
+        let mut m = Mesh::lathe(
+            &[
+                v(0.0, 0.0),
+                v(0.022, 0.0),
+                v(0.03, 0.01),
+                v(0.038, 0.035),
+                v(0.041, 0.05),
+            ],
+            16,
+        )
+        .two_sided();
+        m.add(
+            &Mesh::torus(0.35, 12, 6),
+            Vec3::new(0.045, 0.028, 0.0),
+            Quat::from_rotation_x(FRAC_PI_2),
+            Vec3::splat(0.014),
+        );
+        lib.shape(m)
+    };
+    let saucer = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.045, 0.0),
+            (0.065, 0.012),
+            (0.062, 0.016),
+            (0.04, 0.008),
+            (0.0, 0.008),
+        ],
+        24,
+    );
+    for (k, (da, d_o)) in [(0.17f32, 0.12f32), (0.1, -0.2)].into_iter().enumerate() {
+        let p = frame.at(a + da, o + d_o, top);
+        let china = rgba(CHINA, 1.0);
+        lib.decor(saucer.at(p, Quat::IDENTITY, kind::PLAIN, china));
+        let spin = frame.turn() * Quat::from_rotation_y(1.2 + 2.1 * k as f32);
+        lib.decor(cup.at(p + Vec3::Y * 0.008, spin, kind::PLAIN, china));
+        if k == 0 {
+            steam(lib, p + Vec3::Y * 0.06, 0.04, 0.12);
+        }
     }
-    candle(lib, frame.at(a + 0.15, o + 0.2, top), 0.12);
+    let holder = frame.at(a - 0.18, o + 0.17, top);
+    lib.decor(
+        saucer
+            .sized(saucer.size * 0.8)
+            .at(holder, Quat::IDENTITY, kind::METAL, rgba(BRASS, 1.0)),
+    );
+    candle(lib, holder + Vec3::Y * 0.006, 0.12);
 }
 
-/// A small side table at `a`, `o` with a candle lamp on it.
+/// A china teapot with its foot at `p`, turned by `rot` (its spout along x): a round
+/// body, a lid and knob, a spout and a handle.
+fn teapot(lib: &mut Library, p: Vec3, rot: Quat) {
+    let mut m = Mesh::lathe(
+        &profile_of(&[
+            (0.0, 0.0),
+            (0.05, 0.0),
+            (0.055, 0.006),
+            (0.075, 0.025),
+            (0.085, 0.055),
+            (0.078, 0.088),
+            (0.055, 0.11),
+            (0.04, 0.115),
+            (0.042, 0.12),
+            (0.02, 0.125),
+            (0.012, 0.14),
+            (0.0, 0.145),
+        ]),
+        24,
+    );
+    let spout: Vec<Vec3> = (0..=6)
+        .map(|k| {
+            let t = k as f32 / 6.0;
+            Vec3::new(0.06 + 0.09 * t, 0.03 + 0.06 * t + 0.035 * t * t, 0.0)
+        })
+        .collect();
+    m.add(
+        &Mesh::sweep(&spout, &[0.016, 0.008], &circle(1.0, 8), true),
+        Vec3::ZERO,
+        Quat::IDENTITY,
+        Vec3::ONE,
+    );
+    let handle: Vec<Vec3> = (0..=10)
+        .map(|k| {
+            let a = k as f32 / 10.0 * PI;
+            Vec3::new(-0.072 - 0.042 * libm::sinf(a), 0.058 + 0.035 * libm::cosf(a), 0.0)
+        })
+        .collect();
+    m.add(
+        &Mesh::sweep(&handle, &[0.007], &circle(1.0, 6), true),
+        Vec3::ZERO,
+        Quat::IDENTITY,
+        Vec3::ONE,
+    );
+    let pot = lib.shape(m);
+    lib.decor(pot.at(p, rot, kind::PLAIN, rgba(CHINA, 1.0)));
+}
+
+/// A small side table at `a`, `o` on turned legs, a hurricane lamp on it.
 fn lamp_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let top = 0.66;
     lib.decor(piece(
@@ -706,90 +1044,109 @@ fn lamp_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         kind::WOOD,
         WALNUT,
     ));
+    let leg = turned_leg(lib);
     for (da, d_o) in [(-0.2, -0.2), (0.2, -0.2), (-0.2, 0.2), (0.2, 0.2)] {
-        let (x, y) = (a + da, o + d_o);
-        lib.decor(piece(
-            frame,
-            (x - 0.025, x + 0.025),
-            (y - 0.025, y + 0.025),
-            (0.0, top - 0.04),
+        lib.decor(leg.sized(Vec3::new(0.06, top - 0.04, 0.06)).at(
+            frame.at(a + da, o + d_o, 0.0),
+            Quat::IDENTITY,
             kind::WOOD,
-            DARK_WOOD,
+            rgba(DARK_WOOD, 1.0),
         ));
     }
     guard(lib, frame, (a - 0.26, a + 0.26), (o - 0.26, o + 0.26), top);
     let base = frame.at(a, o, top);
-    lib.decor(Inst::aabox(
-        base + Vec3::Y * 0.02,
-        Vec3::new(0.14, 0.04, 0.14),
-        kind::METAL,
-        BRASS,
-    ));
-    candle(lib, base + Vec3::Y * 0.04, 0.2);
-    lib.decor(Inst::aabox(
-        base + Vec3::Y * 0.36,
-        Vec3::new(0.16, 0.04, 0.16),
-        kind::METAL,
-        BRASS,
-    ));
-    for (dx, dz) in [(-0.07, -0.07), (0.07, -0.07), (-0.07, 0.07), (0.07, 0.07)] {
-        lib.decor(Inst::aabox(
-            base + Vec3::new(dx, 0.2, dz),
-            Vec3::new(0.012, 0.32, 0.012),
-            kind::METAL,
-            BRASS,
-        ));
-    }
+    hurricane_lamp(lib, base);
     lib.light(base + Vec3::Y * 0.3, 4.5, [1.0, 0.62, 0.3], 0.7, LightKind::Flicker);
 }
 
 /// A basket of wool by a chair at `a`, `o`, and over it a pair of needles knitting
-/// a scarf by themselves: one of the room's two bits of magic.
+/// a scarf by themselves, floating: one of the room's two bits of magic.
 fn knitting(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
-    lib.decor(piece(
-        frame,
-        (a - 0.2, a + 0.2),
-        (o - 0.2, o + 0.2),
-        (0.0, 0.26),
-        kind::WOOD,
-        [0.45, 0.32, 0.15],
-    ));
+    let basket = {
+        let mut m = Mesh::lathe(
+            &profile_of(&[(0.0, 0.0), (0.16, 0.0), (0.19, 0.06), (0.205, 0.2), (0.21, 0.26)]),
+            24,
+        )
+        .two_sided();
+        m.add(
+            &Mesh::torus(0.1, 24, 6),
+            Vec3::new(0.0, 0.26, 0.0),
+            Quat::IDENTITY,
+            Vec3::splat(0.21),
+        );
+        lib.shape(m)
+    };
+    lib.decor(basket.at(frame.at(a, o, 0.0), Quat::IDENTITY, kind::WOOD, [0.45, 0.32, 0.15, 1.0]));
     guard(lib, frame, (a - 0.21, a + 0.21), (o - 0.21, o + 0.21), 0.3);
+    let ball = lib.shape(Mesh::sphere(16));
     for (k, col) in [[0.55, 0.15, 0.12], [0.2, 0.3, 0.5], [0.75, 0.65, 0.3]]
         .into_iter()
         .enumerate()
     {
-        let p = frame.at(a - 0.08 + 0.09 * k as f32, o - 0.04 + 0.05 * (k % 2) as f32, 0.28);
-        lib.decor(Inst::new(
-            p,
-            Quat::from_rotation_y(k as f32),
-            Vec3::splat(0.12),
-            kind::CLOTH,
-            rgba(col, 1.0),
-            0,
-        ));
+        let p = frame.at(a - 0.08 + 0.09 * k as f32, o - 0.04 + 0.05 * (k % 2) as f32, 0.23);
+        lib.decor(
+            ball.sized(Vec3::splat(0.13))
+                .inst(p, Quat::from_rotation_y(k as f32), kind::CLOTH, rgba(col, 1.0)),
+        );
     }
     let q = frame.turn();
     let hold = frame.at(a, o, 1.25);
+    // The work floats, rising and falling a little; the needles knit on it, crossing
+    // and parting, the scarf hanging from them.
+    let float = Motion::Bob {
+        amp: 0.015,
+        period: 4.5,
+        rock: 0.04,
+    };
+    let held = lib.mover(hold, float, 0.0, None);
+    lib.moving(
+        held,
+        Inst::new(
+            hold - Vec3::Y * 0.28,
+            q * Quat::from_rotation_z(0.06),
+            Vec3::new(0.18, 0.42, 0.02),
+            kind::CLOTH,
+            [0.55, 0.15, 0.12, 1.0],
+            0,
+        ),
+    );
+    let needle = turned(
+        lib,
+        &[
+            (0.0, 0.0),
+            (0.12, 0.05),
+            (0.12, 0.93),
+            (0.3, 0.95),
+            (0.32, 0.99),
+            (0.0, 1.0),
+        ],
+        8,
+    );
     for s in [-1.0f32, 1.0] {
         let tip = hold + q * Vec3::new(s * 0.1, 0.1, 0.0);
         let end = hold + q * Vec3::new(-s * 0.12, -0.08, 0.03 * s);
-        rod(lib, end, tip, 0.012, 0.012, kind::CRYSTAL, [0.85, 0.75, 1.0, 1.2]);
+        let knit = Motion::Swing {
+            axis: frame.out(),
+            amp: 0.12,
+            period: 1.6,
+        };
+        let m = lib.mover(end, knit, if s < 0.0 { 0.0 } else { 0.8 }, Some(held));
+        let len = (end - tip).length();
+        lib.moving(
+            m,
+            needle.sized(Vec3::new(0.02, len, 0.02)).at(
+                tip,
+                Quat::from_rotation_arc(Vec3::Y, (end - tip) / len),
+                kind::CRYSTAL,
+                [0.85, 0.75, 1.0, 1.2],
+            ),
+        );
     }
-    // The scarf so far, hanging down to the basket, and its thread.
-    lib.decor(Inst::new(
-        hold - Vec3::Y * 0.28,
-        q * Quat::from_rotation_z(0.06),
-        Vec3::new(0.18, 0.42, 0.02),
-        kind::CLOTH,
-        [0.55, 0.15, 0.12, 1.0],
-        0,
-    ));
-    rod(
+    // The yarn, from the scarf down to the basket.
+    pole(
         lib,
         hold - Vec3::Y * 0.5,
-        frame.at(a - 0.08, o - 0.04, 0.32),
-        0.006,
+        frame.at(a - 0.08, o - 0.04, 0.3),
         0.006,
         kind::CLOTH,
         [0.55, 0.15, 0.12, 1.0],
@@ -797,7 +1154,8 @@ fn knitting(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     lib.light(hold, 2.0, [0.8, 0.7, 1.0], 0.35, LightKind::Static);
 }
 
-/// A spinning wheel at `a`, `o`, its wheel turning across the room.
+/// A spinning wheel at `a`, `o`, its wheel turning slowly across the room between
+/// two uprights.
 fn spinning_wheel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let wood = rgba([0.35, 0.2, 0.08], 1.0);
     lib.decor(piece(
@@ -809,109 +1167,118 @@ fn spinning_wheel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         [0.35, 0.2, 0.08],
     ));
     for (da, d_o) in [(0.0, -0.45), (-0.13, 0.4), (0.13, 0.4)] {
-        rod(
+        pole(
             lib,
             frame.at(a + da, o + d_o, 0.0),
             frame.at(a + da * 0.6, o + d_o * 0.8, 0.3),
-            0.04,
             0.04,
             kind::WOOD,
             wood,
         );
     }
     guard(lib, frame, (a - 0.2, a + 0.2), (o - 0.55, o + 0.55), 1.2);
-    // The wheel turns about the across axis, upright along the room.
-    let hub = frame.at(a, o - 0.15, 0.78);
+    let (o_hub, y_hub) = (o - 0.15, 0.78);
+    let hub = frame.at(a, o_hub, y_hub);
     let axis = frame.across();
-    let r = 0.36;
-    let segs = 14;
-    for k in 0..segs {
-        let th = 0.1 + k as f32 / segs as f32 * TAU;
-        let radial = frame.out() * libm::cosf(th) + Vec3::Y * libm::sinf(th);
-        let rot = Quat::from_mat3(&Mat3::from_cols(radial, axis.cross(radial), axis));
-        let len = 2.0 * r * libm::tanf(TAU / segs as f32 * 0.5) + 0.01;
-        lib.decor(Inst::new(
-            hub + radial * r,
-            rot,
-            Vec3::new(0.04, len, 0.035),
+    // The wheel: a rim, eight spokes and a hub, made about y, stood on edge.
+    let mut m = Mesh::torus(0.1, 48, 8);
+    for k in 0..8 {
+        let th = k as f32 / 8.0 * TAU;
+        let dir = Vec3::new(libm::cosf(th), 0.0, libm::sinf(th));
+        m.add(
+            &Mesh::cylinder(6),
+            dir * 0.5,
+            Quat::from_rotation_arc(Vec3::Y, dir),
+            Vec3::new(0.04, 0.96, 0.04),
+        );
+    }
+    m.add(
+        &Mesh::cylinder(12),
+        Vec3::ZERO,
+        Quat::IDENTITY,
+        Vec3::new(0.22, 0.3, 0.22),
+    );
+    let wheel = lib.shape(m);
+    let turning = lib.mover(hub, Motion::Spin { axis, rate: 0.5 }, 0.0, None);
+    lib.moving(
+        turning,
+        wheel
+            .scaled(0.36)
+            .at(hub, Quat::from_rotation_arc(Vec3::Y, axis), kind::WOOD, wood),
+    );
+    // Its axle between two uprights.
+    for s in [-1.0f32, 1.0] {
+        pole(
+            lib,
+            frame.at(a + s * 0.07, o_hub, 0.3),
+            frame.at(a + s * 0.07, o_hub, y_hub + 0.04),
+            0.04,
             kind::WOOD,
             wood,
-            0,
-        ));
-        if k % 2 == 0 {
-            lib.decor(Inst::new(
-                hub + radial * (r * 0.5),
-                rot,
-                Vec3::new(r, 0.015, 0.015),
-                kind::WOOD,
-                wood,
-                0,
-            ));
-        }
+        );
     }
-    rod(lib, frame.at(a, o - 0.15, 0.3), hub, 0.05, 0.05, kind::WOOD, wood);
-    rod(
+    pole(
+        lib,
+        frame.at(a - 0.09, o_hub, y_hub),
+        frame.at(a + 0.09, o_hub, y_hub),
+        0.02,
+        kind::METAL,
+        rgba(IRON, 1.0),
+    );
+    // The distaff, flax wound on it.
+    pole(
         lib,
         frame.at(a, o + 0.35, 0.33),
         frame.at(a, o + 0.4, 0.95),
-        0.04,
-        0.04,
+        0.035,
         kind::WOOD,
         wood,
     );
-    lib.decor(Inst::aabox(
-        frame.at(a, o + 0.4, 0.98),
-        Vec3::splat(0.08),
+    let flax = turned(lib, &[(0.0, 0.0), (0.3, 0.05), (0.5, 0.4), (0.35, 0.8), (0.0, 1.0)], 12);
+    lib.decor(flax.sized(Vec3::new(0.1, 0.2, 0.1)).at(
+        frame.at(a, o + 0.39, 0.82),
+        Quat::IDENTITY,
         kind::CLOTH,
-        [0.85, 0.8, 0.7],
+        [0.85, 0.8, 0.7, 1.0],
     ));
 }
 
-/// A barrel of ale by the door, a tap in it.
+/// A barrel of ale by the door, iron-hooped, a tap in it.
 fn barrel(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
-    let r = 0.33;
-    let segs = 8;
-    for k in 0..segs {
-        let th = 0.2 + k as f32 / segs as f32 * TAU;
-        let radial = frame.across() * libm::cosf(th) + frame.out() * libm::sinf(th);
-        let q = Quat::from_mat3(&Mat3::from_cols(radial, Vec3::Y, radial.cross(Vec3::Y)));
-        let stave = 2.0 * r * libm::tanf(TAU / segs as f32 * 0.5) + 0.02;
-        lib.decor(Inst::new(
-            frame.at(a, o, 0.45) + radial * r,
-            q,
-            Vec3::new(0.05, 0.9, stave),
-            kind::WOOD,
-            [0.38, 0.22, 0.1, 1.0],
-            0,
-        ));
-        for y in [0.15f32, 0.75] {
-            lib.decor(Inst::new(
-                frame.at(a, o, y) + radial * (r + 0.02),
-                q,
-                Vec3::new(0.02, 0.06, stave + 0.01),
-                kind::METAL,
-                rgba(IRON, 1.0),
-                0,
-            ));
-        }
-    }
-    lib.decor(Inst::new(
-        frame.at(a, o, 0.88),
-        Quat::from_rotation_y(0.2),
-        Vec3::new(0.62, 0.03, 0.62),
-        kind::WOOD,
-        [0.3, 0.17, 0.08, 1.0],
-        0,
-    ));
-    rod(
+    let r = 0.335;
+    let body = turned(
         lib,
-        frame.at(a, o + r, 0.3),
-        frame.at(a, o + r + 0.1, 0.3),
-        0.04,
-        0.04,
-        kind::METAL,
-        rgba(BRASS, 1.0),
+        &[
+            (0.0, 0.0),
+            (0.29, 0.0),
+            (0.305, 0.08),
+            (0.325, 0.25),
+            (0.335, 0.45),
+            (0.325, 0.65),
+            (0.305, 0.82),
+            (0.29, 0.9),
+            (0.0, 0.9),
+        ],
+        32,
     );
+    lib.decor(body.at(frame.at(a, o, 0.0), Quat::IDENTITY, kind::WOOD, [0.38, 0.22, 0.1, 1.0]));
+    let hoop = lib.shape(Mesh::torus(0.08, 32, 6));
+    for (y, rr) in [(0.1f32, 0.307f32), (0.28, 0.327), (0.62, 0.327), (0.8, 0.307)] {
+        lib.decor(hoop.sized(Vec3::new(2.0 * rr + 0.02, 0.035, 2.0 * rr + 0.02)).inst(
+            frame.at(a, o, y),
+            Quat::IDENTITY,
+            kind::METAL,
+            rgba(IRON, 1.0),
+        ));
+    }
+    let tap = (frame.at(a, o + 0.3, 0.25), frame.at(a, o + 0.43, 0.25));
+    pole(lib, tap.0, tap.1, 0.035, kind::METAL, rgba(BRASS, 1.0));
+    lib.decor(Inst::aabox(
+        tap.1 - frame.out() * 0.03 + Vec3::Y * 0.035,
+        Vec3::new(0.025, 0.05, 0.025),
+        kind::METAL,
+        BRASS,
+    ));
     guard(
         lib,
         frame,
@@ -938,21 +1305,35 @@ fn rugs(lib: &mut Library, frame: &RoomFrame) {
     lib.rug(rug((6.6, 9.6), (25.6, 29.2), [0.25, 0.12, 0.05], green, 0.02));
 }
 
-/// Candles hanging in the air over the hearth and the sofa, unsupported: the room's
-/// chief bit of magic.
+/// Candles floating over the hearth and the sofa, unsupported, each bobbing in its
+/// own time, a few of them lighting the air round them: the room's chief bit of
+/// magic.
 fn floating_candles(lib: &mut Library, frame: &RoomFrame) {
     let mut rng = StdRng::seed_from_u64(0x4341_4e44);
-    for _ in 0..14 {
+    for k in 0..14 {
         let a = rng.gen_range(-2.4..2.4);
         let o = rng.gen_range(22.0..29.5);
         let y = rng.gen_range(3.1..4.3);
         let h = rng.gen_range(0.14..0.3);
-        candle(lib, frame.at(a, o, y), h);
+        let float = Motion::Bob {
+            amp: rng.gen_range(0.03..0.06),
+            period: rng.gen_range(5.0..9.0),
+            rock: 0.06,
+        };
+        let p = frame.at(a, o, y);
+        let m = lib.mover(p + Vec3::Y * (h * 0.5), float, rng.gen_range(0.0..9.0), None);
+        for i in candle_parts(lib, p, h) {
+            lib.moving(m, i);
+        }
+        if k % 5 == 0 {
+            let at = p + Vec3::Y * (h + 0.05);
+            lib.light_riding(m, at, 4.5, [1.0, 0.7, 0.4], 0.35, LightKind::Flicker);
+        }
     }
-    lib.light(frame.at(0.0, 25.5, 3.6), 6.0, [1.0, 0.7, 0.4], 0.8, LightKind::Flicker);
 }
 
-/// Heavy beams across the ceiling, bundles of herbs hung drying from two of them.
+/// Heavy beams across the ceiling, bunches of herbs hung drying from two of them,
+/// stirring in the warm air.
 fn ceiling(lib: &mut Library, frame: &RoomFrame) {
     let h = RoomFrame::HEIGHT;
     let inner = RoomFrame::A_HALF;
@@ -967,17 +1348,28 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
             [0.09, 0.045, 0.02],
         ));
     }
+    // A bunch's sprays: narrow at the tie, spreading below it.
+    let spray = lib.shape(Mesh::prism(
+        &[
+            Vec2::new(-0.03, 0.0),
+            Vec2::new(0.03, 0.0),
+            Vec2::new(0.09, -0.75),
+            Vec2::new(0.07, -1.0),
+            Vec2::new(-0.07, -1.0),
+            Vec2::new(-0.09, -0.75),
+        ],
+        0.01,
+    ));
     let mut rng = StdRng::seed_from_u64(0x4845_5242);
-    for o in [beams[1], beams[2]] {
+    for (j, o) in [beams[1], beams[2]].into_iter().enumerate() {
         for k in 0..7 {
             let a = -5.2 + k as f32 * 1.7 + rng.gen_range(-0.3..0.3);
             let len = rng.gen_range(0.3..0.55);
             let top = h - 0.36;
-            rod(
+            pole(
                 lib,
                 frame.at(a, o, top),
                 frame.at(a, o, top - 0.15),
-                0.01,
                 0.01,
                 kind::CLOTH,
                 [0.5, 0.42, 0.3, 1.0],
@@ -987,38 +1379,37 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
                 rng.gen_range(0.3..0.42),
                 rng.gen_range(0.12..0.2),
             ];
-            // A bunch hung head down: two crossed sprays, narrow at the tie.
             let spin = rng.gen_range(0.0..3.0f32);
-            let mid = frame.at(a, o, top - 0.17 - len * 0.5);
-            for k in 0..2 {
-                let q = Quat::from_rotation_y(spin + k as f32 * 1.571);
-                lib.decor(Inst::new(
-                    mid,
-                    q,
-                    Vec3::new(0.17, len, 0.025),
-                    kind::LEAF,
-                    rgba(green, 1.0),
-                    0,
-                ));
-                let neck = mid + Vec3::Y * (len * 0.5 + 0.01);
-                lib.decor(Inst::new(
-                    neck,
-                    q,
-                    Vec3::new(0.07, 0.06, 0.03),
-                    kind::LEAF,
-                    rgba(green, 1.0),
-                    0,
-                ));
-            }
             let tie = frame.at(a, o, top - 0.15);
-            lib.decor(Inst::new(
-                tie,
-                Quat::from_rotation_y(spin),
-                Vec3::new(0.05, 0.03, 0.05),
-                kind::CLOTH,
-                [0.5, 0.42, 0.3, 1.0],
-                0,
-            ));
+            // Each in its own time, from where it hangs.
+            let f = ((j * 7 + k) as f32 * 0.618_034).fract();
+            let stir = Motion::Swing {
+                axis: Quat::from_rotation_y(f * TAU) * Vec3::X,
+                amp: 0.035,
+                period: 5.0 + 2.5 * f,
+            };
+            let m = lib.mover(tie, stir, f * 7.0, None);
+            for k in 0..2 {
+                let q = Quat::from_rotation_y(spin + k as f32 * FRAC_PI_2);
+                let i = spray.sized(Vec3::new(0.18, len + 0.04, 0.01)).at(
+                    tie - Vec3::Y * 0.02,
+                    q,
+                    kind::FRET,
+                    rgba(green, 1.0),
+                );
+                lib.moving(m, i);
+            }
+            lib.moving(
+                m,
+                Inst::new(
+                    tie,
+                    Quat::from_rotation_y(spin),
+                    Vec3::new(0.05, 0.03, 0.05),
+                    kind::CLOTH,
+                    [0.5, 0.42, 0.3, 1.0],
+                    0,
+                ),
+            );
         }
     }
 }
