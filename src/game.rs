@@ -204,7 +204,7 @@ pub fn upg_def(u: Upg) -> UpgDef {
         Upg::LongToss => ("Long Toss", "Throw harder, and the books scatter less.", Tier::Moving),
         Upg::Homing => (
             "Homing Toss",
-            "A book you toss that lands in front of its own shelf, within a couple of metres of its slot, slips into it. The second level reaches further.",
+            "A book you toss that lands in front of its own shelf, within a couple of metres of its slot and in sight of it, slips into it. The second level reaches further.",
             Tier::Moving,
         ),
         Upg::Lodestone => ("Lodestone Grasp", "Take books from piles at a distance.", Tier::Moving),
@@ -222,7 +222,7 @@ pub fn upg_def(u: Upg) -> UpgDef {
         ),
         Upg::Aura => (
             "Shelving Aura",
-            "Books you carry drift to their slots whenever you pass close by.",
+            "Books you carry drift to their slots whenever you pass close in front of their shelves.",
             Tier::Filing,
         ),
         Upg::Shelver => (
@@ -257,7 +257,7 @@ pub fn upg_def(u: Upg) -> UpgDef {
         ),
         Upg::Rush => (
             "Shelving Rush",
-            "For a few seconds, every book you carry within a few metres of its slot flies home, as fast as you pass.",
+            "For a few seconds, every book you carry within a few metres of its slot, and in front of it, flies home as fast as you pass.",
             Tier::Spells,
         ),
         Upg::Gathering => (
@@ -1435,7 +1435,7 @@ impl Game {
     }
 
     /// Homing Toss: a tossed book that landed in front of its own shelf, near its
-    /// slot, slips into it.
+    /// slot and in sight of it, slips into it.
     pub(super) fn home_tossed(&mut self, landings: &[crate::loose::Landing]) {
         let reach = HOMING[self.level(Upg::Homing) as usize];
         for l in landings {
@@ -1444,12 +1444,11 @@ impl Game {
                 continue;
             }
             let info = &self.lib.books[b];
-            let normal = self.lib.faces[info.face as usize].normal;
             let rel = l.at - info.slot_pos;
             let world = &self.lib.world;
             let home = world.level_at(l.at) == world.level_at(info.slot_pos)
-                && rel.dot(normal) > -0.05
-                && Vec2::new(rel.x, rel.z).length() <= reach;
+                && Vec2::new(rel.x, rel.z).length() <= reach
+                && self.lib.reaches_front(l.book, l.at + Vec3::Y * 0.1);
             if home && self.loose.is_resting(l.book) {
                 self.loose.take(&[l.book]);
                 self.state[b] = BookState::Filing;
@@ -1580,11 +1579,16 @@ impl Game {
                 let t = f.t.min(1.0);
                 t * t * (3.0 - 2.0 * t)
             };
-            let arc = match f.dest {
-                Dest::Hand => 0.35,
-                Dest::Shelf => 0.25,
+            self.pos[b] = match f.dest {
+                Dest::Hand => f.from_pos.lerp(to_pos, e) + Vec3::Y * 0.35 * (PI * e).sin(),
+                // A cubic curve with both inner points at the front of the slot: the
+                // book lines up there, then goes in straight.
+                Dest::Shelf => {
+                    let front = self.lib.slot_front(f.book);
+                    let (a, c) = (f.from_pos.lerp(front, e), front.lerp(to_pos, e));
+                    a.lerp(front, e).lerp(front.lerp(c, e), e) + Vec3::Y * 0.25 * (PI * e).sin()
+                }
             };
-            self.pos[b] = f.from_pos.lerp(to_pos, e) + Vec3::Y * arc * (PI * e).sin();
             self.rot[b] = f.from_rot.slerp(to_rot, e);
             if f.t >= 1.0 {
                 landed.push((f.book, f.dest));
@@ -1762,7 +1766,7 @@ impl Game {
     }
 
     /// Shelving Aura, and Shelving Rush while it lasts (wider, and as fast as you pass):
-    /// carried books near their slots fly home.
+    /// carried books near their slots fly home, from in front of their cases.
     fn update_aura(&mut self, dt: f32) {
         let (mut radius, mut rate) = AURA_LEVELS[self.level(Upg::Aura) as usize];
         if self.spell_on(Upg::Rush) {
@@ -1779,7 +1783,7 @@ impl Game {
         while i < self.held.len() && self.aura_budget >= 1.0 {
             let b = self.held[i];
             let arrived = !self.flights.iter().any(|f| f.book == b);
-            if arrived && self.lib.books[b as usize].slot_pos.distance(eye) < radius {
+            if arrived && self.lib.books[b as usize].slot_pos.distance(eye) < radius && self.lib.reaches_front(b, eye) {
                 self.leave_hand(&[b]);
                 self.held.remove(i);
                 self.state[b as usize] = BookState::Filing;
@@ -3538,6 +3542,34 @@ mod tests {
                 assert!(filed * 2 >= books.len(), "{filed} of {} filed", books.len());
             }
         }
+    }
+
+    /// A book flying home from along its case lines up in front of its slot and goes
+    /// in straight, rather than cutting through the case and the books beside it.
+    #[test]
+    fn books_go_into_their_slots_from_the_front() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = crate::audio::Audio::silent();
+        let b = (0..g.lib.books.len() as u32).find(|&b| g.loose.is_resting(b)).unwrap();
+        let info = &g.lib.books[b as usize];
+        let face = &g.lib.faces[info.face as usize];
+        let (slot, plane, normal, right) = (info.slot_pos, face.center, face.normal, face.right);
+        g.loose.take(&[b]);
+        g.state[b as usize] = BookState::Filing;
+        g.pos[b as usize] = slot + right * 3.0 + normal;
+        g.start_flight(b, Dest::Shelf, 0.6, 0.0);
+        let mut inside = 0;
+        for _ in 0..60 {
+            g.update(1.0 / 60.0, &Input::default(), &mut audio, false);
+            let p = g.pos[b as usize];
+            if (p - plane).dot(normal) < 0.0 {
+                inside += 1;
+                let off = (p - slot).dot(right).abs();
+                assert!(off < 0.05, "{off:.2} m to the side of its slot inside the case");
+            }
+        }
+        assert!(inside > 0);
+        assert_eq!(g.state[b as usize], BookState::Shelved);
     }
 
     /// A book thrown hard at a wall during long frames (a hitch, or the pacing bot's

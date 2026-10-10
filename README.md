@@ -90,7 +90,8 @@ that fit it.
   near its slot, slips into it), Lodestone Grasp (long reach).
 - **Filing**: Deeper Arms (6 → 96 books), Swift Slippers, Tidy Arms
   (self-sorting armful, nearest home first), Series Bundle (file a whole series
-  at once), Shelving Aura (books drift home as you pass).
+  at once), Shelving Aura (books drift home as you pass in front of their
+  shelves).
 - **Familiars**: paper cranes that ride with you until you post them. A shelver
   files the books lying near its post whose shelves are close by; a courier
   carries books lying near its post to a shelver that can file them, or to
@@ -101,7 +102,8 @@ that fit it.
   atrium, where couriers can carry it on to the rooms), Echo (the heaps holding
   the kind of book you seek are marked through the walls), Summon Series (loose
   volumes of the active book's series fly to your arms), Shelving Rush (for a
-  few seconds, books you carry near their slots fly home as fast as you pass).
+  few seconds, books you carry near their slots fly home as fast as you pass, from
+  in front of their shelves).
 - A familiar with nothing to do for two minutes comes back to your shoulder by
   itself.
 

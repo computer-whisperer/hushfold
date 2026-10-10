@@ -30,6 +30,8 @@ pub const UNIT_H: f32 = 3.1;
 pub const SHELF_BASE: f32 = 0.14;
 pub const SHELF_STEP: f32 = 0.48;
 pub const BOARD_T: f32 = 0.03;
+/// How far before its face a book flying home lines up with its slot.
+pub const SLOT_FRONT: f32 = 0.4;
 pub const TABLE_H: f32 = 0.78;
 
 const WALNUT: [f32; 3] = [0.16, 0.08, 0.035];
@@ -218,6 +220,22 @@ impl Library {
 
     pub fn category_of_book(&self, b: u32) -> usize {
         self.series[self.books[b as usize].series as usize].category
+    }
+
+    /// Where book `b` lines up before sliding into its slot: in front of its face,
+    /// clear of the case.
+    pub fn slot_front(&self, b: u32) -> Vec3 {
+        let info = &self.books[b as usize];
+        let face = &self.faces[info.face as usize];
+        info.slot_pos + face.normal * ((face.center - info.slot_pos).dot(face.normal) + SLOT_FRONT)
+    }
+
+    /// Whether book `b` can fly home from `from`: from before its face, with nothing
+    /// that stops books between there and the front of its slot. Not through the
+    /// back of its case, nor another case.
+    pub fn reaches_front(&self, b: u32, from: Vec3) -> bool {
+        let face = &self.faces[self.books[b as usize].face as usize];
+        (from - face.center).dot(face.normal) > 0.0 && self.world.clear(from, self.slot_front(b), Stops::BOOKS)
     }
 
     /// The department whose room `p` is in, if any.

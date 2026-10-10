@@ -116,12 +116,13 @@ the title the crosshair tip gives a run. Saves from before reading was earned
 keep the guide signs and the full glow they had free. Moving: Sifting Touch I–IV (seeking; the scoop's reach 0.9–3.6 m), Broad
 Strokes and Fine Fingers (seek and toss by department, by series), Long Toss
 I–II (harder, tighter throws), Homing Toss I–II (a tossed book landing in front
-of its own shelf within 2 / 3.5 m of its slot, along the floor, slips into it;
+of its own shelf within 2 / 3.5 m of its slot, along the floor, with nothing in
+the way of the slot's front, slips into it;
 `Game::aim_toss` sets pitch and charge to land on a point, for the bot and
 tests), Lodestone Grasp (long reach). Filing: Deeper Arms I–IV,
 Swift Slippers I–II, Tidy Arms (stack sorted by slot, active = nearest target),
 Series Bundle (place whole series at once), Shelving Aura I–III (books float to
-nearby slots on their own). Familiars: shelvers and couriers, bought one at a time,
+nearby slots on their own, from in front of their cases). Familiars: shelvers and couriers, bought one at a time,
 and Familiar Wings I–II (faster, carry more, reach further). Spells, cast with the
 number keys from a hotbar that shows each one's recharge: Glimpse I–II (for 10–15
 s every carried series glows everywhere and a marker shows each run through the
@@ -135,8 +136,14 @@ marked through the walls with how many lie there, marks within 3 m merged; 20 /
 30 s, recharge 60 / 45 s), Summon Series I–III (the active book's series' loose
 volumes in the room you are in (in the atrium, on its floor), on your floor, anywhere, nearest first, dissolve where they lie
 and fly to the arms; recharge 90 / 75 / 60 s), Shelving Rush I–II (for 10 / 15 s
-carried books within 6 / 8 m of their slots fly home at 30 a second; recharge 60
-/ 45 s). Spells live in `game/spells.rs`.
+carried books within 6 / 8 m of their slots fly home at 30 a second, from in
+front of their cases; recharge 60 / 45 s). Spells live in `game/spells.rs`.
+A book flies home only from before its face with nothing that stops books
+between it and the front of its slot (`Library::reaches_front`; the Aura, Rush
+and Homing Toss), and its flight is a cubic curve with both inner points 0.4 m
+in front of the slot, so it lines up there and goes in straight. The aura and
+the rush used to reach through the double-sided cases, flying books through
+the back; about 40% of what they saved the pacing bot was from the far side.
 Charmed books rise from the heap, fly a way planned over a walking field from the
 hub the way a crane's is, a little beside its line (a ribbon, 0.25 m), and drop
 from above the heap's top thrown out over a disc, so the hub's heap grows as a
@@ -218,6 +225,9 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   familiars doubled, the whole-armful toss (X): series complete through the game
   rather than at the end; the Hall ~1.6 h, the Great Library ~8.6 h; by path
   the Great Library 7.9 h (filing) to 11.5 h (hands), familiars 11.1 h.
+- The aura, the rush and Homing Toss only from in front of a case (the aura and
+  rush reached through the back): the Hall 1.56 → 1.60 h, the Great Library
+  8.5 → 9.6 h (filing 7.8 → 8.7 h). Costs not refit for it.
 
 ## Rendering
 Box-only geometry, per-instance `kind` selects procedural material in WGSL

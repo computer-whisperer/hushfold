@@ -440,7 +440,13 @@ impl Bot {
             }
             let hop = hop((here, here_d), (to, d));
             let rushing = self.t < rush_until;
-            let reach = if rushing { aura_r.max(rush_r) } else { aura_r };
+            let mut reach = if rushing { aura_r.max(rush_r) } else { aura_r };
+            // The aura and the rush send a book home only from before its case: from
+            // here if the front of its slot is in sight, else no sooner than a click.
+            // (`hop` undercounts the walk round a case, so this errs toward the aura.)
+            if reach > 1.8 && !g.lib.reaches_front(b, here + Vec3::Y * EYE) {
+                reach = 1.8;
+            }
             let walk_m = (hop - reach.max(1.8)).max(0.0);
             // Reading where it goes, unless Sort Sense (in the book's room at I) or
             // Glimpse shows it: the run, and the cases the first time this trip.

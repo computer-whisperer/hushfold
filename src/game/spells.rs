@@ -470,28 +470,49 @@ mod tests {
     }
 
     /// Shelving Rush files the carried books near their slots, all at once rather
-    /// than at the aura's pace, and only while it lasts.
+    /// than at the aura's pace, and only while it lasts; only from in front of their
+    /// cases, never through the back.
     #[test]
     fn rush_files_what_is_near() {
         let mut g = Game::new(Layout::Hall);
         let mut audio = Audio::silent();
         g.upg[upg_index(Upg::Arms)] = 4;
         g.upg[upg_index(Upg::Rush)] = 1;
-        // Ten books of one category, standing in front of its middle case.
+        // Ten books of one category, and one shelved on the back of its middle case,
+        // standing in front of that case.
         let cat = 0;
+        let face = (g.lib.faces.iter())
+            .find(|f| f.category == cat && f.case_idx == 1)
+            .unwrap();
+        let (front, normal) = (face.center, face.normal);
+        let back = (0..g.lib.faces.len() as u32)
+            .find(|&f| {
+                let other = &g.lib.faces[f as usize];
+                other.normal.dot(normal) < -0.99
+                    && other.center.distance(front - normal * crate::library::UNIT_DEPTH) < 0.1
+            })
+            .unwrap();
+        let behind = (0..g.lib.books.len() as u32)
+            .filter(|&b| g.lib.books[b as usize].face == back && g.loose.is_resting(b))
+            .min_by(|&a, &b| {
+                let off = |x: u32| g.lib.books[x as usize].slot_pos.distance(front);
+                off(a).total_cmp(&off(b))
+            })
+            .unwrap();
         let books: Vec<u32> = (0..g.lib.books.len() as u32)
-            .filter(|&b| g.lib.category_of_book(b) == cat && g.loose.is_resting(b))
+            .filter(|&b| g.lib.category_of_book(b) == cat && g.loose.is_resting(b) && b != behind)
             .take(10)
+            .chain([behind])
             .collect();
         for &b in &books {
             hold(&mut g, b);
         }
-        let face = (g.lib.faces.iter())
-            .find(|f| f.category == cat && f.case_idx == 1)
-            .unwrap();
-        g.player.pos = Vec3::new(face.center.x, 0.0, face.center.z) + face.normal * 1.5;
+        g.player.pos = Vec3::new(front.x, 0.0, front.z) + normal * 1.5;
+        let eye = g.player.eye();
+        let in_reach = |b: u32| g.lib.books[b as usize].slot_pos.distance(eye) < rush_reach(1);
+        assert!(in_reach(behind) && !g.lib.reaches_front(behind, eye));
         let near: Vec<u32> = (books.iter().copied())
-            .filter(|&b| g.lib.books[b as usize].slot_pos.distance(g.player.eye()) < rush_reach(1))
+            .filter(|&b| in_reach(b) && g.lib.reaches_front(b, eye))
             .collect();
         assert!(near.len() >= 3, "{} near", near.len());
         g.update(0.5, &Input::default(), &mut audio, true);
@@ -505,6 +526,8 @@ mod tests {
             g.update(1.0 / 60.0, &Input::default(), &mut audio, true);
         }
         assert!(near.iter().all(|b| !g.held.contains(b)), "within half a second");
+        // Not the one whose slot is on the far side of the case.
+        assert!(g.held.contains(&behind));
         assert_eq!(g.held.len(), books.len() - near.len());
     }
 
