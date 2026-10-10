@@ -470,7 +470,9 @@ impl Mesh {
         self.idx.extend(other.idx.iter().map(|i| i + first));
     }
 
-    /// Seen from both sides: an open shell (a lamp's shade, a bell jar).
+    /// Seen from both sides: an open shell (a lamp's shade, a bowl). Not for clear
+    /// glass: the translucent pass draws both sides of every surface already, so a
+    /// two-sided glass would be drawn twice over, twice as thick.
     pub fn two_sided(mut self) -> Mesh {
         let first = self.verts.len() as u32;
         let back: Vec<Vertex> = (self.verts.iter())

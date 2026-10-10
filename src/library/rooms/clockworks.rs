@@ -6,7 +6,7 @@
 //! under the ceiling, meshing in trains that keep their teeth together, and the
 //! clocks keep time.
 
-use super::hearth_library::{flame, turned_leg};
+use super::hearth_library::{FLAME, turned_leg};
 use super::*;
 use std::f32::consts::{FRAC_PI_2, PI};
 
@@ -856,7 +856,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
         24,
     );
     lib.decor(font.at(lamp, Quat::IDENTITY, kind::METAL, brass));
-    let chimney = lib.turned_open(
+    let chimney = lib.turned(
         &[(0.032, 0.0), (0.045, 0.04), (0.045, 0.08), (0.025, 0.14), (0.025, 0.2)],
         24,
     );
@@ -866,7 +866,7 @@ fn workshop(lib: &mut Library, frame: &RoomFrame) {
         kind::CLEAR,
         [0.95, 0.9, 0.8, 0.08],
     ));
-    lib.translucent(flame(lamp + Vec3::Y * 0.135, 0.022, 0.05));
+    lib.translucent(flame(lamp + Vec3::Y * 0.135, (0.022, 0.05), FLAME));
     lib.light(lamp + Vec3::Y * 0.4, 4.5, [1.0, 0.62, 0.3], 0.8, LightKind::Flicker);
     // A stool at the bench: a round seat on turned legs.
     let st = (-5.0, o0 - 0.5);

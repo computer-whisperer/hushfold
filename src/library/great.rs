@@ -650,19 +650,6 @@ fn arc(r: f32, (a0, a1): Span, n: usize) -> impl Iterator<Item = Vec2> {
     })
 }
 
-/// A small flame, a teardrop on its foot (the origin), 1 tall.
-fn flame() -> Mesh {
-    let p = [
-        (0.0, 0.0),
-        (0.3, 0.06),
-        (0.5, 0.22),
-        (0.44, 0.42),
-        (0.24, 0.7),
-        (0.0, 1.0),
-    ];
-    Mesh::lathe(&p, 12)
-}
-
 /// The atrium's dressing: what stands on its walls, under its ceilings, along its
 /// galleries, round its doors, beside its stairs and over the well.
 impl Library {
@@ -1059,7 +1046,6 @@ impl Library {
         let font = self.shape(Mesh::lathe(&font, 24));
         let chimney = self.shape(Mesh::lathe(&chimney, 24));
         let crown = self.shape(Mesh::lathe(&crown, 24));
-        let flame = self.shape(flame()).sized(Vec3::new(0.035, 0.085, 0.035));
         let up = |h: f32| foot + Vec3::Y * h;
         let gilt = rgba(GILT, 1.0);
         let post = Vec3::new(0.11, 1.16, 0.11);
@@ -1069,7 +1055,7 @@ impl Library {
         self.decor(font.at(up(1.52), id, kind::METAL, gilt));
         self.decor(crown.at(up(1.85), id, kind::METAL, gilt));
         self.translucent(chimney.at(up(1.6), id, kind::CLEAR, [1.0, 0.9, 0.75, 0.08]));
-        self.translucent(flame.at(up(1.615), id, kind::FIRE, [1.0, 0.6, 0.25, 4.0]));
+        self.translucent(flame(up(1.615), (0.035, 0.085), [1.0, 0.6, 0.25, 4.0]));
     }
 
     /// The stone frame round the door from the atrium into department `dept`'s room
@@ -1217,10 +1203,11 @@ impl Library {
         end(self, (o0, o1), 0.025, (y0, head), FRIEZE);
     }
 
-    /// The skylight over the well: leaded glass in an oak frame, iron glazing bars,
-    /// ribs from its corners and middles to a gilt boss the chandelier hangs from, two
-    /// panes clear to the night with the moon in one; and under it, the lantern's
-    /// walls, rose windows in each and a pier at each corner.
+    /// The skylight over the well: leaded glass in an oak frame, the night sky through
+    /// it (`kind::GLASS` param 1: stars, cloud, the moon up the moonbeams' line), iron
+    /// glazing bars, ribs from its corners and middles to a gilt boss the chandelier
+    /// hangs from; and under it, the lantern's walls, rose windows in each and a pier at
+    /// each corner.
     fn skylight(&mut self) {
         let lantern = WELL + 0.2;
         let inner = WELL - 0.45;
@@ -1302,45 +1289,6 @@ impl Library {
         let boss = self.shape(Mesh::lathe(&boss, 32));
         let foot = Vec3::new(0.0, SKY - 1.13, 0.0);
         self.decor(boss.at(foot, Quat::IDENTITY, kind::METAL, rgba(GILT, 1.0)));
-        // Two panes of clear glass, the night through them, the moon in one.
-        self.decor(Inst::minmax(
-            Vec3::new(-5.4, SKY - 0.008, -3.6),
-            Vec3::new(-1.8, SKY - 0.002, -1.8),
-            kind::EMISSIVE,
-            [0.03, 0.045, 0.11],
-        ));
-        // The moon, and darker seas on it.
-        let disc = self.shape(Mesh::cylinder(48));
-        let moon = Vec3::new(-4.5, SKY - 0.012, -2.7);
-        let size = Vec3::new(0.95, 0.002, 0.95);
-        let light = [0.92, 0.94, 1.0, 2.6];
-        self.decor(disc.sized(size).inst(moon, Quat::IDENTITY, kind::EMISSIVE, light));
-        for (dx, dz, w, turn) in [
-            (0.14f32, -0.12f32, 0.26f32, 20.0f32),
-            (-0.17, 0.09, 0.19, 50.0),
-            (0.07, 0.23, 0.14, 10.0),
-        ] {
-            let at = moon + Vec3::new(dx, -0.004, dz);
-            let rot = Quat::from_rotation_y(turn.to_radians());
-            let sea = disc.sized(Vec3::new(w, 0.002, w * 0.8));
-            self.decor(sea.inst(at, rot, kind::EMISSIVE, [0.6, 0.64, 0.76, 2.6]));
-        }
-        for (x, z) in [
-            (-3.2f32, -3.1f32),
-            (-2.4, -2.2),
-            (-2.9, -2.6),
-            (-2.1, -3.3),
-            (-5.1, -1.95),
-            (-3.95, -3.35),
-        ] {
-            let star = Vec3::new(x, SKY - 0.012, z);
-            self.decor(Inst::aabox(
-                star,
-                Vec3::new(0.03, 0.002, 0.03),
-                kind::EMISSIVE,
-                [1.0, 1.0, 1.0],
-            ));
-        }
         // The glass, turned so its leading runs both ways across its underside.
         self.decor(Inst::new(
             Vec3::new(0.0, SKY + 0.04, 0.0),
@@ -1348,7 +1296,7 @@ impl Library {
             Vec3::new(2.0 * WELL, 2.0 * WELL, 0.08),
             kind::GLASS,
             [0.32, 0.42, 0.85, 1.0],
-            0,
+            1,
         ));
     }
 
@@ -1446,7 +1394,6 @@ impl Library {
         let cap = self.shape(Mesh::lathe(&cap, 24));
         // A ring at the top, 9 cm across (the torus is made 2.25 across).
         let ring = self.shape(Mesh::torus(0.25, 16, 6)).scaled(0.04);
-        let flame = self.shape(flame()).sized(Vec3::new(0.07, 0.17, 0.07));
         // The cage: a collar round the foot of the glass, and four ribs from it up the
         // glass to the cap, just outside it.
         let mut cage = Mesh::default();
@@ -1482,7 +1429,7 @@ impl Library {
             }
             let upright = rot * Quat::from_rotation_x(FRAC_PI_2);
             self.moving(m, ring.inst(c + Vec3::Y * 0.39, upright, kind::METAL, gilt));
-            self.moving(m, flame.at(c - Vec3::Y * 0.13, rot, kind::FIRE, [1.0, 0.62, 0.26, 6.0]));
+            self.moving(m, flame(c - Vec3::Y * 0.13, (0.07, 0.17), [1.0, 0.62, 0.26, 6.0]));
             self.moving(m, glass.at(c, rot, kind::CLEAR, [1.0, 0.86, 0.62, 0.1]));
             if k % 3 == 0 {
                 self.light_riding(m, c, 7.0, [1.0, 0.7, 0.4], 0.9, LightKind::Static);

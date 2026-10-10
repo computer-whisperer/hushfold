@@ -66,6 +66,19 @@ fn rgba(rgb: [f32; 3], w: f32) -> [f32; 4] {
     [rgb[0], rgb[1], rgb[2], w]
 }
 
+/// A flame (`kind::FIRE`, a candle's or a lamp's) standing on `foot`, `w` across and
+/// `h` tall: the box the shader draws its teardrop in.
+fn flame(foot: Vec3, (w, h): (f32, f32), color: [f32; 4]) -> Inst {
+    Inst::new(
+        foot + Vec3::Y * (h * 0.5),
+        Quat::IDENTITY,
+        Vec3::new(w, h, w),
+        kind::FIRE,
+        color,
+        0,
+    )
+}
+
 /// Height of the shelf surface above the floor for reading-order row (0 = top).
 pub fn row_floor_y(row: usize) -> f32 {
     SHELF_BASE + (ROWS - 1 - row) as f32 * SHELF_STEP

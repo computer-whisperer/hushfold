@@ -550,7 +550,7 @@ fn low_table(lib: &mut Library, f: &RoomFrame, a: f32, o: f32) {
         kind::PLAIN,
         [0.85, 0.8, 0.65, 1.0],
     ));
-    flame(lib, foot + Vec3::Y * 0.172, 0.05);
+    lib.translucent(flame(foot + Vec3::Y * 0.172, (0.022, 0.05), [1.0, 0.62, 0.25, 4.0]));
     let tip = Vec3::new(0.3, h + 0.19, -0.1);
     lib.light(
         at.at + at.q * tip + Vec3::Y * 0.2,
@@ -850,21 +850,4 @@ fn cranes(lib: &mut Library, f: &RoomFrame) {
             lib.moving(m, part);
         }
     }
-}
-
-/// A candle's flame standing `h` tall on `at`.
-fn flame(lib: &mut Library, at: Vec3, h: f32) {
-    let drop = [
-        (0.0, 0.0),
-        (0.22, 0.06),
-        (0.34, 0.2),
-        (0.3, 0.42),
-        (0.16, 0.72),
-        (0.0, 1.0),
-    ];
-    let drop = lib.shape(Mesh::lathe(&drop.map(Vec2::from), 12));
-    lib.translucent(
-        drop.scaled(h)
-            .at(at, Quat::IDENTITY, kind::FIRE, [1.0, 0.62, 0.25, 4.0]),
-    );
 }

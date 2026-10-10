@@ -110,18 +110,6 @@ fn bun_foot(lib: &mut Library) -> Shape {
     lib.turned(&profile, 12)
 }
 
-/// A candle's flame standing on `p`, `w` across and `h` tall.
-pub(super) fn flame(p: Vec3, w: f32, h: f32) -> Inst {
-    Inst::new(
-        p + Vec3::Y * (h * 0.5),
-        Quat::IDENTITY,
-        Vec3::new(w, h, w),
-        kind::FIRE,
-        FLAME,
-        0,
-    )
-}
-
 /// A candle standing at `p`, `h` tall: its wax and its flame, for laying down (`lay`)
 /// or for a mover to carry.
 pub(super) fn candle_parts(lib: &mut Library, p: Vec3, h: f32) -> [Inst; 2] {
@@ -129,7 +117,7 @@ pub(super) fn candle_parts(lib: &mut Library, p: Vec3, h: f32) -> [Inst; 2] {
     [
         wax.sized(Vec3::new(0.045, h, 0.045))
             .at(p, Quat::IDENTITY, kind::PLAIN, rgba(WAX, 1.0)),
-        flame(p + Vec3::Y * (h + 0.004), 0.026, 0.06),
+        flame(p + Vec3::Y * (h + 0.004), (0.026, 0.06), FLAME),
     ]
 }
 
@@ -155,7 +143,7 @@ pub(super) fn hurricane_lamp(lib: &mut Library, p: Vec3) {
     );
     lib.decor(foot.at(p, Quat::IDENTITY, kind::METAL, rgba(BRASS, 1.0)));
     candle(lib, p + Vec3::Y * 0.04, 0.16);
-    let glass = lib.turned_open(
+    let glass = lib.turned(
         &[
             (0.046, 0.0),
             (0.06, 0.05),
@@ -497,7 +485,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         }
     }
     mantel_clock(lib, frame, frame.at(0.0, face - 0.1, my), -frame.out());
-    let jar = lib.turned_open(
+    let jar = lib.turned(
         &[
             (0.0, 0.0),
             (0.47, 0.0),

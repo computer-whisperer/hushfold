@@ -1485,7 +1485,7 @@ impl Library {
             &[(0.044, 0.0), (0.058, 0.06), (0.066, 0.13), (0.06, 0.2), (0.047, 0.28)].map(Vec2::from),
             24,
         );
-        let chimney = self.shape(chimney.two_sided());
+        let chimney = self.shape(chimney);
         for s in [-1.0f32, 1.0] {
             let p = shelf + Vec3::X * s * 2.1;
             self.decor(stick.at(p, Quat::IDENTITY, kind::METAL, brass));
@@ -2060,7 +2060,7 @@ fn mantel_clock(lib: &mut Library, shelf: Vec3) {
         .map(Vec2::from),
         32,
     );
-    let glass = lib.shape(glass.two_sided());
+    let glass = lib.shape(glass);
     lib.translucent(glass.at(
         face,
         Quat::from_rotation_arc(Vec3::Y, m.n),

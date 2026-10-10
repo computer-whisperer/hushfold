@@ -917,14 +917,14 @@ fn table(lib: &mut Library, f: &RoomFrame) {
     let font = lib.shape(Mesh::lathe(&font.map(Vec2::from), 32));
     lib.decor(font.at(base, Quat::IDENTITY, kind::METAL, BRASS_RGBA));
     let chimney = [(0.03, 0.0), (0.05, 0.04), (0.048, 0.09), (0.026, 0.15), (0.025, 0.22)];
-    let chimney = lib.shape(Mesh::lathe(&chimney.map(Vec2::from), 32).two_sided());
+    let chimney = lib.shape(Mesh::lathe(&chimney.map(Vec2::from), 32));
     lib.translucent(chimney.at(
         base + Vec3::Y * 0.172,
         Quat::IDENTITY,
         kind::CLEAR,
         [0.95, 0.92, 0.85, 0.08],
     ));
-    flame(lib, base + Vec3::Y * 0.18, 0.06);
+    lib.translucent(flame(base + Vec3::Y * 0.18, (0.026, 0.06), [1.0, 0.62, 0.25, 4.0]));
     lib.light(
         lamp.at + Vec3::Y * (h + 0.45),
         5.5,
@@ -1111,21 +1111,4 @@ fn bellied(w: f32, h: f32) -> Mesh {
     let mut outline: Vec<Vec2> = (0..=n).map(bulge).collect();
     outline.extend((0..=n).rev().map(|k| bulge(k) - Vec2::Y * t));
     Mesh::prism(&outline, h)
-}
-
-/// A candle's or lamp's flame standing `h` tall on `at`.
-fn flame(lib: &mut Library, at: Vec3, h: f32) {
-    let drop = [
-        (0.0, 0.0),
-        (0.22, 0.06),
-        (0.34, 0.2),
-        (0.3, 0.42),
-        (0.16, 0.72),
-        (0.0, 1.0),
-    ];
-    let drop = lib.shape(Mesh::lathe(&drop.map(Vec2::from), 12));
-    lib.translucent(
-        drop.scaled(h)
-            .at(at, Quat::IDENTITY, kind::FIRE, [1.0, 0.62, 0.25, 4.0]),
-    );
 }

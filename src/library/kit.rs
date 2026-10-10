@@ -300,7 +300,7 @@ impl Library {
             ],
             24,
         );
-        let chimney = self.shape(chimney.two_sided());
+        let chimney = self.shape(chimney);
         let glass = chimney.at(
             candle + Vec3::Y * 0.134,
             Quat::IDENTITY,

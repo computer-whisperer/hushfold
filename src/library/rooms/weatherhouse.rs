@@ -526,7 +526,7 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         .map(Vec2::from),
         48,
     );
-    let jar = lib.shape(jar.two_sided());
+    let jar = lib.shape(jar);
     lib.translucent(jar.at(
         base + Vec3::Y * 0.06,
         Quat::IDENTITY,
@@ -556,7 +556,7 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         lib.moving(
             m,
             puff.sized(size)
-                .inst(cloud + off, q, kind::PAPER, [0.55, 0.62, 0.8, 0.35]),
+                .inst(cloud + off, q, kind::MIST, [0.8, 0.84, 0.95, 0.9]),
         );
     }
     // A fork of lightning in it.
@@ -773,7 +773,7 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     }
     // The rain gauge: a brass funnel on a glass tube, a little water in it.
     let tube = lib.shape(Mesh::cylinder(16));
-    let glass_tube = lib.turned_open(&[(0.5, 0.0), (0.5, 1.0)], 16);
+    let glass_tube = lib.turned(&[(0.5, 0.0), (0.5, 1.0)], 16);
     lib.translucent(glass_tube.sized(Vec3::new(0.09, 0.32, 0.09)).at(
         on(0.0, -0.05, 0.0),
         Quat::IDENTITY,
@@ -789,7 +789,7 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let funnel = lib.turned_open(&[(0.045, 0.0), (0.045, 0.04), (0.085, 0.09), (0.085, 0.11)], 24);
     lib.decor(funnel.at(on(0.0, -0.05, 0.31), Quat::IDENTITY, kind::METAL, gilt));
     // The storm glass: a tall stoppered tube, feathery crystals settled in it.
-    let storm = lib.turned_open(&[(0.5, 0.0), (0.5, 0.85), (0.4, 0.95), (0.25, 1.0)], 16);
+    let storm = lib.turned(&[(0.5, 0.0), (0.5, 0.85), (0.4, 0.95), (0.25, 1.0)], 16);
     lib.translucent(storm.sized(Vec3::new(0.06, 0.4, 0.06)).at(
         on(0.25, 0.3, 0.03),
         Quat::IDENTITY,
@@ -847,7 +847,7 @@ fn instrument_table(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         foot.sized(Vec3::new(0.22, 0.03, 0.22))
             .at(on(-0.15, 0.55, 0.0), Quat::IDENTITY, kind::METAL, gilt),
     );
-    let bell = lib.turned_open(
+    let bell = lib.turned(
         &[
             (0.5, 0.0),
             (0.5, 0.7),
