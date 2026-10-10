@@ -329,6 +329,44 @@ filing, carried, flying to the hand) are drawn per frame. Chunks outside the vie
 frustum are skipped; the rest are drawn after the walls and floors, nearest
 first. F3 shows GPU time from timestamp queries where the adapter has them.
 
+## Sound
+A warm, quiet library at night, with a middling amount of magic: real things
+(paper, wood, fire, rain, a clock) carry most of it, and the magic is a few soft
+bells and glints where something magical happens. Everything is synthesised;
+`audio::engine` mixes on the device's thread, a 256-frame block at a time:
+- **Effects** are banks of clips (synthesised on a thread at startup, ~0.35 s;
+  plays before then are skipped), each play a random variant at a slightly
+  random rate. `play` sounds at the ears (the interface, the player's own
+  doings); `play_at` from a place: panned by bearing (never wholly into one ear),
+  quieter, duller and more reverberant with distance. Bursts of one effect thin
+  out (`crowd`), so the Aura's and Rush's flurries of filing stay soft.
+- **Places** (`Place`): each has a bed (room tone, weather, its flavour as
+  scattered grains and rung tones) and its reverb. `game/sound.rs` sends the
+  weights each frame: a room fills in from its doorway and spills out into the
+  atrium; the engine eases between them over a second. Fires are found by their
+  light (a bright flicker near the floor) and heard from where they burn;
+  familiars on the wing beat their paper wings where they fly.
+- **Music** is composed a piece at a time (key, mode, metre, ensemble of music
+  box, celesta, felt piano, harp, pad and bass, progressions, a motif and its
+  answer in A A B A), then a quiet spell of 35–95 s. Tonal effects and the
+  ambience's bells are written in D pentatonic and moved to the relative major
+  of the piece's mode, so they always sit in its key.
+- Levels at default settings: music ~−31 dBFS RMS, place beds ~−48 to −50, a
+  near thunk peaks ~−18, a category's fanfare ~−13. A look-ahead limiter at
+  −6 dBFS and a soft knee guard the sum; the busiest scenes measured (Aura III,
+  Rush) peak at −9 to −11, so it rarely acts.
+
+### Wanted next (sound)
+- Footsteps by surface (boards, stone, rugs, stairs) and by pace.
+- Occlusion: a ray from the ears to a sound to muffle it behind walls and floors
+  (familiars filing two floors up are only dulled by distance now); the reverb
+  sized from the room's actual volume rather than set per place.
+- Emitters placed by the library itself (`lib.sounds` beside `lib.lights`): the
+  great clock, the rain window, the egg, the harp, so each is heard from its
+  place rather than room-wide.
+- A soft sound for the Gathering Charm's stream of books in flight, and for a
+  toss charging.
+
 ## Persistence
 Deterministic world from a seed; save = seed + shelved/held/in-flight ids +
 lumens + upgrade levels by name + the poses of loose books that moved from where

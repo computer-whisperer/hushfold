@@ -199,7 +199,8 @@ fn ar(t: f32, a: f32, d: f32) -> f32 {
     if t < a { t / a } else { (-(t - a) / d).exp() }
 }
 
-/// Filtered noise shaped by an envelope, added at `start`.
+/// Noise filtered to `band` and shaped by an envelope, added at `start`; `amp` is
+/// about its peak, whatever the band.
 fn burst(
     out: &mut [f32],
     rng: &mut StdRng,
@@ -213,6 +214,8 @@ fn burst(
     let mut b = noise(n, rng.next_u32());
     highpass(&mut b, band.0);
     lowpass2(&mut b, band.1);
+    let rms = (b.iter().map(|x| x * x).sum::<f32>() / n.max(1) as f32).sqrt();
+    let amp = amp * 0.35 / rms.max(1e-9);
     for (i, x) in b.iter().enumerate() {
         out[start + i] += x * amp * env(i as f32 / SRF);
     }
@@ -240,8 +243,8 @@ fn crinkles(out: &mut [f32], rng: &mut StdRng, start: usize, len: f32, rate: f32
 /// meets the back; `size` 0..1 runs from slim to stout (stouter is lower).
 fn thunk(rng: &mut StdRng, size: f32) -> Vec<f32> {
     let mut out = vec![0.0; secs(0.5)];
-    let slide = rng.gen_range(0.03..0.07);
-    burst(&mut out, rng, 0, slide * 1.2, (300.0, 1800.0), 0.12, |t| {
+    let (slide, scrape) = (rng.gen_range(0.03..0.07), rng.gen_range(0.15..0.3));
+    burst(&mut out, rng, 0, slide * 1.2, (300.0, 1800.0), scrape, |t| {
         (t / (slide * 0.7)).min(1.0) * ((slide * 1.2 - t) / (slide * 0.5)).clamp(0.0, 1.0)
     });
     let hit = secs(slide);
@@ -252,7 +255,7 @@ fn thunk(rng: &mut StdRng, size: f32) -> Vec<f32> {
     mode(&mut knock, 0, board, 0.5, rng.gen_range(0.04..0.06));
     mode(&mut knock, 0, board * 2.31, 0.18, 0.025);
     mode(&mut knock, 0, rng.gen_range(500.0..720.0) * low, 0.22, 0.016);
-    burst(&mut knock, rng, 0, 0.012, (200.0, 2600.0), 0.3, |t| {
+    burst(&mut knock, rng, 0, 0.012, (200.0, 2600.0), 0.2, |t| {
         ar(t, 0.0003, 0.0025)
     });
     // Some books settle with a second, smaller tap.
@@ -280,8 +283,8 @@ fn rustle(rng: &mut StdRng) -> Vec<f32> {
     });
     for _ in 0..rng.gen_range(1..=2) {
         let at = secs(rng.gen_range(0.05..len * 0.8));
-        mode(&mut out, at, rng.gen_range(330.0..480.0), 0.35, 0.014);
-        mode(&mut out, at, rng.gen_range(140.0..180.0), 0.4, 0.025);
+        mode(&mut out, at, rng.gen_range(330.0..480.0), 0.15, 0.014);
+        mode(&mut out, at, rng.gen_range(140.0..180.0), 0.2, 0.025);
     }
     lowpass2(&mut out, 6000.0);
     finish(out, 1.0)
@@ -417,7 +420,7 @@ fn veil(rng: &mut StdRng) -> Vec<f32> {
         let t = i as f32 / SRF;
         let e = (t / 1.5).min(1.0) * (-(t - 1.5).max(0.0) / 0.9).exp();
         bp.set(400.0 + 2600.0 * (t / 2.5).min(1.0), 1.4);
-        *o += bp.band(g.white()) * e * 0.18;
+        *o += bp.band(g.white()) * e * 0.9;
     }
     let mut t = 0.2f32;
     while t < 3.0 {
@@ -479,7 +482,7 @@ fn spell(rng: &mut StdRng, slot: usize) -> Vec<f32> {
             for (i, o) in out.iter_mut().enumerate() {
                 let t = i as f32 / SRF;
                 bp.set(700.0 + 500.0 * (TAU * 3.0 * t).sin() + 600.0 * t, 2.0);
-                *o += bp.band(g.white()) * (t / 0.2).min(1.0) * (-t / 0.6).exp() * 0.5;
+                *o += bp.band(g.white()) * (t / 0.2).min(1.0) * (-t / 0.6).exp() * 1.5;
             }
             for k in 0..9 {
                 harp(
@@ -525,7 +528,7 @@ fn spell(rng: &mut StdRng, slot: usize) -> Vec<f32> {
                 };
                 bp.set(500.0 + 2500.0 * (t / 0.55).min(1.0), 1.5);
                 ph += midi_hz(69.0 + 12.0 * (t / 0.55).min(1.0)) / SRF;
-                *o += (bp.band(g.white()) * 0.4 + (TAU * ph).sin() * 0.12) * e;
+                *o += (bp.band(g.white()) * 1.2 + (TAU * ph).sin() * 0.12) * e;
             }
             celesta(&mut out, secs(0.55), 81.0, 0.6, 0.6);
             celesta(&mut out, secs(0.64), 86.0, 0.5, 0.7);
@@ -569,7 +572,7 @@ fn fold(rng: &mut StdRng) -> Vec<f32> {
         });
     }
     crinkles(&mut out, rng, 0, 0.25, 50.0, 0.3, (1500.0, 3500.0));
-    mode(&mut out, secs(0.27), 420.0, 0.25, 0.015);
+    mode(&mut out, secs(0.27), 420.0, 0.12, 0.015);
     finish(out, 1.0)
 }
 
@@ -629,7 +632,7 @@ fn hop(rng: &mut StdRng) -> Vec<f32> {
     for (i, o) in out[at..].iter_mut().enumerate() {
         let t = i as f32 / SRF;
         bp.set(900.0 + 3000.0 * t, 1.0);
-        *o += bp.band(g.white()) * ar(t, 0.03, 0.07) * 0.3;
+        *o += bp.band(g.white()) * ar(t, 0.03, 0.07) * 0.9;
     }
     lowpass2(&mut out, 3500.0);
     finish(out, 1.0)
@@ -778,7 +781,7 @@ fn page(rng: &mut StdRng) -> Vec<f32> {
         bp.set(900.0 + 1800.0 * u, 0.9);
         *o += bp.band(g.white()) * (PI * u).sin().powf(2.0);
     }
-    crinkles(&mut out, rng, secs(len * 0.6), len * 0.4, 60.0, 0.5, (2000.0, 4500.0));
+    crinkles(&mut out, rng, secs(len * 0.6), len * 0.4, 60.0, 0.15, (2000.0, 4500.0));
     finish(out, 1.0)
 }
 

@@ -141,7 +141,7 @@ struct Note {
 }
 
 /// A piece in its key: the tonic as a MIDI note, and the mode.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Key {
     tonic: i32,
     mode: Mode,
@@ -152,6 +152,12 @@ impl Key {
     fn note(self, d: i32) -> f32 {
         let s = self.mode.scale();
         (self.tonic + 12 * d.div_euclid(7) + s[d.rem_euclid(7) as usize]) as f32
+    }
+
+    /// Semitones (-6..=5) from D to the major pentatonic whose notes are all in
+    /// this key: what the tonal effects, written in D, are moved by.
+    fn shift(self) -> i32 {
+        (self.tonic + self.mode.relative_major() - 62 + 6).rem_euclid(12) - 6
     }
 }
 
@@ -164,12 +170,25 @@ fn chord(root: i32, seventh: bool) -> Vec<i32> {
     c
 }
 
-/// The degree nearest `d` that is a tone of `chord` (in any octave).
-fn snap(d: i32, chord: &[i32]) -> i32 {
-    (0..=3)
+/// The degree nearest `d` within `range` that is a tone of `chord` (in any
+/// octave).
+fn snap(d: i32, chord: &[i32], (lo, hi): (i32, i32)) -> i32 {
+    (0..=4)
         .flat_map(|k| [d - k, d + k])
+        .filter(|x| (lo..=hi).contains(x))
         .find(|x| chord.iter().any(|c| (x - c).rem_euclid(7) == 0))
-        .unwrap_or(d)
+        .unwrap_or(d.clamp(lo, hi))
+}
+
+/// `d` turned back into `lo..=hi` at whichever end it ran past.
+fn fold(d: i32, (lo, hi): (i32, i32)) -> i32 {
+    if d > hi {
+        (2 * hi - d).max(lo)
+    } else if d < lo {
+        (2 * lo - d).min(hi)
+    } else {
+        d
+    }
 }
 
 /// Rhythm cells, one bar each, in beats; a negative length is a rest.
@@ -325,15 +344,10 @@ impl Composer<'_> {
                     beat -= len;
                     continue;
                 }
-                let next = if k == 1 { d } else { d + step };
-                let next = if next < RANGE.0 || next > RANGE.1 {
-                    d - step
-                } else {
-                    next
-                };
+                let next = fold(if k == 1 { d } else { d + step }, RANGE);
                 // Downbeats and long notes sit on the chord.
                 d = if beat == 0.0 || len >= 2.0 {
-                    snap(next, chord)
+                    snap(next, chord, RANGE)
                 } else {
                     next
                 };
@@ -701,7 +715,7 @@ impl Music {
                 if *left <= 0.0 {
                     let (notes, key, len, ens) = compose(&mut self.rng, self.prev);
                     self.prev = Some((key, ens));
-                    self.shift = (key.tonic + key.mode.relative_major() - 62 + 6).rem_euclid(12) - 6;
+                    self.shift = key.shift();
                     self.state = State::Playing {
                         notes,
                         next: 0,
@@ -741,6 +755,51 @@ impl Music {
         for i in 0..BLOCK {
             l[i] += (dl[i] + wl[i] * 0.55) * LEVEL;
             r[i] += (dr[i] + wr[i] * 0.55) * LEVEL;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pitch_classes(key: Key) -> Vec<i32> {
+        (0..7).map(|d| (key.note(d) as i32).rem_euclid(12)).collect()
+    }
+
+    #[test]
+    fn the_effects_moved_to_the_key_sit_in_it() {
+        for tonic in 55..72 {
+            for (mode, _) in Mode::ALL {
+                let key = Key { tonic, mode };
+                let scale = pitch_classes(key);
+                for d in 0..5 {
+                    let pc = (penta(4, d) as i32 + key.shift()).rem_euclid(12);
+                    assert!(scale.contains(&pc), "{key:?}: degree {d} lands off the scale");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pieces_keep_to_their_key_and_a_gentle_register() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let mut prev: Option<(Key, usize)> = None;
+        for _ in 0..60 {
+            let (notes, key, len, ens) = compose(&mut rng, prev);
+            assert!(prev.is_none_or(|(k, e)| k.tonic != key.tonic && e != ens));
+            prev = Some((key, ens));
+            assert!((50.0..200.0).contains(&len), "a piece {len:.0} s long");
+            let scale = pitch_classes(key);
+            for n in &notes {
+                assert!(
+                    scale.contains(&(n.key as i32).rem_euclid(12)),
+                    "{key:?}: {} is off the scale",
+                    n.key
+                );
+                assert!((38.0..=91.0).contains(&n.key), "{:?} at {}", n.inst, n.key);
+                assert!(n.at < len);
+            }
         }
     }
 }
