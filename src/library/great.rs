@@ -657,7 +657,7 @@ impl Library {
         let colour = catalog::category_color(&self.catalog.categories[first]);
         let piers: Vec<f32> = pilasters(d).collect();
         for &p in &piers {
-            self.pilaster(side, p, y);
+            self.atrium_pilaster(side, p, y);
         }
         // The bays between the corner piers' and the pilasters' faces; the door's bay
         // has the door's frame instead.
@@ -702,7 +702,7 @@ impl Library {
 
     /// A pilaster on the wall on `side` at `a`, on storey floor `y`: a pedestal (in
     /// the way, like furniture against the wall), its shaft, and a capital.
-    fn pilaster(&mut self, side: Side, a: f32, y: f32) {
+    fn atrium_pilaster(&mut self, side: Side, a: f32, y: f32) {
         let o = |depth: f32| (FACE - depth, FACE);
         let pedestal = piece(side, (a - 0.33, a + 0.33), o(0.24), (y, y + 1.24), kind::STONE, DRESSED);
         self.against_wall(pedestal);
@@ -1007,7 +1007,10 @@ impl Library {
             }
             for i in 0..=bays {
                 let a = start + i as f32 * pitch;
-                wood(self, (a - 0.05, a + 0.05), 0.045, (y0 + 0.2, under(a) - 0.1), WALNUT);
+                // The last stands behind the gallery railing's end newel: set back so
+                // the newel's cap is proud of it rather than flush.
+                let depth = if i == bays { 0.04 } else { 0.045 };
+                wood(self, (a - 0.05, a + 0.05), depth, (y0 + 0.2, under(a) - 0.1), WALNUT);
             }
             wood(self, (start - 0.05, r), 0.045, (y0, y0 + 0.2), WALNUT);
             self.beam(along(start, -0.07, 0.045), along(r, -0.07, 0.045), 0.045, 0.14, WALNUT);
