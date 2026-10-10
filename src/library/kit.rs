@@ -739,52 +739,30 @@ impl Library {
         (ink, cap): ([f32; 4], [f32; 4]),
         seconds: bool,
     ) {
-        let side = Vec3::Y.cross(n);
-        let facing = Quat::from_rotation_arc(Vec3::Z, n);
-        // Where `side` is in the plane `facing` lays a hand's length (x) in.
-        let x = facing * Vec3::X;
-        let side_at = libm::atan2f(side.dot(n.cross(x)), side.dot(x));
-        let spade = |len: f32, w: f32| -> Vec<Vec2> {
-            let v = Vec2::new;
-            vec![
-                v(-0.16 * len, -w * 0.5),
-                v(0.62 * len, -w * 0.35),
-                v(0.72 * len, -w * 1.3),
-                v(0.86 * len, -w * 0.4),
-                v(len, 0.0),
-                v(0.86 * len, w * 0.4),
-                v(0.72 * len, w * 1.3),
-                v(0.62 * len, w * 0.35),
-                v(-0.16 * len, w * 0.5),
-            ]
-        };
-        let hand = |lib: &mut Library, turns: f32, (len, w): (f32, f32), z: f32, motion: Motion| {
-            // Up at twelve, a turn clockwise as seen.
-            let th = std::f32::consts::FRAC_PI_2 - turns * TAU;
-            let shape = lib.shape(Mesh::prism(&spade(len, w), 0.01));
+        let hand = |lib: &mut Library, turns: f32, size: (f32, f32), z: f32, motion: Motion| {
+            let part = lib.clock_hand((face, n), turns, size, z, ink);
             let m = lib.mover(face, motion, 0.0, None);
-            lib.moving(
-                m,
-                shape.at(
-                    face + n * z,
-                    facing * Quat::from_rotation_z(th + side_at),
-                    kind::METAL,
-                    ink,
-                ),
-            );
+            lib.moving(m, part);
         };
         let spin = |hours: f32| Motion::Spin {
             axis: n,
             rate: -TAU / (hours * 3600.0),
         };
+        let [hour_hand, minute_hand] = Self::CLOCK_HANDS;
         hand(
             self,
             (hour % 12.0) / 12.0 + minute / 720.0,
-            (r * 0.52, r * 0.07),
-            0.02,
+            (r * hour_hand.0, r * hour_hand.1),
+            hour_hand.2,
             spin(12.0),
         );
-        hand(self, minute / 60.0, (r * 0.78, r * 0.045), 0.031, spin(1.0));
+        hand(
+            self,
+            minute / 60.0,
+            (r * minute_hand.0, r * minute_hand.1),
+            minute_hand.2,
+            spin(1.0),
+        );
         if seconds {
             let tick = Motion::Tick {
                 axis: -n,
@@ -793,6 +771,54 @@ impl Library {
             };
             hand(self, 0.0, (r * 0.86, r * 0.012), 0.042, tick);
         }
+        self.clock_cap((face, n, r), cap);
+    }
+
+    /// The hour and minute hands: length and width (by the dial's radius), and how far
+    /// each stands off the face.
+    pub(super) const CLOCK_HANDS: [(f32, f32, f32); 2] = [(0.52, 0.07, 0.02), (0.78, 0.045, 0.031)];
+
+    /// A clock hand over a dial (`face` its middle, `n` out of it) pointing `turns` of
+    /// the way round from twelve, clockwise as seen: a spade `len` long and `w` wide,
+    /// standing `z` off the face.
+    pub(super) fn clock_hand(
+        &mut self,
+        (face, n): (Vec3, Vec3),
+        turns: f32,
+        (len, w): (f32, f32),
+        z: f32,
+        ink: [f32; 4],
+    ) -> Inst {
+        let side = Vec3::Y.cross(n);
+        let facing = Quat::from_rotation_arc(Vec3::Z, n);
+        // Where `side` is in the plane `facing` lays a hand's length (x) in.
+        let x = facing * Vec3::X;
+        let side_at = libm::atan2f(side.dot(n.cross(x)), side.dot(x));
+        let v = Vec2::new;
+        let spade = [
+            v(-0.16 * len, -w * 0.5),
+            v(0.62 * len, -w * 0.35),
+            v(0.72 * len, -w * 1.3),
+            v(0.86 * len, -w * 0.4),
+            v(len, 0.0),
+            v(0.86 * len, w * 0.4),
+            v(0.72 * len, w * 1.3),
+            v(0.62 * len, w * 0.35),
+            v(-0.16 * len, w * 0.5),
+        ];
+        // Up at twelve, a turn clockwise as seen.
+        let th = std::f32::consts::FRAC_PI_2 - turns * TAU;
+        let shape = self.shape(Mesh::prism(&spade, 0.01));
+        shape.at(
+            face + n * z,
+            facing * Quat::from_rotation_z(th + side_at),
+            kind::METAL,
+            ink,
+        )
+    }
+
+    /// The cap over a clock's arbor, on a dial of radius `r`.
+    pub(super) fn clock_cap(&mut self, (face, n, r): (Vec3, Vec3, f32), cap: [f32; 4]) {
         let dome = self.shape(Mesh::dome(16));
         let k = r.max(0.3);
         let up = Quat::from_rotation_arc(Vec3::Y, n);

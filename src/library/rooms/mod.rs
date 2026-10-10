@@ -19,6 +19,8 @@ mod observatory;
 mod verse_gallery;
 mod weatherhouse;
 
+pub(super) use clockworks::stopped_clock;
+
 /// A department's room, in its own frame: `a` runs across the room (along the wall
 /// with the door), `o` outward from the atrium's centre, heights from its floor.
 pub(super) struct RoomFrame {

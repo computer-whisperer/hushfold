@@ -671,8 +671,10 @@ fn weathervane(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let veering = lib.mover(pivot, veer, 0.0, None);
     let backing = lib.mover(pivot, back, 11.0, Some(veering));
     let m = lib.mover(pivot, quiver, 0.0, Some(backing));
-    // The arrow, pointing off to the window's side of the room at rest.
+    // The arrow, pointing off to the window's side of the room at rest. It points into
+    // the wind, which blows through the room (`game`'s draught).
     let dir = (frame.out() * 0.8 - frame.across() * 0.6).normalize();
+    lib.vane = Some((m, dir));
     let flat = Quat::from_mat3(&Mat3::from_cols(dir, Vec3::Y, dir.cross(Vec3::Y)));
     let collar = lib.pole_inst(pivot - Vec3::Y * 0.05, pivot + Vec3::Y * 0.05, 0.06, kind::METAL, gilt);
     lib.moving(m, collar);

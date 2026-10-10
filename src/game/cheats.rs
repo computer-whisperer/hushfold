@@ -49,7 +49,7 @@ impl Game {
             let mut pools: Vec<Vec<u32>> = vec![Vec::new(); self.dept_total.len()];
             for b in 0..self.lib.books.len() as u32 {
                 if self.state[b as usize] == BookState::Loose && self.loose.is_resting(b) {
-                    pools[self.lib.dept_of(self.lib.category_of_book(b))].push(b);
+                    pools[self.lib.dept_of_book(b)].push(b);
                 }
             }
             let mut take = Vec::new();
@@ -72,6 +72,7 @@ impl Game {
             for &b in &take {
                 self.credit_shelved(b);
             }
+            self.start_clocks();
             let open = |g: &Self| g.lib.world.gates_open().iter().filter(|&&o| o).count();
             let before = open(self);
             self.check_gates(audio);

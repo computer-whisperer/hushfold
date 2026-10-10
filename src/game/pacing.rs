@@ -167,7 +167,7 @@ impl Bot {
     fn fileable(&self) -> Vec<bool> {
         let g = &self.g;
         (0..g.lib.books.len() as u32)
-            .map(|b| g.dept_open(g.lib.dept_of(g.lib.category_of_book(b))))
+            .map(|b| g.dept_open(g.lib.dept_of_book(b)))
             .collect()
     }
 
@@ -339,9 +339,7 @@ impl Bot {
             let g = &mut self.g;
             let left = g.charmed(lv, c, charm);
             let here = g.lib.room_at(c);
-            let away = (left.iter())
-                .filter(|&&b| here != Some(g.lib.dept_of(g.lib.category_of_book(b))))
-                .count();
+            let away = (left.iter()).filter(|&&b| here != Some(g.lib.dept_of_book(b))).count();
             if away >= 20 && away * 2 >= left.len() && g.charm_heap(lv, c, charm) {
                 for &b in &left {
                     self.moved_by.insert(b, "charmed");
@@ -606,7 +604,7 @@ impl Bot {
             }
             let far = (books.iter())
                 .filter(|&&b| fileable[b as usize])
-                .filter(|&&b| g.lib.rooms[g.lib.dept_of(g.lib.category_of_book(b))].drop.distance(c) > 8.0)
+                .filter(|&&b| g.lib.rooms[g.lib.dept_of_book(b)].drop.distance(c) > 8.0)
                 .count();
             if far >= 4 && best.is_none_or(|(bn, _)| far > bn) {
                 best = Some((far, c));
@@ -625,8 +623,7 @@ impl Bot {
                 continue;
             }
             let lib = &g.lib;
-            let far =
-                |b: u32| fileable[b as usize] && lib.rooms[lib.dept_of(lib.category_of_book(b))].drop.distance(c) > 8.0;
+            let far = |b: u32| fileable[b as usize] && lib.rooms[lib.dept_of_book(b)].drop.distance(c) > 8.0;
             let n = g.loose.near(lv, Vec2::new(c.x, c.z), reach, far).len();
             if n >= 4 && best.is_none_or(|(bn, _)| n > bn) {
                 best = Some((n, c));

@@ -639,7 +639,7 @@ impl Game {
     /// the way there is closed, or the book is already there (by that shelver, or
     /// anywhere in its room).
     fn courier_goal(&self, post: &Post, b: u32) -> Option<Vec3> {
-        let dept = self.lib.dept_of(self.lib.category_of_book(b));
+        let dept = self.lib.dept_of_book(b);
         if !self.dept_open(dept) {
             return None;
         }
@@ -667,7 +667,7 @@ impl Game {
     /// slot a short walk from the post.
     fn shelver_files(&self, post: &Post, b: u32) -> bool {
         let file_reach = WINGS[self.level(Upg::Wings) as usize].3;
-        self.dept_open(self.lib.dept_of(self.lib.category_of_book(b)))
+        self.dept_open(self.lib.dept_of_book(b))
             && self.nav.distance(&post.field, post.at, self.approach(b)) <= file_reach
     }
 
@@ -1054,7 +1054,7 @@ mod tests {
                 .collect();
             // The East Wing's books are far from these cases (and veiled).
             let far: Vec<u32> = (0..g.lib.books.len() as u32)
-                .filter(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == 1 && g.loose.is_resting(b))
+                .filter(|&b| g.lib.dept_of_book(b) == 1 && g.loose.is_resting(b))
                 .take(4)
                 .collect();
             drop_round(&mut g, &[ours.clone(), far.clone()].concat(), post);
@@ -1083,7 +1083,7 @@ mod tests {
             let room = &g.lib.rooms[0];
             let drop = room.drop;
             let n = g.lib.books.len() as u32;
-            let dept = |g: &Game, b: u32| g.lib.dept_of(g.lib.category_of_book(b));
+            let dept = |g: &Game, b: u32| g.lib.dept_of_book(b);
             // A shelver at the cases of the room's first category.
             let cat = g.lib.catalog.departments[0].categories.start;
             let face = (0..g.lib.faces.len()).find(|&f| g.lib.faces[f].category == cat && g.lib.faces[f].case_idx == 2);
@@ -1182,7 +1182,7 @@ mod tests {
         let drop = g.lib.rooms[0].drop;
         let post = g.nav.standable_near(drop + Vec3::new(0.0, 0.0, -3.2));
         let books: Vec<u32> = (0..g.lib.books.len() as u32)
-            .filter(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == 0)
+            .filter(|&b| g.lib.dept_of_book(b) == 0)
             .step_by(13)
             .take(40)
             .collect();

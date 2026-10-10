@@ -475,12 +475,19 @@ impl Library {
         if dept > 0 {
             let (a, b) = side.rect(d - DOOR_HALF, d + DOOR_HALF, ATRIUM - 0.05, ATRIUM + 0.05);
             let (lo, hi) = box3(a, b, y, y + DOOR_H);
+            // The Map Room and the Chronicle Hall open together, each heaped with the
+            // other's books (`upstairs`).
+            let before = if dept == dept::CHRONICLE_HALL {
+                dept::MAP_ROOM
+            } else {
+                dept
+            };
             self.world.add_gate(Gate {
                 level: l,
                 min: lo,
                 max: hi,
                 opens: dept,
-                counts: (0..dept).collect(),
+                counts: (0..before).collect(),
                 need: if dept == 1 { FIRST_GATE_NEED } else { GATE_NEED },
             });
         }
@@ -499,14 +506,15 @@ impl Library {
     /// department opens; early rooms are mixed, later ones purer. They go as units
     /// (`series_units`): a series lying whole goes to its own room (else the atrium);
     /// other units 65% to its room, 20% to the atrium, 15% to rooms that open earlier
-    /// (the atrium for the first room).
+    /// (the atrium for the first room). Upstairs, the rooms' heaps are then relaid
+    /// from what each was given (`relay_upstairs`).
     fn scatter_books(&mut self, rng: &mut StdRng) {
         let rooms = STOREYS * 4;
         let mut room_pool: Vec<Vec<Vec<u32>>> = vec![Vec::new(); rooms];
         let mut atrium_pool: Vec<Vec<u32>> = Vec::new();
         for d in 0..rooms {
             let books: Vec<u32> = (0..self.books.len() as u32)
-                .filter(|&b| self.dept_of(self.category_of_book(b)) == d)
+                .filter(|&b| self.dept_of_book(b) == d)
                 .collect();
             let mut earlier = 0;
             for unit in self.series_units(rng, &books) {
@@ -526,8 +534,15 @@ impl Library {
                 }
             }
         }
+        // Upstairs, the heaps laid here are relaid afterwards (`relay_upstairs`), from
+        // what each room was given; they are laid here first all the same, so that
+        // everything below draws the numbers it always has.
+        let mut upstairs = vec![Vec::new(); rooms];
         for (r, mut pool) in room_pool.into_iter().enumerate() {
             pool.shuffle(rng);
+            if r >= RELAID {
+                upstairs[r] = pool.clone();
+            }
             let (l, side) = (r / 4, SIDES[r % 4]);
             let area = side.rect(-ROOM_HALF + 0.2, ROOM_HALF - 0.2, ATRIUM + 0.2, OUTER - 0.2);
             let spots = self.pile_spots(rng, l, &[area], 0.8, 0.7);
@@ -571,11 +586,19 @@ impl Library {
             let spots = self.pile_spots(rng, l, &rects, 0.8, 0.6);
             self.spread(rng, l, &spots, units);
         }
+        self.relay_upstairs(upstairs);
     }
 
     /// Pile centres on `level` within `rects`: clear of furniture (by `r + gap`), of
     /// stairs, doorways, the great heap and the spawn point, and of each other.
-    fn pile_spots(&self, rng: &mut StdRng, level: usize, rects: &[(Vec2, Vec2)], r: f32, gap: f32) -> Vec<Vec2> {
+    pub(super) fn pile_spots(
+        &self,
+        rng: &mut StdRng,
+        level: usize,
+        rects: &[(Vec2, Vec2)],
+        r: f32,
+        gap: f32,
+    ) -> Vec<Vec2> {
         let area: f32 = rects.iter().map(|(a, b)| (b.x - a.x) * (b.y - a.y)).sum();
         let doors: Vec<Vec2> = (SIDES.iter().enumerate())
             .map(|(si, s)| s.at(door_a(level, si), ATRIUM))

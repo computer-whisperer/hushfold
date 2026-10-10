@@ -9,6 +9,7 @@ mod hall;
 mod kit;
 pub mod motion;
 mod rooms;
+mod upstairs;
 
 #[cfg(test)]
 pub use hall::{HALL_X, HALL_Z, VEIL_X};
@@ -183,7 +184,51 @@ pub struct Label {
     pub level: usize,
 }
 
+/// The Great Library's departments that ask something of their own besides finding
+/// and filing (see `upstairs` and `game`), by number.
+pub mod dept {
+    /// Some of its books are restless once it opens: they scurry from anyone walking near.
+    pub const BESTIARY: usize = 3;
+    /// Open together, each heaped with the other's books; their tallest books are folios.
+    pub const MAP_ROOM: usize = 4;
+    pub const CHRONICLE_HALL: usize = 5;
+    /// Holds half the Music Room's books, a floor below it.
+    pub const VERSE_GALLERY: usize = 6;
+    /// Its ward quiets magic inside it, less as it is put in order.
+    pub const ARCANUM: usize = 7;
+    /// Its stopped clocks hold books in the air until their series are filed.
+    pub const CLOCKWORKS: usize = 8;
+    pub const MUSIC_ROOM: usize = 9;
+    /// A draught blows through it.
+    pub const WEATHERHOUSE: usize = 10;
+    /// Its books were left about the rooms upstairs.
+    pub const HEARTH_LIBRARY: usize = 11;
+}
+
+/// The first Great Library room whose heaps generation 5 relaid (`upstairs`): the
+/// first floor's first. Nothing below it moved, so a save of generation 4 with it
+/// still veiled loads.
+pub const RELAID: usize = 4;
+
+/// A stopped clock in the Clockworks, floating over the floor with books held still
+/// in the air round it (`Library::frozen`) until its key series is filed whole.
+pub struct StoppedClock {
+    /// The middle of its face, out of the face, and the face's radius.
+    pub face: Vec3,
+    pub n: Vec3,
+    pub r: f32,
+    /// The series that starts it again, lettered on its face.
+    pub key: u32,
+    /// The books it holds.
+    pub books: Vec<u32>,
+    /// Its hands (hour, minute) as they would stand at twelve, and the time it stopped
+    /// at in hours; drawn per frame, turning about `n` through `face`.
+    pub hands: [Inst; 2],
+    pub stopped_at: f32,
+}
+
 /// Where a department's books are shelved: a rectangle of one level (the Hall's
+/// rooms are its wings), and the doorway into it./// Where a department's books are shelved: a rectangle of one level (the Hall's
 /// rooms are its wings), and the doorway into it.
 pub struct Room {
     pub level: usize,
@@ -196,6 +241,7 @@ pub struct Room {
 }
 
 pub struct Library {
+    pub layout: Layout,
     pub catalog: Catalogue,
     pub series: Vec<Series>,
     pub series_books: Vec<Vec<u32>>,
@@ -234,6 +280,13 @@ pub struct Library {
     pub spawn: (Vec3, f32),
     /// The heap in the middle of the library that the Gathering Charm sends books to.
     pub hub: Vec3,
+    /// The Clockworks' stopped clocks, and the books they hold in the air (book, where,
+    /// how turned).
+    pub stopped: Vec<StoppedClock>,
+    pub frozen: Vec<(u32, Vec3, Quat)>,
+    /// The Weatherhouse's vane: the mover that turns it, and its arrow's direction at
+    /// rest (it points into the wind).
+    pub vane: Option<(u32, Vec3)>,
 }
 
 impl Library {
@@ -245,6 +298,7 @@ impl Library {
         };
         let n = catalog.categories.len();
         let mut lib = Library {
+            layout,
             catalog,
             series: Vec::new(),
             series_books: Vec::new(),
@@ -269,6 +323,9 @@ impl Library {
             door_gems: Vec::new(),
             spawn: (Vec3::ZERO, 0.0),
             hub: Vec3::ZERO,
+            stopped: Vec::new(),
+            frozen: Vec::new(),
+            vane: None,
         };
         match layout {
             Layout::Hall => hall::build(&mut lib, &mut rng),
@@ -283,6 +340,31 @@ impl Library {
 
     pub fn category_of_book(&self, b: u32) -> usize {
         self.series[self.books[b as usize].series as usize].category
+    }
+
+    pub fn dept_of_book(&self, b: u32) -> usize {
+        self.dept_of(self.category_of_book(b))
+    }
+
+    /// Department `d` is the Great Library's `which` (one of `dept`).
+    pub fn is_dept(&self, d: usize, which: usize) -> bool {
+        self.layout == Layout::Great && d == which
+    }
+
+    /// A folio: one of the Map Room's or the Chronicle Hall's tallest series (about a
+    /// tenth of their books). It fills `FOLIO` places in the arms, flies half as far
+    /// tossed, and is too heavy for familiars.
+    pub fn is_folio(&self, b: u32) -> bool {
+        let d = self.dept_of_book(b);
+        (self.is_dept(d, dept::MAP_ROOM) || self.is_dept(d, dept::CHRONICLE_HALL))
+            && self.books[b as usize].size.y >= 0.34
+    }
+
+    /// One of the Bestiary's restless books: a quarter of its series, picked by a hash
+    /// of the series.
+    pub fn is_restless(&self, b: u32) -> bool {
+        let s = self.books[b as usize].series;
+        self.is_dept(self.dept_of_book(b), dept::BESTIARY) && (s.wrapping_mul(0x9e37_79b9) >> 28).is_multiple_of(4)
     }
 
     /// Where book `b` lines up before sliding into its slot: in front of its face,

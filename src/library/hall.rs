@@ -1887,7 +1887,7 @@ impl Library {
     fn build_piles(&mut self, rng: &mut StdRng) {
         for wing in 0..2 {
             let mut pool: Vec<u32> = (0..self.books.len() as u32)
-                .filter(|&b| self.dept_of(self.category_of_book(b)) == wing)
+                .filter(|&b| self.dept_of_book(b) == wing)
                 .collect();
             pool.shuffle(rng);
             if wing == 0 {

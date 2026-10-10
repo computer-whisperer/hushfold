@@ -485,6 +485,17 @@ fn gear(lib: &mut Library, p: Placed) -> Placed {
 /// and hands at `hour`:`minute`, keeping time from there; `r` its radius. A great dial
 /// has a second hand too.
 fn dial(lib: &mut Library, c: Vec3, n: Vec3, r: f32, hour: u32, minute: f32) {
+    dial_face(lib, c, n, r);
+    lib.clock_hands(
+        (c + n * 0.01, n, r),
+        (hour as f32, minute),
+        ([0.06, 0.06, 0.08, 1.0], rgba(BRASS_LIT, 1.0)),
+        r > 1.0,
+    );
+}
+
+/// A dial without its hands: a cream face, a brass bezel and the hour marks.
+fn dial_face(lib: &mut Library, c: Vec3, n: Vec3, r: f32) {
     let up = Vec3::Y;
     let side = up.cross(n);
     let dir = |th: f32| side * libm::cosf(th) + up * libm::sinf(th);
@@ -514,12 +525,34 @@ fn dial(lib: &mut Library, c: Vec3, n: Vec3, r: f32, hour: u32, minute: f32) {
             0,
         ));
     }
-    lib.clock_hands(
-        (c + n * 0.01, n, r),
-        (hour as f32, minute),
-        ([0.06, 0.06, 0.08, 1.0], rgba(BRASS_LIT, 1.0)),
-        r > 1.0,
-    );
+}
+
+/// The ink a stopped clock's key is lettered in on its face.
+const KEY_LETTERS: Style = Style {
+    em: 0.05,
+    tracking: 0.0,
+    lettering: Lettering::Ink,
+    color: [0.06, 0.04, 0.03, 1.0],
+};
+
+/// A stopped clock floating at `c` (generation 5's stasis, `upstairs`): a dial of
+/// radius `r` facing `n` on a round walnut case, the title of the series that starts it
+/// again lettered across its face below the arbor as a maker's name is. Returns its
+/// hands at twelve (hour, minute), which the game turns.
+pub(in crate::library) fn stopped_clock(lib: &mut Library, c: Vec3, n: Vec3, r: f32, key: &str) -> [Inst; 2] {
+    let case = lib.shape(Mesh::cylinder(40));
+    lib.decor(case.sized(Vec3::new(r * 2.3, 0.12, r * 2.3)).inst(
+        c - n * 0.07,
+        Quat::from_rotation_arc(Vec3::Y, n),
+        kind::WOOD,
+        rgba(CASEWORK, 1.0),
+    ));
+    dial_face(lib, c, n, r);
+    lib.inscribe(key, KEY_LETTERS, c - Vec3::Y * (r * 0.42) + n * 0.011, n, r * 1.3);
+    let face = c + n * 0.01;
+    lib.clock_cap((face, n, r), rgba(BRASS_LIT, 1.0));
+    let ink = [0.06, 0.06, 0.08, 1.0];
+    Library::CLOCK_HANDS.map(|(len, w, z)| lib.clock_hand((face, n), 0.0, (r * len, r * w), z, ink))
 }
 
 /// A small wall clock (a dial on a short case with a pendulum under it), its dial's

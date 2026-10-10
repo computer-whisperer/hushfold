@@ -403,6 +403,8 @@ pub struct Loose {
     resting: Vec<bool>,
     /// Left its generated pose (only these are saved).
     moved: Vec<bool>,
+    /// Held still in the air by a stopped clock (`Library::frozen`), until thawed.
+    frozen: Vec<bool>,
     grids: Vec<Grid>,
     /// Every gate: (level, min, max).
     gate_boxes: Vec<(usize, Vec3, Vec3)>,
@@ -437,6 +439,7 @@ impl Loose {
             pose: vec![(Vec3::ZERO, Quat::IDENTITY); n],
             resting: vec![false; n],
             moved: vec![false; n],
+            frozen: vec![false; n],
             grids: (0..lib.world.levels.len()).map(|l| Grid::new(&lib.world, l)).collect(),
             gate_boxes: lib.world.gates().iter().map(|g| (g.level, g.min, g.max)).collect(),
             flying: Vec::new(),
@@ -459,6 +462,12 @@ impl Loose {
             loose.rest[b as usize] = r;
             loose.level[b as usize] = lv;
             loose.index(b);
+        }
+        for &(b, at, turn) in &lib.frozen {
+            let bi = b as usize;
+            loose.frozen[bi] = true;
+            loose.pose[bi] = (at, turn);
+            loose.level[bi] = lib.world.level_at(at);
         }
         loose
     }
@@ -563,6 +572,24 @@ impl Loose {
     /// Resting and drawn where it rests (not partway through a fall).
     pub fn settled(&self, b: u32) -> bool {
         self.resting[b as usize] && !self.eased[b as usize]
+    }
+
+    /// Held still in the air by a stopped clock: drawn where it hangs (`pose`), in no
+    /// pile, beyond any reach.
+    pub fn is_frozen(&self, b: u32) -> bool {
+        self.frozen[b as usize]
+    }
+
+    /// A frozen book falls from where it hangs, given a push and a tumble.
+    pub fn thaw(&mut self, b: u32, vel: Vec3, spin: Vec3) {
+        let bi = b as usize;
+        if !self.frozen[bi] {
+            return;
+        }
+        self.frozen[bi] = false;
+        self.touch(b);
+        let (at, turn) = self.pose[bi];
+        self.throw(b, at, vel, turn, spin, 0.0);
     }
 
     fn touch(&mut self, b: u32) {
@@ -1043,6 +1070,7 @@ impl Loose {
     /// Forget a book without disturbing anything (loading; `rebuild_all` afterwards).
     pub fn forget(&mut self, b: u32) {
         self.release(b);
+        self.frozen[b as usize] = false;
         self.flying.retain(|f| f.book != b);
     }
 

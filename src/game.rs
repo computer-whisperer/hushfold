@@ -536,13 +536,14 @@ const SAVE_VERSION: u32 = 2;
 fn generation(layout: Layout) -> u32 {
     match layout {
         Layout::Hall => 1,
-        Layout::Great => 4,
+        Layout::Great => 5,
     }
 }
 
-/// The first Great Library room generation 5 relaid (the first floor's): a save of
-/// generation 4 with it still veiled loads, as nothing it could have touched moved.
-const PORTED_FROM: usize = 4;
+/// The Great Library's generation before the upper floors were relaid (`RELAID`): a
+/// save of it with the first floor still veiled loads, as nothing it could have
+/// touched moved (`great_library_below_the_first_floor_generates_as_before`).
+const GREAT_BEFORE_UPSTAIRS: u32 = 4;
 
 #[derive(Serialize, Deserialize)]
 struct SaveData {
@@ -619,6 +620,8 @@ pub struct Game {
     clock: f64,
     /// Each mover's pose this frame.
     poses: Vec<motion::Pose>,
+    /// When each of the Clockworks' stopped clocks started again (`clock`), if it has.
+    started: Vec<Option<f64>>,
     pub play_time: f64,
     /// A press on a pile, while the button is held.
     pub scoop: Option<Scoop>,
@@ -704,7 +707,7 @@ impl Game {
         let n = lib.books.len();
         let mut dept_total = vec![0u32; lib.catalog.departments.len()];
         for b in 0..n as u32 {
-            dept_total[lib.dept_of(lib.category_of_book(b))] += 1;
+            dept_total[lib.dept_of_book(b)] += 1;
         }
         let loose = Loose::new(&lib);
         let nav = Nav::new(&lib.world, lib.spawn.0);
@@ -759,6 +762,7 @@ impl Game {
             time: 0.0,
             clock: 0.0,
             poses: Vec::new(),
+            started: vec![None; lib.stopped.len()],
             play_time: 0.0,
             scoop: None,
             toss_charge: 0.0,
@@ -922,6 +926,45 @@ impl Game {
     /// A department is open once the gate before it has lifted.
     pub fn dept_open(&self, d: usize) -> bool {
         self.lib.world.closed_gates().all(|(_, g)| g.opens != d)
+    }
+
+    /// Whether department `d` would still be veiled with `shelved` (a save's, before
+    /// it is loaded) on the shelves.
+    fn veiled_given(&self, d: usize, shelved: &[u32]) -> bool {
+        let Some(gate) = self.lib.world.gates().iter().find(|g| g.opens == d) else {
+            return false;
+        };
+        let n = self.lib.books.len() as u32;
+        let counted = |b: u32| b < n && gate.counts.contains(&self.lib.dept_of_book(b));
+        let done = shelved.iter().filter(|&&b| counted(b)).count() as u32;
+        let total: u32 = gate.counts.iter().map(|&c| self.dept_total[c]).sum();
+        done < (total as f32 * gate.need).ceil() as u32
+    }
+
+    /// Start again every stopped clock in the Clockworks whose key series is filed
+    /// whole: the books it held fall from where they hung. Returns those started.
+    fn start_clocks(&mut self) -> Vec<usize> {
+        let mut started = Vec::new();
+        for k in 0..self.lib.stopped.len() {
+            let key = self.lib.stopped[k].key as usize;
+            if self.started[k].is_some() || self.series_shelved[key] < self.lib.series[key].volumes {
+                continue;
+            }
+            self.started[k] = Some(self.clock);
+            started.push(k);
+            let face = self.lib.stopped[k].face;
+            for i in 0..self.lib.stopped[k].books.len() {
+                let b = self.lib.stopped[k].books[i];
+                if self.state[b as usize] != BookState::Loose || !self.loose.is_frozen(b) {
+                    continue;
+                }
+                let mut j = || self.rng.gen_range(-1.0..1.0f32);
+                let (push, spin) = (Vec3::new(j(), j(), j()), Vec3::new(j(), j(), j()));
+                let out = (self.loose.pose(b).0 - face).normalize_or_zero();
+                self.loose.thaw(b, out * 0.6 + push * 0.3, spin * 4.0);
+            }
+        }
+        started
     }
 
     fn open_gate(&mut self, g: usize) {
@@ -1803,6 +1846,16 @@ impl Game {
                 self.burst(p, 6, [1.6, 1.2, 0.5], 0.9);
             }
         }
+        if series_done {
+            for k in self.start_clocks() {
+                audio.play_at(Sfx::Veil, 0.6, self.lib.stopped[k].face);
+                self.toast(
+                    "A stopped clock starts again, and lets fall what it held…".into(),
+                    [0.6, 0.78, 1.0],
+                    true,
+                );
+            }
+        }
         if category_done {
             audio.play(Sfx::Fanfare, 0.7);
             let c = catalog::category_color(&self.lib.catalog.categories[cat]);
@@ -1873,7 +1926,7 @@ impl Game {
     /// Where the compass points for book `b`: its slot while Sort Sense reaches (in
     /// its room at I, anywhere at II), else with Wayfinding the doorway of its room.
     fn sense_for(&self, b: u32) -> Option<Sense> {
-        let dept = self.lib.dept_of(self.lib.category_of_book(b));
+        let dept = self.lib.dept_of_book(b);
         let here = self.lib.room_at(self.player.pos);
         let sense = self.level(Upg::SortSense);
         let from = self.player.pos;
@@ -2212,7 +2265,7 @@ impl Game {
             let (st, bu) = (self.state[b], b as u32);
             let still = match st {
                 BookState::Shelved => Some(self.lib.books[b].slot_pos),
-                BookState::Loose if self.loose.settled(bu) => Some(self.loose.pose(bu).0),
+                BookState::Loose if self.loose.settled(bu) || self.loose.is_frozen(bu) => Some(self.loose.pose(bu).0),
                 _ => None,
             };
             if scene.place(bu, st, self.loose.version(bu), still) {
@@ -2298,6 +2351,32 @@ impl Game {
                 0.2 + 1.2 * k
             };
             dyn_insts.push(Inst { color, ..gem });
+        }
+
+        // The Clockworks' stopped clocks: their hands still, or keeping time since they
+        // started again; a haze of stillness round each while it holds its books.
+        for (k, c) in self.lib.stopped.iter().enumerate() {
+            let since = self.started[k].map_or(0.0, |t| (self.clock - t) as f32);
+            let hours = c.stopped_at + since / 3600.0;
+            for (hand, turns) in c.hands.iter().zip([hours / 12.0, hours]) {
+                let turn = Quat::from_axis_angle(c.n, -(turns - libm::floorf(turns)) * std::f32::consts::TAU);
+                let pose = motion::Pose {
+                    turn,
+                    shift: c.face - turn * c.face,
+                };
+                dyn_insts.push(pose.inst(hand));
+            }
+            let haze = 1.0 - (since / 2.0).min(1.0);
+            if haze > 0.0 {
+                trans.push(Inst::new(
+                    c.face,
+                    Quat::IDENTITY,
+                    Vec3::new(3.4, 2.5, 3.4),
+                    kind::MIST,
+                    [0.55, 0.7, 1.0, 0.3 * haze],
+                    1,
+                ));
+            }
         }
 
         self.draw_familiars(&mut dyn_insts);
@@ -2614,7 +2693,15 @@ impl Game {
         if data.seed != SEED {
             return false;
         }
-        if data.generation != generation(self.layout) || data.version != SAVE_VERSION {
+        let ported = self.layout == Layout::Great
+            && data.generation == GREAT_BEFORE_UPSTAIRS
+            && data.version == SAVE_VERSION
+            && self.veiled_given(RELAID, &data.shelved);
+        if ported {
+            eprintln!(
+                "hushfold: the save is from before the upper floors were relaid; they are veiled in it, so it carries on"
+            );
+        } else if data.generation != generation(self.layout) || data.version != SAVE_VERSION {
             // Kept aside rather than overwritten by the fresh game's first save.
             let old = self.save_path().with_extension("old.json");
             eprintln!(
@@ -2694,6 +2781,8 @@ impl Game {
             self.loose
                 .throw(b, p, Vec3::ZERO, self.rot[b as usize], Vec3::ZERO, 0.0);
         }
+        // Clocks started before keep time from now; what they still held falls.
+        self.start_clocks();
         for b in 0..n {
             if self.loose.is_resting(b) {
                 (self.pos[b as usize], self.rot[b as usize]) = self.loose.pose(b);
@@ -2746,7 +2835,7 @@ mod tests {
         for b in 0..lib.books.len() as u32 {
             assert!(g.loose.is_resting(b));
             let east = g.loose.rest(b).c.x > VEIL_X;
-            assert_eq!(east, lib.dept_of(g.lib.category_of_book(b)) == 1, "book {b}");
+            assert_eq!(east, lib.dept_of_book(b) == 1, "book {b}");
         }
         // Volumes run left to right along each shelf run.
         for runs in &lib.runs {
@@ -2833,7 +2922,12 @@ mod tests {
                 v.to_array().iter().for_each(|f| eat(f.to_bits()));
             }
             let r = g.loose.rest(b as u32);
-            if g.lib.room_at(r.c).is_some_and(|room| room >= PORTED_FROM) {
+            let start = if g.loose.is_frozen(b as u32) {
+                g.loose.pose(b as u32).0
+            } else {
+                r.c
+            };
+            if g.lib.room_at(start).is_some_and(|room| room >= RELAID) {
                 continue;
             }
             eat(b as u32);
@@ -3036,22 +3130,29 @@ mod tests {
     }
 
     /// Every book in the Great Library starts where it can be walked to by the time
-    /// its department opens (its own room, the atrium, or a room that opens before).
+    /// its department opens (its own room, the atrium, or a room that opens before or
+    /// with it), lying in a pile or held by a stopped clock over open floor.
     #[test]
     fn great_library_books_are_reachable() {
         let mut g = Game::new(Layout::Great);
         let n = g.lib.books.len() as u32;
         assert!(n > 100_000, "{n} books");
         assert_eq!(g.lib.catalog.departments.len(), 12);
-        assert!((0..n).all(|b| g.loose.is_resting(b)));
+        assert!((0..n).all(|b| g.loose.is_resting(b) || g.loose.is_frozen(b)));
         assert_eq!(g.loose.heightfield_errors(), 0);
         let depts = g.lib.catalog.departments.len();
         for d in 0..depts {
+            // With its gate, those that lift with it (counting no more departments).
             if let Some(gate) = g.lib.world.gates().iter().position(|gate| gate.opens == d) {
-                g.open_gate(gate);
+                let counts = g.lib.world.gates()[gate].counts.len();
+                for k in 0..g.lib.world.gates().len() {
+                    if g.lib.world.gates()[k].counts.len() <= counts {
+                        g.open_gate(k);
+                    }
+                }
             }
             let stranded = (0..n)
-                .filter(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == d && !g.nav.open_at(g.loose.pose(b).0))
+                .filter(|&b| g.lib.dept_of_book(b) == d && !g.nav.open_at(g.loose.pose(b).0))
                 .count();
             assert_eq!(stranded, 0, "department {d}: {stranded} books out of reach");
         }
@@ -3169,7 +3270,7 @@ mod tests {
         g.nav.fill(&mut g.walk, from);
         for dept in [4, 8] {
             let b = (0..g.lib.books.len() as u32)
-                .find(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == dept)
+                .find(|&b| g.lib.dept_of_book(b) == dept)
                 .unwrap();
             let to = g.approach(b);
             let d = g.nav.distance(&g.walk, from, to);
@@ -3605,8 +3706,64 @@ mod tests {
         assert_eq!(g.groups(), vec![Group::Category, Group::Series]);
     }
 
+    /// A Great Library save from before the upper floors were relaid (generation 4)
+    /// carries on while the first floor is veiled in it, and starts fresh (kept aside)
+    /// once it is open.
+    #[test]
+    fn saves_from_before_the_upper_floors_were_relaid() {
+        let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("hushfold-test-{}", std::process::id()));
+        // SAFETY: tests in this module don't read the environment concurrently.
+        unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
+        let mut audio = crate::audio::Audio::silent();
+        let mut g = Game::new(Layout::Great);
+        let n = g.lib.books.len() as u32;
+        let shelve = |g: &mut Game, d: usize, count: usize, audio: &mut Audio| {
+            let books: Vec<u32> = (0..n)
+                .filter(|&b| g.lib.dept_of_book(b) == d && g.loose.is_resting(b))
+                .take(count)
+                .collect();
+            g.loose.take(&books);
+            for b in books {
+                g.credit_shelved(b);
+            }
+            g.check_gates(audio);
+        };
+        let as_before = |g: &mut Game| {
+            g.save();
+            let path = g.save_path();
+            let mut data: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            data["generation"] = GREAT_BEFORE_UPSTAIRS.into();
+            std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
+        };
+        shelve(&mut g, 0, 3000, &mut audio);
+        assert!(g.dept_open(1) && !g.dept_open(RELAID));
+        as_before(&mut g);
+        let mut h = Game::new(Layout::Great);
+        assert!(h.load(), "veiled upstairs: it carries on");
+        assert_eq!(h.total_shelved(), g.total_shelved());
+        assert!(h.dept_open(1));
+        // Half of the ground floor on the shelves lifts the first floor's veils.
+        for d in 0..RELAID {
+            let half = g.dept_total[d] as usize / 2 + 1;
+            shelve(&mut g, d, half, &mut audio);
+        }
+        assert!(g.dept_open(RELAID) && g.dept_open(dept::CHRONICLE_HALL));
+        as_before(&mut g);
+        let mut h = Game::new(Layout::Great);
+        assert!(!h.load(), "open upstairs: it starts fresh");
+        let old = h.save_path().with_extension("old.json");
+        assert!(old.exists());
+        let _ = std::fs::remove_file(old);
+    }
+
+    /// Held by the tests that save and load, which share a data directory (and the
+    /// environment variable naming it).
+    static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn save_round_trip() {
+        let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("hushfold-test-{}", std::process::id()));
         // SAFETY: tests in this module don't read the environment concurrently.
         unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
@@ -3720,7 +3877,7 @@ mod tests {
         assert!(levels.contains(&1) && levels.contains(&2), "{levels:?}");
         // Enough of the first department home to lift the first gate.
         let first: Vec<u32> = (0..g.lib.books.len() as u32)
-            .filter(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == 0 && g.loose.is_resting(b))
+            .filter(|&b| g.lib.dept_of_book(b) == 0 && g.loose.is_resting(b))
             .take(g.gate_books_left(0) as usize)
             .collect();
         g.loose.take(&first);
@@ -3816,7 +3973,7 @@ mod tests {
                 assert!(clear.distance(r.drop) < 0.4, "{layout:?}: room {d}'s drop {}", r.drop);
             }
             for b in 0..g.lib.books.len() as u32 {
-                let d = g.lib.dept_of(g.lib.category_of_book(b));
+                let d = g.lib.dept_of_book(b);
                 assert_eq!(g.lib.room_at(g.approach(b)), Some(d), "{layout:?}: book {b}");
             }
         }
@@ -3829,7 +3986,7 @@ mod tests {
         let mut g = Game::new(Layout::Great);
         let mut audio = crate::audio::Audio::silent();
         let b = (0..g.lib.books.len() as u32)
-            .find(|&b| g.lib.dept_of(g.lib.category_of_book(b)) == 0)
+            .find(|&b| g.lib.dept_of_book(b) == 0)
             .unwrap();
         g.state[b as usize] = BookState::Held;
         g.held.push(b);
@@ -3860,7 +4017,7 @@ mod tests {
     fn toss_and_seek_take_the_group() {
         let mut g = Game::new(Layout::Great);
         let mut audio = crate::audio::Audio::silent();
-        let dept = |g: &Game, b: u32| g.lib.dept_of(g.lib.category_of_book(b));
+        let dept = |g: &Game, b: u32| g.lib.dept_of_book(b);
         let cat = |g: &Game, b: u32| g.lib.category_of_book(b);
         let n = g.lib.books.len() as u32;
         let a = 0;
