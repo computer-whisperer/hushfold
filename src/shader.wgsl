@@ -60,6 +60,7 @@ struct IIn {
     @location(6) param: u32,
     @location(7) color: vec4<f32>,
     @location(9) mesh: u32,
+    @location(10) moved: vec3<f32>,
 };
 
 struct VOut {
@@ -78,6 +79,9 @@ struct VOut {
     // 0 for the box: box-only detail (rounded edges, lines along them) is drawn on it
     // alone; a mesh has its shape in its geometry.
     @location(9) @interpolate(flat) mesh: u32,
+    // Where its centre was laid down: its patterns (grain, facets, leaves, a flame's
+    // flicker) are seeded and placed from here, so they stay put on a moving part.
+    @location(10) @interpolate(flat) home: vec3<f32>,
 };
 
 fn qrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
@@ -105,6 +109,7 @@ fn vs_main(v: VIn, i: IIn) -> VOut {
     o.rot = i.rot;
     o.centre = i.ipos;
     o.mesh = i.mesh;
+    o.home = i.ipos - i.moved;
     return o;
 }
 
@@ -132,6 +137,7 @@ fn vs_book_model(v: ModelIn, i: IIn) -> VOut {
     o.rot = i.rot;
     o.centre = i.ipos;
     o.mesh = 0u;
+    o.home = i.ipos - i.moved;
     return o;
 }
 
@@ -273,7 +279,7 @@ fn bevel(i: VOut, r: f32, k: f32, pillow: f32, fw: f32) -> vec3<f32> {
 fn wood(i: VOut, fw: f32) -> vec3<f32> {
     let s = i.scale;
     let m = i.local * s;
-    let seed = hash3(i.centre * 7.31);
+    let seed = hash3(i.home * 7.31);
     var along: f32;
     var a1: f32;
     var a2: f32;
@@ -578,7 +584,7 @@ fn cloth(s: ptr<function, Mat>, i: VOut, fw: f32) {
 // occlusion factor (deep in foliage is darker).
 fn leaf(s: ptr<function, Mat>, i: VOut, fw: f32) -> f32 {
     let m = i.local * i.scale;
-    let seed = hash3(i.centre * 7.31);
+    let seed = hash3(i.home * 7.31);
     let sc = i.scale;
     let ln = i.lnormal;
     let base = i.color.rgb * mix(vec3<f32>(1.12, 1.05, 0.72), vec3<f32>(0.86, 1.0, 1.1), seed);
@@ -664,7 +670,7 @@ fn leaf(s: ptr<function, Mat>, i: VOut, fw: f32) -> f32 {
 // globe's seas, an egg's slices) glow as one.
 fn crystal(s: ptr<function, Mat>, i: VOut, fw: f32) {
     let view = normalize(g.cam_pos.xyz - i.world);
-    let seed = hash3(i.centre * 7.31);
+    let seed = hash3(i.home * 7.31);
     let c = i.color.rgb;
     let sc = i.scale;
     let lo = min(sc.x, min(sc.y, sc.z));
@@ -800,7 +806,7 @@ fn arms(uv: vec2<f32>, ext: vec2<f32>, seed: f32, fw: f32) -> vec4<f32> {
 // (see `kind::PARCHMENT`); the ends of a rolled scroll show its turns.
 fn parchment(s: ptr<function, Mat>, i: VOut, fw: f32) {
     let m = i.local * i.scale;
-    let seed = hash3(i.centre * 7.31);
+    let seed = hash3(i.home * 7.31);
     let sc = i.scale;
     let ln = i.lnormal;
     let lo = min(sc.x, min(sc.y, sc.z));
@@ -961,7 +967,7 @@ fn fs_main(i: VOut) -> @location(0) vec4<f32> {
         case K_METAL: {
             let lo = min(i.scale.x, min(i.scale.y, i.scale.z));
             s.n = bevel(i, clamp(lo * 0.2, 0.003, 0.03), 1.2, 0.5, fw);
-            metal(&s, i.color.rgb, i.local * i.scale + i.centre, i.world, f32(i.param & 1u));
+            metal(&s, i.color.rgb, i.local * i.scale + i.home, i.world, f32(i.param & 1u));
         }
         case K_CLOTH: {
             cloth(&s, i, fw);
@@ -1068,7 +1074,7 @@ fn fs_fret(i: VOut) -> @location(0) vec4<f32> {
         uv = m.xz;
         ext = sc.xz;
     }
-    let seed = hash3(i.centre * 7.31);
+    let seed = hash3(i.home * 7.31);
     let pat = i.param & 3u;
     let cover = fret_cover(pat, uv, ext * 0.5, seed, fw);
     if (cover.x < 0.02) {
@@ -1088,7 +1094,7 @@ fn fs_fret(i: VOut) -> @location(0) vec4<f32> {
         s.gloss = 24.0;
         s.back = 0.5;
     } else if (pat == 1u || dot(c, vec3<f32>(0.3, 0.55, 0.15)) > 0.3) {
-        metal(&s, c, m + i.centre, i.world, 0.0);
+        metal(&s, c, m + i.home, i.world, 0.0);
     } else {
         s.albedo = c * (0.88 + 0.2 * vnoise(vec3<f32>(uv * vec2<f32>(4.0, 60.0), seed * 9.0)));
         s.spec = vec3<f32>(0.06);
@@ -1981,7 +1987,7 @@ fn through_box(cam: vec3<f32>, ray: vec3<f32>, seen: f32) -> vec2<f32> {
 // tip that sways and stretches as it flickers. Light only (premultiplied, no alpha).
 fn candle(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, len: f32) -> vec4<f32> {
     let t = g.cam_pos.w;
-    let seed = hash3(i.centre * 7.31) * 17.0;
+    let seed = hash3(i.home * 7.31) * 17.0;
     let c = cam * i.scale;
     let r = ray * i.scale;
     let near = -dot(c.xz, r.xz) / max(dot(r.xz, r.xz), 1e-9);
@@ -2013,7 +2019,7 @@ fn hearth(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, len: f32) -> vec4<
         return vec4<f32>(0.0);
     }
     let t = g.cam_pos.w;
-    let seed = hash3(i.centre * 7.31) * 17.0;
+    let seed = hash3(i.home * 7.31) * 17.0;
     var acc = vec3<f32>(0.0);
     for (var k = 0; k < 4; k = k + 1) {
         let p = cam + ray * mix(span.x, span.y, (f32(k) + 0.5) / 4.0);
@@ -2041,7 +2047,7 @@ fn rain(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, fw: f32) -> vec4<f32
         return vec4<f32>(0.0);
     }
     let t = g.cam_pos.w;
-    let seed = hash3(i.centre * 7.31) * 17.0;
+    let seed = hash3(i.home * 7.31) * 17.0;
     let wide = i.scale.x >= i.scale.z;
     // The eye's depth across the sheets, and how fast the ray goes through them.
     let deep0 = select(cam.x, cam.z, wide);
@@ -2089,7 +2095,7 @@ fn puff(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, len: f32) -> vec4<f3
     let r = 0.5 * min(i.scale.x, min(i.scale.y, i.scale.z));
     let thick = along * len / (1.333 * r);
     let t = g.cam_pos.w;
-    let seed = hash3(i.centre * 7.31) * 17.0;
+    let seed = hash3(i.home * 7.31) * 17.0;
     let mid = cam + ray * (0.5 * (u0 + u1));
     let smoke = i.param == 0u;
     // Noise a few features across the piece: rising through smoke, drifting in cloud.

@@ -593,7 +593,10 @@ about it (spin, swing, bob, tick, slide), its parts laid down where they are at 
 (`Library::moving`); it may ride another (a moon on a planet's arm), and a light may
 ride it (`light_riding`). Each frame every mover is posed from a clock kept in f64
 (so a spin is as smooth ten hours in), and the parts of those within 70 m and in view
-join the frame's instances. Meshing gears turn at rates that keep their teeth
+join the frame's instances. A posed part carries how far it has moved (`Inst::moved`),
+and the materials seed and place their patterns where it was laid down: seeded from
+where it is drawn, a swinging part's grain, leaves and facets were re-rolled every
+frame and flickered. Meshing gears turn at rates that keep their teeth
 together; clocks open at the time they were set to and keep it.
 
 Lettering (`text.rs`) is set in sixteen faces built into the game (`text::Face`,

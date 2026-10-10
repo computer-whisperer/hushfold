@@ -117,6 +117,10 @@ pub struct Inst {
     pub color: [f32; 4],
     /// What it is drawn as (`mesh`): the box unless shaped.
     pub mesh: u32,
+    /// How far it has been carried from where it was laid down (a mover's part,
+    /// posed), so its grain, facets and leaves stay where they were on it; nothing
+    /// else moves.
+    pub moved: [f32; 3],
 }
 
 impl Inst {
@@ -129,6 +133,7 @@ impl Inst {
             param,
             color,
             mesh: mesh::BOX,
+            moved: [0.0; 3],
         }
     }
 
@@ -643,7 +648,7 @@ impl Renderer {
                 array_stride: std::mem::size_of::<Inst>() as u64,
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &wgpu::vertex_attr_array![
-                    2 => Float32x3, 3 => Uint32, 4 => Float32x4, 5 => Float32x3, 6 => Uint32, 7 => Float32x4, 9 => Uint32
+                    2 => Float32x3, 3 => Uint32, 4 => Float32x4, 5 => Float32x3, 6 => Uint32, 7 => Float32x4, 9 => Uint32, 10 => Float32x3
                 ],
             },
         ];

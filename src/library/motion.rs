@@ -105,9 +105,11 @@ impl Pose {
 
     /// A part laid down at rest as `i`, posed.
     pub fn inst(&self, i: &Inst) -> Inst {
+        let (rest, pos) = (Vec3::from(i.pos), self.point(Vec3::from(i.pos)));
         Inst {
-            pos: self.point(Vec3::from(i.pos)).into(),
+            pos: pos.into(),
             rot: (self.turn * Quat::from_array(i.rot)).normalize().into(),
+            moved: (Vec3::from(i.moved) + pos - rest).into(),
             ..*i
         }
     }
@@ -250,5 +252,29 @@ mod tests {
         let (a, b) = (Motion::at(spin, t).0, Motion::at(spin, t + 1.0 / 60.0).0);
         let step = a.angle_between(b);
         assert!((step - rate / 60.0).abs() < 1e-4, "{step}");
+    }
+
+    /// A posed part is drawn where it has moved to, and remembers where it was laid
+    /// down (its patterns are anchored there): flicker on a swinging thing otherwise.
+    #[test]
+    fn a_posed_part_remembers_its_rest() {
+        let swing = Motion::Swing {
+            axis: Vec3::X,
+            amp: 0.3,
+            period: 2.0,
+        };
+        let movers = vec![mover(swing, None), mover(swing, Some(0))];
+        let part = Inst::new(Vec3::new(1.0, 0.5, 3.0), Quat::IDENTITY, Vec3::ONE, 0, [1.0; 4], 0);
+        let mut out = Vec::new();
+        for t in [0.3, 0.7, 1.9] {
+            pose(&movers, t, &mut out);
+            let posed = out[1].inst(&part);
+            let rest = Vec3::from(posed.pos) - Vec3::from(posed.moved);
+            assert!(
+                Vec3::from(posed.pos).distance(Vec3::from(part.pos)) > 0.1,
+                "t {t}: didn't move"
+            );
+            assert!(rest.abs_diff_eq(Vec3::from(part.pos), 1e-5), "t {t}: {rest}");
+        }
     }
 }
