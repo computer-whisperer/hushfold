@@ -297,6 +297,8 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
 - The aura, the rush and Homing Toss only from in front of a case (the aura and
   rush reached through the back): the Hall 1.56 → 1.60 h, the Great Library
   8.5 → 9.6 h (filing 7.8 → 8.7 h). Costs not refit for it.
+- The visual pass (each Great Library department its own layout): the Hall 1.60 h,
+  the Great Library 9.76 h. Costs not refit for it.
 
 ## Rendering
 Box-only geometry; each instance's `kind` picks a procedural material in WGSL:
