@@ -540,6 +540,10 @@ fn generation(layout: Layout) -> u32 {
     }
 }
 
+/// The first Great Library room generation 5 relaid (the first floor's): a save of
+/// generation 4 with it still veiled loads, as nothing it could have touched moved.
+const PORTED_FROM: usize = 4;
+
 #[derive(Serialize, Deserialize)]
 struct SaveData {
     #[serde(default)]
@@ -2808,6 +2812,44 @@ mod tests {
         // platform): every book and slot as it was, 176 loose books moved by at most
         // 3 µm, so still generation 1. Any other change needs a new generation.
         assert_eq!(h, 11306621379046694680, "hall fingerprint");
+    }
+
+    /// Saves of generation 4 load in generation 5 while the upper floors are veiled
+    /// (`load`), so everything a player could have touched by then must generate as it
+    /// did: every book (its series, volume, size and slot) and where every book starts
+    /// but those starting upstairs (rooms 4–11), whose heaps generation 5 relaid.
+    #[test]
+    fn great_library_below_the_first_floor_generates_as_before() {
+        let g = Game::new(Layout::Great);
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut eat = |x: u32| {
+            h ^= x as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        };
+        for (b, info) in g.lib.books.iter().enumerate() {
+            eat(info.series);
+            eat(info.volume);
+            for v in [info.size, info.slot_pos] {
+                v.to_array().iter().for_each(|f| eat(f.to_bits()));
+            }
+            let r = g.loose.rest(b as u32);
+            if g.lib.room_at(r.c).is_some_and(|room| room >= PORTED_FROM) {
+                continue;
+            }
+            eat(b as u32);
+            for f in [r.c.x, r.c.y, r.c.z, r.u.x, r.u.y, r.su, r.sv] {
+                eat(f.to_bits());
+            }
+        }
+        for s in &g.lib.series {
+            s.title.bytes().for_each(|c| eat(c as u32));
+            s.color.iter().for_each(|f| eat(f.to_bits()));
+            eat(s.pattern);
+            eat(s.trim);
+        }
+        assert_eq!(g.lib.books.len(), 117_715);
+        // Taken at generation 4 (0.2.1), before anything upstairs was relaid.
+        assert_eq!(h, 16675921118826712809, "great library fingerprint");
     }
 
     /// Every slot's approach (the aisle in front of it) is a walk away from the start,
