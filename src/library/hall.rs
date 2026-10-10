@@ -273,7 +273,7 @@ impl Library {
     /// no two share a face), `r` round and `d` thick at `off`; fewer strips when small.
     fn disc(&mut self, m: Mount, off: Vec3, (r, d): (f32, f32), kind: u32, color: [f32; 4]) {
         let n = match r {
-            r if r < 0.16 => 4,
+            r if r < 0.08 => 4,
             r if r < 0.45 => 6,
             _ => 8,
         };
