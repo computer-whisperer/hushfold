@@ -523,6 +523,14 @@ impl Running {
 }
 
 impl ApplicationHandler for App {
+    /// Drop everything while the event loop, and with it the Wayland connection, is
+    /// still alive: `run_app` drops the loop before it returns, and egui's clipboard
+    /// (a thread on that connection) destroying its objects after it was gone
+    /// crashed every exit.
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        self.run = None;
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.run.is_some() {
             return;
