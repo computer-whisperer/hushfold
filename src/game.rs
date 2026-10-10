@@ -2232,19 +2232,21 @@ impl Game {
         for (i, &(base, ph)) in self.motes.iter().enumerate() {
             let t = self.time * 0.05 + ph;
             let mut p = base + Vec3::new((t * 1.3).sin() * 0.8, (t * 0.7).sin() * 0.6, (t * 1.1).cos() * 0.8);
-            // Keep motes near the player by wrapping into a 24m box around them, at the
-            // height of the floor they stand on.
+            // Motes stay put in the air; those left behind wrap round into a box about
+            // the player, 24 m across and from just under their feet to 4.2 m over
+            // their eyes, fading in at its top.
             let rel = p - eye;
             p.x = eye.x + (rel.x + 12.0).rem_euclid(24.0) - 12.0;
             p.z = eye.z + (rel.z + 12.0).rem_euclid(24.0) - 12.0;
-            p.y += self.player.pos.y;
+            p.y = eye.y - 1.8 + (rel.y + 1.8).rem_euclid(6.0);
+            let top = (eye.y + 4.2 - p.y).min(1.0);
             let tw = 0.5 + 0.5 * (self.time * 0.8 + i as f32).sin();
             dyn_insts.push(Inst::new(
                 p,
                 Quat::IDENTITY,
                 Vec3::splat(0.006),
                 kind::EMISSIVE,
-                [1.0, 0.85, 0.6, 0.6 + 1.2 * tw],
+                [1.0, 0.85, 0.6, (0.6 + 1.2 * tw) * top],
                 0,
             ));
         }
