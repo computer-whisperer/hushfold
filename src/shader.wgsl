@@ -1124,3 +1124,87 @@ fn fs_trans(i: VOut) -> @location(0) vec4<f32> {
     let c = i.color.rgb * k * (outline * (1.4 + 0.8 * pulse) + 0.3 + 0.3 * pulse);
     return vec4<f32>(c, k * (0.35 + 0.3 * outline));
 }
+
+// ---------------------------------------------------------------- lettering
+
+// Signs and labels (text.rs): glyph quads over the surfaces they are set on, cut from
+// a signed-distance atlas.
+@group(1) @binding(1) var glyph_atlas: texture_2d<f32>;
+@group(1) @binding(2) var glyph_sampler: sampler;
+// The atlas's pixels to the em, and how far its field reaches either side of an
+// outline, in its pixels (text::EM_PX, text::PAD).
+const GLYPH_EM: f32 = 64.0;
+const GLYPH_PAD: f32 = 8.0;
+// What letters are made of (text::Lettering).
+const L_GILT: u32 = 0u;
+const L_GLOW: u32 = 2u;
+
+struct GlyphIn {
+    @location(0) at: vec3<f32>,
+    @location(1) lettering: u32,
+    @location(2) right: vec3<f32>,
+    @location(3) up: vec3<f32>,
+    @location(4) uv: vec4<f32>,
+    @location(5) color: vec4<f32>,
+};
+
+struct GlyphOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) @interpolate(flat) n: vec3<f32>,
+    @location(3) @interpolate(flat) lettering: u32,
+    @location(4) @interpolate(flat) color: vec4<f32>,
+};
+
+@vertex
+fn vs_text(@builtin(vertex_index) v: u32, i: GlyphIn) -> GlyphOut {
+    // A strip: bottom left, bottom right, top left, top right.
+    let c = vec2<f32>(f32(v & 1u), f32(v >> 1u));
+    var o: GlyphOut;
+    o.world = i.at + i.right * c.x + i.up * c.y;
+    o.clip = g.view_proj * vec4<f32>(o.world, 1.0);
+    o.uv = vec2<f32>(mix(i.uv.x, i.uv.z, c.x), mix(i.uv.w, i.uv.y, c.y));
+    o.n = normalize(cross(i.right, i.up));
+    o.lettering = i.lettering;
+    o.color = i.color;
+    return o;
+}
+
+@fragment
+fn fs_text(i: GlyphOut) -> @location(0) vec4<f32> {
+    // Atlas pixels to a screen pixel, and the distance to the outline in atlas pixels
+    // (inside positive).
+    let texels = length(fwidth(i.uv * vec2<f32>(textureDimensions(glyph_atlas)))) * 0.7071;
+    let d = (textureSample(glyph_atlas, glyph_sampler, i.uv).r * 255.0 - 128.0) * GLYPH_PAD / 127.0;
+    // Small letters are set a little bolder (by up to a third of a pixel), and those
+    // too small to read fade away rather than shimmer.
+    let bold = 0.35 * smoothstep(GLYPH_EM / 30.0, GLYPH_EM / 10.0, texels);
+    let fade = 1.0 - smoothstep(GLYPH_EM / 7.0, GLYPH_EM / 4.0, texels);
+    let a = clamp(d / max(texels, 1e-3) + 0.5 + bold, 0.0, 1.0) * fade;
+    if (a < 0.004) {
+        discard;
+    }
+    if (i.lettering == L_GLOW) {
+        return vec4<f32>(apply_fog(i.color.rgb * i.color.w, i.world) * a, a);
+    }
+    var s: Mat;
+    s.albedo = i.color.rgb;
+    s.spec = vec3<f32>(0.03);
+    s.gloss = 12.0;
+    s.emit = vec3<f32>(0.0);
+    s.n = i.n;
+    s.back = 0.0;
+    if (i.lettering == L_GILT) {
+        // Gold leaf, satin rather than mirror, so a name reads the same from any side;
+        // it keeps a glint of its own in the dimmest corner.
+        let view = normalize(g.cam_pos.xyz - i.world);
+        s.albedo = i.color.rgb * 0.35;
+        s.spec = i.color.rgb * 0.5;
+        s.gloss = 24.0;
+        s.emit = (env(reflect(-view, s.n), 0.7) * 0.5 + vec3<f32>(0.08)) * i.color.rgb;
+    }
+    let amb = mix(g.ambient_bottom.rgb, g.ambient_top.rgb, s.n.y * 0.5 + 0.5);
+    let col = s.albedo * amb + s.emit + shade(s, i.world);
+    return vec4<f32>(apply_fog(col, i.world) * a, a);
+}

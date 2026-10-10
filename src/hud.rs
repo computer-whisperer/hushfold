@@ -1,4 +1,4 @@
-//! egui HUD: crosshair, armful, active-book card, world labels, toasts, Grimoire.
+//! egui HUD: crosshair, armful, active-book card, signposts, toasts, Grimoire.
 
 use crate::catalog;
 use crate::game::{Aim, Cheat, ECHO_SPEED, Game, Group, SPELLS, Tier, UPGRADES, Upg, spell_times, upg_costs, upg_def};
@@ -47,14 +47,11 @@ fn serif(size: f32) -> FontId {
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     let mut family: Vec<String> = Vec::new();
-    for &path in crate::platform::SERIF_FONTS {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts
-                .font_data
-                .insert("serif".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
-            family.push("serif".into());
-            break;
-        }
+    if let Some(bytes) = crate::platform::serif_font() {
+        fonts
+            .font_data
+            .insert("serif".into(), std::sync::Arc::new(egui::FontData::from_static(bytes)));
+        family.push("serif".into());
     }
     for &path in crate::platform::SYMBOL_FONTS {
         if let Ok(bytes) = std::fs::read(path) {
@@ -118,7 +115,9 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
     let painter = ctx.layer_painter(egui::LayerId::background());
     let eye = g.player.eye();
 
-    // ---- World labels.
+    // ---- Signposts: the signs of the categories (and departments) you carry, from
+    // anywhere on your floor (dimmed when hidden). Signs are otherwise lettered in the
+    // world.
     let mut carrying = vec![false; g.lib.catalog.categories.len()];
     let mut carrying_dept = vec![false; g.lib.catalog.departments.len()];
     for &b in &g.held {
@@ -127,65 +126,27 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         carrying_dept[g.lib.dept_of(c)] = true;
     }
     let here = g.lib.world.level_at(g.player.pos);
-    // Gather first so guide signs can be drawn last and clear the space under them.
-    let mut plain: Vec<(Pos2, &str, FontId, Color32, Align2)> = Vec::new();
-    let mut guides: Vec<(Pos2, &str, f32, f32, bool)> = Vec::new();
-    for l in &g.lib.labels {
+    for l in (g.lib.labels.iter()).filter(|_| g.level(Upg::Signposts) > 0) {
+        let guide = match l.kind {
+            LabelKind::Category(c) => carrying[c],
+            LabelKind::Department(d) => carrying_dept[d],
+        };
+        if !guide || l.level != here {
+            continue;
+        }
         let to_eye = eye - l.pos;
-        let d = to_eye.length();
-        // With Signposts, signs for the categories (and departments) you carry show
-        // from anywhere on your floor (dimmed when hidden).
-        let (is_sign, guide, done) = match l.kind {
-            LabelKind::Shelf => (false, false, false),
-            LabelKind::Category(c) => (true, carrying[c], g.category_shelved[c] == g.lib.category_books[c]),
-            LabelKind::Department(d) => (true, carrying_dept[d], g.dept_shelved[d] == g.dept_total[d]),
-        };
-        let guide = guide && l.level == here && g.level(Upg::Signposts) > 0;
         let facing = to_eye.dot(l.normal) > 0.0;
-        if !facing && !guide {
-            continue;
-        }
-        let (max_d, size) = if is_sign {
-            (34.0, (22.0 * 6.0 / d.max(3.0)).clamp(10.0, 26.0))
-        } else {
-            (3.2, 12.0)
-        };
-        if d > max_d && !guide {
-            continue;
-        }
         let seen = facing && g.lib.world.line_of_sight(eye, l.pos);
-        if !seen && !guide {
-            continue;
-        }
         let Some(p) = project(&vp, l.pos, screen) else { continue };
-        let fade = ((max_d - d) / (max_d * 0.3)).clamp(0.0, 1.0);
-        if guide {
-            let pulse = (0.8 + 0.2 * (g.time * 3.0).sin()) * if seen { 1.0 } else { 0.55 };
-            guides.push((p, &l.text, size.max(16.0), pulse, facing));
-        } else if is_sign {
-            let col = if done { Color32::from_rgb(255, 236, 190) } else { INK };
-            plain.push((p, &l.text, serif(size), col.gamma_multiply(fade), Align2::CENTER_CENTER));
-        } else {
-            plain.push((
-                p + Vec2::new(0.0, 2.0),
-                &l.text,
-                serif(size),
-                DIM.gamma_multiply(fade),
-                Align2::CENTER_TOP,
-            ));
-        }
-    }
-    for (p, text, font, col, align) in plain {
-        if guides
-            .iter()
-            .any(|(gp, _, size, _, _)| (gp.x - p.x).abs() < size * 5.0 && (gp.y - p.y).abs() < size * 1.6)
-        {
-            continue;
-        }
-        painter.text(p, align, text, font, col);
-    }
-    for (p, text, size, pulse, facing) in guides {
-        painter.text(p, Align2::CENTER_CENTER, text, serif(size), GOLD.gamma_multiply(pulse));
+        let size = (22.0 * 6.0 / to_eye.length().max(3.0)).clamp(16.0, 26.0);
+        let pulse = (0.8 + 0.2 * (g.time * 3.0).sin()) * if seen { 1.0 } else { 0.55 };
+        painter.text(
+            p,
+            Align2::CENTER_CENTER,
+            &l.text,
+            serif(size),
+            GOLD.gamma_multiply(pulse),
+        );
         if !facing {
             // Cases are double-sided: say when the shelves are round the back.
             painter.text(

@@ -1,7 +1,10 @@
-//! wgpu renderer: instanced boxes (opaque, translucent, moonbeams), bloom, tonemap, egui.
+//! wgpu renderer: instanced boxes (opaque, translucent, moonbeams), lettering, bloom,
+//! tonemap, egui.
 
+use crate::text::{self, Glyph};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3, Vec4};
+use std::marker::PhantomData;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
@@ -164,18 +167,20 @@ fn unit_box() -> (Vec<Vertex>, Vec<u16>) {
     (v, idx)
 }
 
-struct GrowBuf {
+/// Instances (boxes, or glyphs) in a vertex buffer that grows to fit.
+struct GrowBuf<T = Inst> {
     buf: wgpu::Buffer,
     cap: usize,
     len: u32,
     label: &'static str,
+    of: PhantomData<T>,
 }
 
-impl GrowBuf {
+impl<T: Pod> GrowBuf<T> {
     fn new(device: &wgpu::Device, label: &'static str, cap: usize) -> Self {
         let buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
-            size: (cap * std::mem::size_of::<Inst>()) as u64,
+            size: (cap * std::mem::size_of::<T>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -184,10 +189,11 @@ impl GrowBuf {
             cap,
             len: 0,
             label,
+            of: PhantomData,
         }
     }
 
-    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[Inst]) {
+    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[T]) {
         if data.len() > self.cap {
             *self = Self::new(device, self.label, data.len().next_power_of_two());
         }
@@ -249,6 +255,9 @@ pub struct Renderer {
     scene_pipe: wgpu::RenderPipeline,
     trans_pipe: wgpu::RenderPipeline,
     beam_pipe: wgpu::RenderPipeline,
+    /// Lettering on signs and labels, and the glyph atlas it is cut from.
+    text_pipe: wgpu::RenderPipeline,
+    text_bg: wgpu::BindGroup,
     down_first_pipe: wgpu::RenderPipeline,
     down_pipe: wgpu::RenderPipeline,
     up_pipe: wgpu::RenderPipeline,
@@ -263,6 +272,7 @@ pub struct Renderer {
     box_vb: wgpu::Buffer,
     box_ib: wgpu::Buffer,
     static_buf: GrowBuf,
+    text_buf: GrowBuf<Glyph>,
     dyn_buf: GrowBuf,
     trans_buf: GrowBuf,
     /// Moonbeams, drawn apart from the other translucent things (see `beam_pipe`), and
@@ -497,6 +507,124 @@ impl Renderer {
             false,
         );
 
+        // ---- lettering: glyph quads cut from a distance-field atlas, over the surfaces
+        // they are set on (so drawn after them, testing depth but not writing it).
+        let (aw, ah, levels) = text::atlas();
+        let atlas = device.create_texture_with_data(
+            &queue,
+            &wgpu::TextureDescriptor {
+                label: Some("glyphs"),
+                size: wgpu::Extent3d {
+                    width: aw,
+                    height: ah,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: text::LEVELS,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::MipMajor,
+            &levels.concat(),
+        );
+        let glyph_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("glyphs"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 8,
+            ..Default::default()
+        });
+        let text_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("glyphs"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let text_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("glyphs"),
+            layout: &text_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&atlas.create_view(&Default::default())),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&glyph_sampler),
+                },
+            ],
+        });
+        let text_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("lettering"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("lettering"),
+                bind_group_layouts: &[Some(&globals_layout), Some(&text_layout)],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &scene_shader,
+                entry_point: Some("vs_text"),
+                compilation_options: Default::default(),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Glyph>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x3, 1 => Uint32, 2 => Float32x3, 3 => Float32x3, 4 => Float32x4, 5 => Float32x4
+                    ],
+                }],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                // Toward the eye, so the board under the letters never shows through.
+                bias: wgpu::DepthBiasState {
+                    constant: -4,
+                    slope_scale: -1.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState {
+                count: MSAA,
+                ..Default::default()
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &scene_shader,
+                entry_point: Some("fs_text"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: HDR,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
         // ---- post pipelines
         let post_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
@@ -658,6 +786,7 @@ impl Renderer {
 
         Self {
             static_buf: GrowBuf::new(&device, "static", 1024),
+            text_buf: GrowBuf::new(&device, "lettering", 1024),
             dyn_buf: GrowBuf::new(&device, "dynamic", 16384),
             trans_buf: GrowBuf::new(&device, "trans", 16384),
             beam_buf: GrowBuf::new(&device, "beams", 64),
@@ -673,6 +802,8 @@ impl Renderer {
             scene_pipe,
             trans_pipe,
             beam_pipe,
+            text_pipe,
+            text_bg,
             down_first_pipe,
             down_pipe,
             up_pipe,
@@ -863,6 +994,11 @@ impl Renderer {
         self.static_buf.upload(&self.device, &self.queue, insts);
     }
 
+    /// The library's lettering.
+    pub fn set_text(&mut self, glyphs: &[Glyph]) {
+        self.text_buf.upload(&self.device, &self.queue, glyphs);
+    }
+
     /// Upload the scene chunks that have changed (and forget any beyond them).
     pub fn sync_chunks(&mut self, chunks: &mut [crate::scene::Chunk]) {
         self.chunks.truncate(chunks.len());
@@ -983,6 +1119,12 @@ impl Renderer {
                     rp.set_vertex_buffer(1, b.buf.slice(..));
                     rp.draw_indexed(0..36, 0, 0..b.len);
                 }
+            }
+            if self.text_buf.len > 0 {
+                rp.set_pipeline(&self.text_pipe);
+                rp.set_bind_group(1, &self.text_bg, &[]);
+                rp.set_vertex_buffer(0, self.text_buf.buf.slice(..));
+                rp.draw(0..4, 0..self.text_buf.len);
             }
         }
         {

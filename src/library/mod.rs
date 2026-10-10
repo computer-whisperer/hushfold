@@ -14,6 +14,7 @@ pub use hall::{HALL_X, HALL_Z, VEIL_X};
 
 use crate::catalog::{self, Catalogue, Series};
 use crate::gfx::{Inst, kind};
+use crate::text::{self, Glyph, Lettering, Style};
 use crate::world::{Gate, Level, NOSING, SLAB, Slab, Stairs, Stops, World};
 use glam::{Mat3, Quat, Vec2, Vec3};
 use rand::prelude::*;
@@ -39,6 +40,23 @@ const WALNUT: [f32; 3] = [0.16, 0.08, 0.035];
 const DARK_WOOD: [f32; 3] = [0.07, 0.035, 0.018];
 const STONE: [f32; 3] = [0.36, 0.33, 0.29];
 const BRASS: [f32; 3] = [0.55, 0.36, 0.12];
+
+/// Gold leaf for the names on signs.
+const GOLD_LEAF: [f32; 4] = [1.0, 0.76, 0.36, 1.0];
+/// A category's name on its sign.
+const SIGN_LETTERS: Style = Style {
+    em: 0.2,
+    tracking: 0.01,
+    lettering: Lettering::Gilt,
+    color: GOLD_LEAF,
+};
+/// A shelf's range of filing keys, inked on its label.
+const SHELF_LETTERS: Style = Style {
+    em: 0.034,
+    tracking: 0.0,
+    lettering: Lettering::Ink,
+    color: [0.05, 0.03, 0.015, 1.0],
+};
 
 /// Height of the shelf surface above the floor for reading-order row (0 = top).
 pub fn row_floor_y(row: usize) -> f32 {
@@ -124,8 +142,6 @@ pub struct LightDef {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum LabelKind {
-    /// A shelf's range of filing keys.
-    Shelf,
     /// A category's sign over its cases.
     Category(usize),
     /// A department's sign over its door.
@@ -168,7 +184,10 @@ pub struct Library {
     pub static_insts: Vec<Inst>,
     /// Translucent static geometry (moonbeams).
     pub static_trans: Vec<Inst>,
+    /// Lettering on signs and labels.
+    pub text: Vec<Glyph>,
     pub lights: Vec<LightDef>,
+    /// Signs, for the Signposts to point out.
     pub labels: Vec<Label>,
     pub category_books: Vec<u32>,
     pub category_center: Vec<Vec3>,
@@ -200,6 +219,7 @@ impl Library {
             drops: Vec::new(),
             static_insts: Vec::new(),
             static_trans: Vec::new(),
+            text: Vec::new(),
             lights: Vec::new(),
             labels: Vec::new(),
             category_books: vec![0; n],
@@ -259,6 +279,14 @@ impl Library {
     }
 
     /// Drawn only: small, or out of reach, so in nothing's way.
+    /// Letter `text` upright on a surface facing `normal`, centred on `centre` (in the
+    /// surface), at most `width` wide.
+    fn inscribe(&mut self, text: &str, style: Style, centre: Vec3, normal: Vec3, width: f32) {
+        // Lifted off the surface by a hair, which the depth bias does the rest of.
+        let at = centre + normal * 0.0015;
+        text::set_line(&mut self.text, text, style, at, Vec3::Y.cross(normal), Vec3::Y, width);
+    }
+
     fn decor(&mut self, i: Inst) {
         self.static_insts.push(i);
     }
@@ -305,27 +333,29 @@ impl Library {
         // Sign + lantern above the middle case.
         let mid = &self.faces[first_face + faces.len() / 2];
         let (mid_center, mid_rot, normal) = (mid.center, mid.rot(), mid.normal);
-        let sign_pos = mid_center + Vec3::Y * (UNIT_H + 0.38) + normal * 0.02;
+        let sign_pos = mid_center + Vec3::Y * (UNIT_H + 0.42) + normal * 0.02;
         let ccol = catalog::category_color(&self.catalog.categories[cat]);
         let plaque = Inst::new(
             sign_pos,
             mid_rot,
-            Vec3::new(1.5, 0.34, 0.05),
+            Vec3::new(2.0, 0.42, 0.05),
             kind::PLAQUE,
             [ccol[0], ccol[1], ccol[2], 0.08],
             0,
         );
         self.decor(plaque);
         self.decor(Inst::aabox(
-            sign_pos - Vec3::Y * 0.21 - normal * 0.02,
+            sign_pos - Vec3::Y * 0.25 - normal * 0.02,
             Vec3::new(0.06, 0.12, 0.06),
             kind::WOOD,
             BRASS,
         ));
+        let name = self.catalog.categories[cat].name.clone();
+        self.inscribe(&name, SIGN_LETTERS, sign_pos + normal * 0.025, normal, 1.86);
         self.labels.push(Label {
             pos: sign_pos + normal * 0.04,
             normal,
-            text: self.catalog.categories[cat].name.clone(),
+            text: name,
             kind: LabelKind::Category(cat),
             level: self.world.level_at(mid_center),
         });
@@ -450,25 +480,19 @@ impl Library {
                 x += gap;
             }
         }
-        // Shelf range labels.
+        // Each shelf's range of filing keys, on its label.
         for f in faces {
+            let (center, normal) = (self.faces[f].center, self.faces[f].normal);
             for row in 0..ROWS {
                 let runs = &self.runs[f][row];
                 if runs.is_empty() {
                     continue;
                 }
                 let key = |s: u32| self.series[s as usize].shelf_key();
-                let text = format!("{} – {}", key(runs[0].series), key(runs[runs.len() - 1].series));
-                let face = &self.faces[f];
-                let pos = face.center + Vec3::Y * (row_floor_y(row) - BOARD_T * 0.5) + face.normal * 0.02;
-                let level = self.world.level_at(face.center);
-                self.labels.push(Label {
-                    pos,
-                    normal: face.normal,
-                    text,
-                    kind: LabelKind::Shelf,
-                    level,
-                });
+                let keys = format!("{} – {}", key(runs[0].series), key(runs[runs.len() - 1].series));
+                let ((y0, y1), (_, out)) = kit::label_holder(row);
+                let at = center + Vec3::Y * ((y0 + y1) * 0.5) + normal * out;
+                self.inscribe(&keys, SHELF_LETTERS, at, normal, kit::LABEL_W - 0.01);
             }
         }
     }

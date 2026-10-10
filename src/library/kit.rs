@@ -669,6 +669,22 @@ impl Library {
     }
 }
 
+/// Width of a shelf's label holder.
+pub(super) const LABEL_W: f32 = 0.16;
+
+/// Where shelf `row`'s label holder is on a bookcase face: from what height to what,
+/// and from how far out of the face's plane to how far. The bottom shelf's is on the
+/// plinth.
+pub(super) fn label_holder(row: usize) -> ((f32, f32), (f32, f32)) {
+    if row + 1 == ROWS {
+        ((0.07, 0.13), (0.04, 0.046))
+    } else {
+        let top = row_floor_y(row);
+        // On the board's edge, hanging a little below it.
+        ((top - 0.042, top - 0.001), (0.0, 0.006))
+    }
+}
+
 /// Axes for a box along the unit direction `x` (not vertical): its y as near up as
 /// `x` allows, its z level.
 fn upright_frame(x: Vec3) -> Mat3 {
@@ -696,16 +712,12 @@ fn case_boxes(z0: f32, z1: f32, both: bool) -> Vec<(Vec3, Vec3, u32, [f32; 4])> 
         |x: Range<f32>, y0: f32, y1: f32, z: Range<f32>| (Vec3::new(x.start, y0, z.start), Vec3::new(x.end, y1, z.end));
     let wide = |hx: f32| -hx..hx;
     let pitch = UNIT_PITCH * 0.5;
-    // Label holders where each shelf's label hangs (the bottom one on the plinth),
-    // brass faintly aglow: the shelves' one touch of magic.
+    // Label holders where each shelf's label hangs, brass faintly aglow: the shelves'
+    // one touch of magic.
     for &s in faces {
         for row in 0..ROWS {
-            let top = row_floor_y(row);
-            let (lo, hi) = if row + 1 == ROWS {
-                bx(wide(0.06), 0.07, 0.13, before(s, 0.04, 0.046))
-            } else {
-                bx(wide(0.06), top - 0.029, top - 0.001, before(s, 0.0, 0.006))
-            };
+            let ((y0, y1), (o0, o1)) = label_holder(row);
+            let (lo, hi) = bx(wide(LABEL_W * 0.5), y0, y1, before(s, o0, o1));
             out.push((lo, hi, kind::EMISSIVE, LABEL_GLOW));
         }
     }

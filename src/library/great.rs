@@ -49,6 +49,13 @@ const PALE: [f32; 3] = [0.56, 0.53, 0.47];
 const FRIEZE: [f32; 3] = [0.11, 0.055, 0.025];
 const PANEL: [f32; 3] = [0.2, 0.1, 0.045];
 const GILT: [f32; 3] = [0.62, 0.45, 0.16];
+/// A department's name, in capitals on the sign over its door.
+const DEPT_LETTERS: Style = Style {
+    em: 0.22,
+    tracking: 0.12,
+    lettering: Lettering::Gilt,
+    color: GOLD_LEAF,
+};
 
 /// A side of the atrium, as a frame: `a` runs across it, `o` outward from the centre.
 #[derive(Clone, Copy)]
@@ -931,10 +938,12 @@ impl Library {
             rgba(dcol, 0.12),
             0,
         ));
+        let name = self.catalog.departments[dept].name.clone();
+        self.inscribe(&name.to_uppercase(), DEPT_LETTERS, sign - out * 0.025, -out, 3.0);
         self.labels.push(Label {
             pos: sign - out * 0.04,
             normal: -out,
-            text: self.catalog.departments[dept].name.clone(),
+            text: name,
             kind: LabelKind::Department(dept),
             level,
         });

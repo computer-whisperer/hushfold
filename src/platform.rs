@@ -25,6 +25,13 @@ pub fn screenshot_dir() -> PathBuf {
     home().map(|h| h.join("Pictures")).unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// The first of `SERIF_FONTS` there is, read once.
+pub fn serif_font() -> Option<&'static [u8]> {
+    static FONT: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
+    FONT.get_or_init(|| SERIF_FONTS.iter().find_map(|p| std::fs::read(p).ok()))
+        .as_deref()
+}
+
 /// Serif text fonts to try, in order of preference.
 pub const SERIF_FONTS: &[&str] = &[
     "/usr/share/fonts/noto/NotoSerif-Regular.ttf",

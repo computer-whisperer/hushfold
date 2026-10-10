@@ -17,6 +17,8 @@ const SIDE_CASES: [f32; 3] = [25.05, 27.75, 30.45];
 const SEAT: f32 = 19.5;
 const GOLD: [f32; 4] = [0.66, 0.48, 0.14, 1.0];
 const DAMASK: [f32; 3] = [0.3, 0.1, 0.12];
+/// What rises from the open book in the lounge, a word at a time.
+const VERSE: &str = "Shelve me gently, said the book, and I will keep a light for you through the long night.";
 
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     walls(lib, frame);
@@ -604,22 +606,31 @@ fn lectern(lib: &mut Library, f: &RoomFrame, a: f32, words: bool) {
     }
     // The words, rising in a slow curl and fading as they go.
     let mut r = StdRng::seed_from_u64(0x5665_7273);
-    for i in 0..18 {
-        let t = i as f32 / 18.0;
+    let words = VERSE.split(' ').collect::<Vec<_>>();
+    for (i, word) in words.iter().enumerate() {
+        let t = i as f32 / words.len() as f32;
         let p = desk
             + Vec3::new(
                 (t * 7.0).sin() * 0.22 * t + 0.05,
                 0.12 + t * 1.5,
                 (t * 7.0).cos() * 0.15 * t,
             );
-        let q = Quat::from_rotation_y(r.gen_range(0.0..PI)) * Quat::from_rotation_z(r.gen_range(-0.6..0.6));
-        at.part(
-            lib,
-            p,
-            Vec3::new(r.gen_range(0.04..0.09), 0.012, 0.003),
-            q,
-            kind::EMISSIVE,
-            [1.0, 0.82, 0.5, 3.0 * (1.0 - t) + 0.4],
+        // Each turned and tipped a little, but all toward the reader.
+        let q = at.q * Quat::from_rotation_y(r.gen_range(-0.6..0.6)) * Quat::from_rotation_z(r.gen_range(-0.4..0.4));
+        let style = Style {
+            em: 0.045,
+            tracking: 0.0,
+            lettering: Lettering::Glow,
+            color: [1.0, 0.82, 0.5, 3.0 * (1.0 - t) + 0.4],
+        };
+        text::set_line(
+            &mut lib.text,
+            word,
+            style,
+            at.at + at.q * p,
+            q * Vec3::X,
+            q * Vec3::Y,
+            1.0,
         );
     }
     lib.light(at.at + Vec3::Y * 1.6, 3.5, [1.0, 0.78, 0.45], 0.5, LightKind::Static);

@@ -12,6 +12,7 @@ mod nav;
 mod platform;
 mod scene;
 mod settings;
+mod text;
 mod world;
 
 use audio::Audio;
@@ -114,6 +115,7 @@ impl Running {
             if loaded { " (save loaded)" } else { "" }
         );
         self.renderer.set_static(&self.game.lib.static_insts);
+        self.renderer.set_text(&self.game.lib.text);
         self.renderer.clear_chunks();
         // Fill its chunks now, so this frame doesn't draw an empty library.
         self.game.build_instances();
@@ -570,6 +572,7 @@ impl ApplicationHandler for App {
             if loaded { " (save loaded)" } else { "" }
         );
         renderer.set_static(&game.lib.static_insts);
+        renderer.set_text(&game.lib.text);
         let egui_ctx = egui::Context::default();
         hud::install_fonts(&egui_ctx);
         egui_ctx.set_visuals(egui::Visuals::dark());
