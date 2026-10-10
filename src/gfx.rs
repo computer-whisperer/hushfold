@@ -98,7 +98,6 @@ pub mod kind {
     /// (light through them; no frame), 1 a grille of upright bars 4.5 cm apart with
     /// rails, 2 scrolled fretwork (interlaced rings, 10 cm), 3 a lattice of diagonal
     /// laths; all but the leaves in a frame round the edge.
-    #[allow(dead_code)] // TEMP: for the round-4 area agents; remove at merge if unused.
     pub const FRET: u32 = 22;
 
     /// Whether instances of kind `k` are drawn in the translucent pass.
