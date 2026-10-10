@@ -513,6 +513,15 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   9.87 → 10.28 h, 1,866 books shelved in the first hour (from 2,010). Costs not
   refit for it. A person walks a larger share of the time than the bot, so wading
   will cost them more.
+- What the rooms ask (generation 5: the swap and its folios, the songs, the ward,
+  the stopped clocks, the draught, the hearth's books left about, restless books;
+  the bot reading the clocks' keys and taking them first): the Hall 1.58 h, as it
+  was; the Great Library 10.20 → 13.11 h. Below the first floor nothing changes
+  (the Map Room opens at ~3.75 h as before). The swap, two rooms' books crossing
+  between them with folios filling the arms, files ~5k books an hour where the
+  rooms' own heaps went ~14k, so the engine skills come later (Deeper Arms IV 4.6
+  → 5.6 h, Shelving Aura III 5.4 → 6.8 h) and each room after it opens 1–1.75 h
+  later (the Hearth Library 6.0 → 7.8 h). Costs not refit for it.
 
 ## Rendering
 Instances of the box, or of a mesh fitted to it (`gfx/mesh.rs`; an instance's
