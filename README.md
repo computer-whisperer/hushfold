@@ -9,7 +9,9 @@ books wherever you post them.
 Two libraries, each with its own save (switch on the pause screen):
 - **The Hall**: one storey, ~11,700 books in ~2,300 series, two wings.
 - **The Great Library** (in development): three storeys round a skylit atrium,
-  twelve department rooms opened one by one, ~118,000 books, about nine hours.
+  twelve department rooms opened one by one, each laid out and furnished in its
+  own way (an observatory under a painted sky, an alchemist's workshop, a
+  glasshouse herbarium, a hearth room…), ~118,000 books, about nine hours.
 
 Prebuilt Linux and Windows binaries are on the
 [releases page](https://github.com/computer-whisperer/hushfold/releases), or build it yourself:
@@ -51,8 +53,9 @@ pause screen replaces the current library's save with a fresh one (settings, in
 
 ## How filing works
 
-- Each category owns three bookcases (five in the Great Library) on one side of
-  an aisle; the sign and lantern above the middle case name it. With Signposts, signs of
+- Each category owns three bookcases on one side of an aisle (in the Great
+  Library four to six, laid out as its room has them: rows, wall cases, alcoves);
+  the sign and lantern above the middle case name it. With Signposts, signs of
   categories you carry show through the stacks, marked "other side" when their shelves face
   away from you. Lanterns brighten with progress and burn in the category's colour once it is
   complete.
@@ -120,7 +123,8 @@ that fit it.
   the GPU, re-uploaded only when something in a chunk changes; chunks out of
   view are skipped.
   CPU frame time is ~0.15 ms in the Hall and ~0.75 ms in the Great Library
-  (~360 and ~185 fps unpaced at 1864×2088 on an RX 6900 XT).
+  (~360 and ~185 fps unpaced at 1864×2088 on an RX 6900 XT, measured before
+  the visual pass, which added 8–19% GPU time and no CPU time).
   `HUSHFOLD_UNPACED=1` renders without compositor pacing for benchmarking.
 - All audio is synthesized at startup (`src/audio.rs`): book thunks, page
   rustles, pentatonic chimes, fire crackle and a generative music-box loop.

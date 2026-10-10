@@ -35,9 +35,78 @@ closed gates;
 sight by solids that stop it, floors, stair stone and closed gates; books build
 their heightfields from the same world. Generation (`src/library/`) declares each
 piece once: `decor` (drawn only), `solid` (drawn, and in the way), or parts drawn
-with one `collide` box standing for them. Pieces live in `kit.rs`; `hall.rs` and
-`great.rs` only place them. A test fails if two visible faces share a plane
-(z-fighting).
+with one `collide` box standing for them. Shared pieces (bookcases double-sided
+and against a wall, sconces, chandeliers, tables, stairs, railings, panelling,
+doorways, piers) live in `kit.rs`. `hall.rs` builds the Hall; `great.rs` builds
+the Great Library's building (atrium, galleries, stairs, skylight, the rooms'
+walls, doorways and gates) and hands each room's inside to its department's file
+in `library/rooms/`, which lays out its own bookcases (`add_category` takes the
+faces, each with its own normal, in reading order) and furnishings, from shared
+helpers in `rooms/mod.rs`. Each room's books come from a generator of its own, so
+one room's layout leaves the others' books alone. A test fails if two visible
+faces share a plane (z-fighting); another holds every room to 40 faces and its
+starting heaps under 2 m.
+
+## The look
+Built in one visual pass (2026-10-09) by seven agents, one per area, against a
+brief: each department its own flavour and layout, a middling amount of magic (a
+touch or two a room, not everything glowing), still objects only.
+- **Furniture.** Bookcases are joined walnut pieces: proud fluted stiles with
+  capitals, a frieze and a two-step cornice running unbroken along a row, raised
+  panels on the ends, a plinth over a toe-kick, a brass ladder rail across each
+  face and a brass label holder under each shelf's label, glowing faintly. Reading
+  tables have green leather tops on turned legs; sconces, chandeliers (with faint
+  moon-blue crystal drops), balusters, newels, stair stringers, wainscot,
+  doorways and piers all have their mouldings. Collision is as it was.
+- **The Hall.** A timber roof on girders; the reading room's ceiling coffered and
+  painted as the night sky, some constellations really shining; round-headed
+  north windows with violet heads and velvet drapes; an arcade over the veil;
+  tapestries of the library's emblem (a crescent over an open book) by the hearth;
+  a great map ends the West Wing and a clock at ten to midnight the East; banker's
+  lamps, an armillary sphere and a lectern whose book's script glows.
+- **The Great Library's building.** The atrium walls are blind arches between
+  pilasters, with a banner in each department's colour on the wall outside its
+  room; each door has a stone frame with the sign between two glowing gems;
+  beamed walks under panelled gallery fronts with lamps on the railings; panelled
+  stairs; a ribbed leaded skylight with the moon in two clear panes; lanterns
+  floating still in the well.
+- **The departments.** Ground floor: the Observatory (a painted night-sky ceiling
+  with twinkling constellations, an orrery with a glowing sun, a telescope at an
+  arched window), the Alchemical Wing (alcoves off a working nave, a brick athanor
+  alight, glassware, a transmutation circle), the Herbarium (stacks in one half, a
+  moonlit glasshouse garden in the other, glowing moonflowers), the Bestiary
+  (cages of cases off a hall under a hung dragon skeleton, a glowing egg). First
+  floor: the Map Room (a globe over a compass rose, a floating model ship), the
+  Chronicle Hall (a nave of busts and banners, a timeline writing itself round the
+  walls), the Verse Gallery (a lounge of armchairs and portraits, drifting words,
+  paper cranes), the Arcanum (a ward of cases round a glowing rune circle under
+  hanging crystals). Top floor: the Clockworks (bays like a wheel's teeth, a great
+  clock with glowing hours, gear trains), the Music Room (rows like pews before an
+  organ, a harp with glowing strings), the Weatherhouse (a rain-streaked window, a
+  wind rose, a cloud kept in a jar with its own lightning), the Hearth Library (an
+  inglenook fire, armchairs, floating candles, needles knitting by themselves).
+
+### Wanted next (the agents' notes)
+- **Shapes:** cylinders, discs and spheres (gears, dials, globes, jars, pipes,
+  balusters: the Clockworks spends ~900 boxes faking round), wedges, bent or
+  spline pieces (ribs, arches, antlers), alpha cut-out planes (leaves, bars).
+- **Motion:** pendulums, clock hands, gear trains, orreries, armillary rings and
+  globes turning; floating lanterns, candles and the model ship bobbing; banners,
+  curtains, herbs and chandelier drops stirring; the weathervane, chimes, rain and
+  the jarred cloud; drifting words, motes and notes; library ladders sliding on
+  their rails.
+- **Materials and textures:** see-through glass indoors (jars, bells, glazed case
+  doors; the jar panes now borrow the slot ghosts' shader) and a skylight with a
+  real sky; fire, cloud or smoke, water, brick, marble; decals or a small atlas for
+  map art, portraits, sheet music, clock numerals, heraldic sigils per department.
+- **Rendering:** culling for static geometry (it is drawn in the order it is laid
+  down, so pieces in front are laid first; this is what kept the pass's GPU cost
+  flat, and it is fragile); shadows for moonlight and the big fires; projected
+  window light; ambient occlusion in piles and shelf corners; per-room fog and
+  light colour; dust motes on the GPU.
+- **Play:** door gems brightening as a department nears done; a wing sign over the
+  Hall's veil (needs a thought about Signposts); a finished back for wall cases
+  standing free (the Bestiary's and others' are covered with boards).
 
 ## Loose books
 Every book not shelved or carried is loose (`src/loose.rs`), simulated with
@@ -230,11 +299,24 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   8.5 → 9.6 h (filing 7.8 → 8.7 h). Costs not refit for it.
 
 ## Rendering
-Box-only geometry, per-instance `kind` selects procedural material in WGSL
-(wood, book, floor, stone, rug, emissive, plaque). Forward lighting with up to
-64 point lights (the player's candle, familiars, then the library's lights
-nearest the eye), hemisphere ambient, fog. 4x MSAA HDR -> bloom -> ACES tonemap
--> egui. Held books are drawn in a second pass with cleared depth.
+Box-only geometry; each instance's `kind` picks a procedural material in WGSL:
+wood, book, floor, stone, rug, emissive, plaque, window glass, paper, metal,
+cloth, leaf, crystal and parchment, each documented in `gfx::kind` with what its
+colour and `param` mean. Materials work from the box's local coordinates, a
+per-instance seed and the pixel's footprint, so fine detail fades out rather
+than shimmers. The scene shader is register-bound: materials work out what they
+need inside their own branch rather than keeping values alive across the switch
+(a first version at 84 registers cost +25-30%). Forward lighting with up to 64
+point lights (the player's candle, familiars, then the library's lights nearest
+the eye), wrapped diffuse, light through leaves and crystal, Blinn-Phong
+highlights; a two-colour hemisphere ambient, shiny materials reflecting a simple
+stand-in of the room; fog cooling with distance. Translucent things (slot ghosts,
+the veil) are drawn in a pass that can read the opaque depth; moonbeams there
+without a depth test, each the light along the eye's ray through a soft shaft in
+closed form, stopping at the scene's depth and pooling on surfaces facing the
+window. 4x MSAA HDR -> bloom -> ACES tonemap (a touch of blue in the darkest
+tones) -> egui. Held books are drawn in a second pass with cleared depth. Static
+geometry is one draw in the order it was laid down, without culling.
 
 `scene.rs` keeps books lying still (in piles or shelved) and the ghosts of empty
 slots in 8 × 6 × 8 m chunks with their own GPU buffers. Each frame every book's
@@ -252,3 +334,8 @@ they were generated (books in the air are saved where they are and fall on
 load), JSON in $XDG_DATA_HOME/hushfold/save.json (%APPDATA% on Windows),
 autosaved. 0.1.x saves load: their piles keep the generated shape and fall into
 the gaps left by books already taken. Settings live beside it in settings.json.
+Each library has its own save (the Great Library's is great.json), stamped with
+the generation of the library it was made in (`game::generation`): saves name
+books by index, so one from another generation starts fresh, kept aside as
+*.old.json. The Hall's stays 0 (pinned by `hall_generates_as_before`); the Great
+Library's is bumped whenever where its books go changes (2 after the visual pass).
