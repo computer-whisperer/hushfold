@@ -8,9 +8,13 @@
 //! << 29`; each of its glyphs a word, `slot | pen << 14 | line << 30`, the pen in
 //! 1/1024 ems from the middle of its line biased by 32 ems, so a block's glyphs sort
 //! by line, then pen (the shader finds a glyph by bisection).
+//!
+//! Books in hand are also modelled in the round (`model`), drawn with the same material.
 
 use crate::catalog::{Binding, Look, Series};
 use crate::text;
+use bytemuck::{Pod, Zeroable};
+use glam::Vec3;
 
 /// Words before the cells: where the cells, numerals, records and glyphs start, and
 /// the height of a capital in ems (as f32 bits).
@@ -19,13 +23,15 @@ const HEADER: usize = 8;
 /// and its (em, centre); the label's (half length, centre); the front cover's block
 /// and its (em, centre); the volume number's (em, centre). Centres are metres down
 /// from the head; pairs are two f16 in one word.
-const RECORD: usize = 10;
+pub const RECORD: usize = 10;
 /// Volume numbers set in advance (higher ones show as the last).
 const NUMERALS: u32 = 64;
 
-/// The spine's raised bands run from this far below the head to as far above the tail
-/// (the shader's `BAND_END`).
+/// The spine's raised bands run from this far below the head to as far above the tail;
+/// half a band's width, and how far it stands (the shader's `BAND_END`, `BAND_W`).
 const BAND_END: f32 = 0.045;
+const BAND_W: f32 = 0.0026;
+const BAND_H: f32 = 0.0012;
 /// Lines of capitals, and of mixed case, apart in ems (`PITCH_CAPS`, `PITCH`).
 const PITCH_CAPS: f32 = 1.2;
 const PITCH: f32 = 1.25;
@@ -204,9 +210,20 @@ fn spine(glyphs: &mut Vec<u32>, s: &Series) -> Spine {
         let (lines, em) = fit(&s.title, 0.02, PITCH, to - from - 0.012, width, 2);
         (block(glyphs, &lines, 0.02), pair(em.min(0.016), (from + to) * 0.5))
     };
+    // In capitals, or where they would come out too small, in the title's own case,
+    // which sets narrower.
     let across = |glyphs: &mut Vec<u32>, half: f32, at: f32| {
-        let (lines, em) = fit(&caps, 0.03, PITCH_CAPS, t - 0.0075, 2.0 * half - 0.004, 3);
-        (block(glyphs, &lines, 0.03), pair(em.min(0.011), at))
+        let (w, h) = (t - 0.0075, 2.0 * half - 0.004);
+        let max_lines = if h > 0.04 { 4 } else { 3 };
+        let (mut lines, mut em) = fit(&caps, 0.03, PITCH_CAPS, w, h, max_lines);
+        let mut tracking = 0.03;
+        if em < 0.004 {
+            let (l, e) = fit(&s.title, 0.01, PITCH_CAPS, w, h, max_lines);
+            if e > em {
+                (lines, em, tracking) = (l, e, 0.01);
+            }
+        }
+        (block(glyphs, &lines, tracking), pair(em.min(0.011), at))
     };
     let bottom = if numbered { h - 0.064 } else { h - 0.045 };
     let (mode, label, (block, text), label_geom) = if look.bands > 0 {
@@ -291,8 +308,14 @@ pub fn table(series: &[Series]) -> Vec<u32> {
     for s in series {
         let sp = spine(&mut glyphs, s);
         let d = s.depth;
-        let (cover, cover_at) = if matches!(s.look.binding, Binding::Cloth | Binding::Boards) {
-            let (lines, em) = fit(&s.title.to_uppercase(), 0.06, PITCH_CAPS, 0.6 * d, 0.3 * s.height, 3);
+        // Stamped across the cloth, or printed on a label (`paper_label`) on boards.
+        let width = match s.look.binding {
+            Binding::Cloth => 0.6 * d,
+            Binding::Boards => 0.38 * d,
+            _ => 0.0,
+        };
+        let (cover, cover_at) = if width > 0.0 {
+            let (lines, em) = fit(&s.title.to_uppercase(), 0.06, PITCH_CAPS, width, 0.3 * s.height, 3);
             (block(&mut glyphs, &lines, 0.06), pair(em.min(0.012), 0.3 * s.height))
         } else {
             (0, 0)
@@ -329,6 +352,224 @@ pub fn table(series: &[Series]) -> Vec<u32> {
     out.extend(records);
     out.extend(glyphs);
     out
+}
+
+/// How far a spine of thickness `t` is rounded (its crown above its edges), and how far
+/// in from the spine's edge the joint runs on the covers (the shader's `joint`).
+fn round(t: f32) -> f32 {
+    0.2 * t
+}
+
+fn joint(t: f32) -> f32 {
+    round(t) + 0.0015
+}
+
+/// A vertex of a book modelled in the round: where it is in the book's own frame
+/// (metres from its box's centre), and where the material reads it, as the point of
+/// the box's face it stands for (unit box coordinates, like a box's own vertices) and
+/// that face's normal.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug)]
+pub struct ModelVertex {
+    pub at: [f32; 3],
+    pub local: [f32; 3],
+    pub face: [f32; 3],
+}
+
+/// Triangles being gathered for `model`.
+struct Builder<'a> {
+    verts: &'a mut Vec<ModelVertex>,
+    idx: &'a mut Vec<u32>,
+    size: Vec3,
+}
+
+impl Builder<'_> {
+    /// A vertex at `at`, read as the point `on` (metres) of the box's face with normal
+    /// `face`.
+    fn vert(&mut self, at: Vec3, on: Vec3, face: Vec3) -> u32 {
+        self.verts.push(ModelVertex {
+            at: at.into(),
+            local: (on / self.size).into(),
+            face: face.into(),
+        });
+        self.verts.len() as u32 - 1
+    }
+
+    /// A quad through four vertices in order round it, wound to face `out`.
+    fn quad(&mut self, q: [u32; 4], out: Vec3) {
+        let p = |k: usize| Vec3::from(self.verts[q[k] as usize].at);
+        let n = (p(1) - p(0)).cross(p(2) - p(0)) + (p(2) - p(0)).cross(p(3) - p(0));
+        let q = if n.dot(out) < 0.0 { [q[0], q[3], q[2], q[1]] } else { q };
+        self.idx.extend_from_slice(&[q[0], q[1], q[2], q[0], q[2], q[3]]);
+    }
+
+    /// Quads between rows of vertices, each row `n` long, starting at `first`.
+    fn strip(&mut self, first: u32, rows: usize, n: usize, out: Vec3) {
+        for r in 0..rows - 1 {
+            for c in 0..n - 1 {
+                let at = |r: usize, c: usize| first + (r * n + c) as u32;
+                self.quad([at(r, c), at(r, c + 1), at(r + 1, c + 1), at(r + 1, c)], out);
+            }
+        }
+    }
+}
+
+/// A book of `size` (thickness, height, depth) with `bands` raised bands, modelled in
+/// the round inside its box: two boards; the page block between them, sunk at the head,
+/// tail and fore-edge and hollowed at the fore-edge; a rounded spine over it, its
+/// bands standing out, meeting the boards in grooved joints. Its vertices and triangles
+/// are added to `verts` and `idx` (indices from the start of `verts`).
+pub fn model(size: Vec3, bands: u32, verts: &mut Vec<ModelVertex>, idx: &mut Vec<u32>) {
+    const ACROSS: usize = 12;
+    let (t, h, d) = (size.x, size.y, size.z);
+    let mut b = Builder { verts, idx, size };
+    // As the shader draws them: the boards' thickness, the squares, the hollow of the
+    // fore-edge, the spine's round and covering, the joint.
+    let inner = 0.5 * t - (0.07 * t).clamp(0.0015, 0.003);
+    let sq = (0.011 * h).clamp(0.0022, 0.0038);
+    let hollow = 0.06 * t;
+    let r = round(t);
+    let shell = 0.0015;
+    let crown = 0.5 * d - if bands > 1 { BAND_H } else { 0.0 };
+    let back = 0.5 * d - joint(t);
+    let (x, y, z) = (Vec3::X, Vec3::Y, Vec3::Z);
+    // The spine: rings down its length, raised over each band.
+    let mut rings = vec![(-0.5 * h, 0.0), (0.5 * h, 0.0)];
+    if bands > 1 {
+        let span = (h - 2.0 * BAND_END) / (bands - 1) as f32;
+        for k in 0..bands {
+            let at = 0.5 * h - BAND_END - span * k as f32;
+            for (dy, bump) in [(-1.0, 0.0), (-0.6, 0.8), (0.0, 1.0), (0.6, 0.8), (1.0, 0.0)] {
+                rings.push((at + dy * BAND_W, bump));
+            }
+        }
+    }
+    rings.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let arc = |u: f32| crown - r * u * u;
+    let across = |c: usize| -1.0 + 2.0 * c as f32 / ACROSS as f32;
+    let first = b.verts.len() as u32;
+    for &(yy, bump) in &rings {
+        for c in 0..=ACROSS {
+            let u = across(c);
+            let at = Vec3::new(0.5 * t * u, yy, arc(u) + BAND_H * bump);
+            b.vert(at, Vec3::new(at.x, yy, 0.5 * d), z);
+        }
+    }
+    b.strip(first, rings.len(), ACROSS + 1, z);
+    // Its covering end on at the head and tail, down to the boards' backs at its sides;
+    // and inside it, the covering above the sunk page block.
+    let shoulder = |xx: f32| {
+        let below = arc(xx / (0.5 * t)) - shell;
+        below - (below - back) * ((xx.abs() - inner) / (0.5 * t - inner)).clamp(0.0, 1.0)
+    };
+    for s in [-1.0f32, 1.0] {
+        let yy = 0.5 * h * s;
+        let first = b.verts.len() as u32;
+        for row in 0..2 {
+            for c in 0..=ACROSS {
+                let u = across(c);
+                let xx = 0.5 * t * u;
+                let zz = if row == 0 { arc(u) } else { shoulder(xx) };
+                b.vert(Vec3::new(xx, yy, zz), Vec3::new(xx, yy, 0.5 * d), y * s);
+            }
+        }
+        b.strip(first, 2, ACROSS + 1, y * s);
+        let first = b.verts.len() as u32;
+        for row in 0..2 {
+            for c in 0..=ACROSS {
+                let xx = inner * across(c);
+                let yy = s * (0.5 * h - if row == 0 { 0.0 } else { sq });
+                b.vert(
+                    Vec3::new(xx, yy, arc(xx / (0.5 * t)) - shell),
+                    Vec3::new(xx, yy, 0.5 * d),
+                    y * s,
+                );
+            }
+        }
+        b.strip(first, 2, ACROSS + 1, -z);
+    }
+    // The joints, a groove each side from the spine's edge to the board's back; and the
+    // boards, their insides read as the covering turned in.
+    for s in [-1.0f32, 1.0] {
+        let edge = arc(1.0);
+        let groove = [
+            (0.5 * t, edge),
+            (0.5 * t - 0.0012, 0.5 * (edge + back)),
+            (0.5 * t, back),
+        ];
+        let first = b.verts.len() as u32;
+        for yy in [-0.5 * h, 0.5 * h] {
+            for (gx, gz) in groove {
+                let at = Vec3::new(s * gx, yy, gz);
+                b.vert(at, Vec3::new(s * 0.5 * t, yy, gz), x * s);
+            }
+        }
+        b.strip(first, 2, 3, x * s);
+        let (x0, x1) = (s * inner, s * 0.5 * t);
+        let corners = |b: &mut Builder, pts: [Vec3; 4], on: &dyn Fn(Vec3) -> Vec3, face: Vec3, out: Vec3| {
+            let q = pts.map(|p| b.vert(p, on(p), face));
+            b.quad(q, out);
+        };
+        let (h2, d2) = (0.5 * h, 0.5 * d);
+        let outer = |p: Vec3| Vec3::new(s * 0.5 * t, p.y, p.z);
+        let yz = |xx: f32| {
+            [
+                Vec3::new(xx, -h2, -d2),
+                Vec3::new(xx, h2, -d2),
+                Vec3::new(xx, h2, back),
+                Vec3::new(xx, -h2, back),
+            ]
+        };
+        corners(&mut b, yz(x1), &outer, x * s, x * s);
+        corners(&mut b, yz(x0), &outer, -z, -x * s);
+        for e in [-1.0f32, 1.0] {
+            let pts = [
+                Vec3::new(x0, e * h2, -d2),
+                Vec3::new(x1, e * h2, -d2),
+                Vec3::new(x1, e * h2, back),
+                Vec3::new(x0, e * h2, back),
+            ];
+            corners(&mut b, pts, &|p| p, y * e, y * e);
+        }
+        let ends = |zz: f32| {
+            [
+                Vec3::new(x0, -h2, zz),
+                Vec3::new(x1, -h2, zz),
+                Vec3::new(x1, h2, zz),
+                Vec3::new(x0, h2, zz),
+            ]
+        };
+        corners(&mut b, ends(-d2), &|p| p, -z, -z);
+        corners(&mut b, ends(back), &outer, x * s, z);
+    }
+    // The page block: its head and tail from the hollowed fore-edge back to the spine
+    // (read as reaching the headband there), and the fore-edge.
+    let fore = |xx: f32| -0.5 * d + sq + hollow * (1.0 - (xx / inner).powi(2));
+    for s in [-1.0f32, 1.0] {
+        let yy = s * (0.5 * h - sq);
+        let first = b.verts.len() as u32;
+        for row in 0..2 {
+            for c in 0..=ACROSS {
+                let xx = inner * across(c);
+                let (zz, read) = if row == 0 {
+                    (fore(xx), fore(xx))
+                } else {
+                    (arc(xx / (0.5 * t)) - shell, 0.5 * d - 0.0018)
+                };
+                b.vert(Vec3::new(xx, yy, zz), Vec3::new(xx, yy, read), y * s);
+            }
+        }
+        b.strip(first, 2, ACROSS + 1, y * s);
+    }
+    let first = b.verts.len() as u32;
+    for s in [-1.0f32, 1.0] {
+        for c in 0..=ACROSS {
+            let xx = inner * across(c);
+            let at = Vec3::new(xx, s * (0.5 * h - sq), fore(xx));
+            b.vert(at, at, -z);
+        }
+    }
+    b.strip(first, 2, ACROSS + 1, -z);
 }
 
 /// Binding materials, tiling every 64 mm (`BOOK_TILE`): r a leather's pebbled grain and
@@ -511,5 +752,52 @@ mod tests {
         let (first, count) = (b & 0x3f_ffff, b >> 22 & 127);
         assert_eq!((first, count, b >> 29), (0, 20, 2));
         assert!(glyphs.windows(2).all(|g| g[0] >> 14 < g[1] >> 14));
+    }
+
+    /// Every series' lettering points at its glyphs in the table, in order, and is set
+    /// big enough to read from somewhere.
+    #[test]
+    fn tables_hold_their_lettering() {
+        let g = crate::game::Game::new(crate::library::Layout::Hall);
+        let t = table(&g.lib.series);
+        let glyphs = t[3] as usize;
+        let half = |w: u32| {
+            let h = |b: u32| {
+                let exp = (b >> 10 & 31) as i32 - 15;
+                (1.0 + (b & 0x3ff) as f32 / 1024.0) * 2f32.powi(exp)
+            };
+            (h(w & 0xffff), h(w >> 16))
+        };
+        for (i, s) in g.lib.series.iter().enumerate() {
+            let r = t[2] as usize + i * RECORD;
+            for blk in [t[r + 3], t[r + 6]] {
+                let (first, count) = ((blk & 0x3f_ffff) as usize, (blk >> 22 & 127) as usize);
+                assert!(glyphs + first + count <= t.len());
+                let words = &t[glyphs + first..glyphs + first + count];
+                assert!(words.windows(2).all(|w| w[0] >> 14 < w[1] >> 14), "{}", s.title);
+            }
+            let (em, at) = half(t[r + 4]);
+            assert!(em > 0.0019 && at > 0.0 && at < s.height, "{}: em {em} at {at}", s.title);
+        }
+    }
+
+    /// A book modelled in the round stays inside its box, the envelope that physics and
+    /// shelving use.
+    #[test]
+    fn models_fit_their_boxes() {
+        for (size, bands) in [
+            (Vec3::new(0.021, 0.2, 0.124), 0),
+            (Vec3::new(0.067, 0.36, 0.28), 6),
+            (Vec3::new(0.04, 0.27, 0.19), 5),
+        ] {
+            let (mut verts, mut idx) = (Vec::new(), Vec::new());
+            model(size, bands, &mut verts, &mut idx);
+            assert!(idx.len() % 3 == 0 && idx.iter().all(|&i| (i as usize) < verts.len()));
+            for v in &verts {
+                let at = Vec3::from(v.at);
+                assert!(at.abs().cmple(size * 0.5 + 1e-6).all(), "{at} outside {size}");
+                assert!(Vec3::from(v.local).abs().cmple(Vec3::splat(0.5 + 1e-5)).all());
+            }
+        }
     }
 }

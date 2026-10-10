@@ -20,7 +20,7 @@ pub mod kind {
     /// spine pattern in bits 0..3, trim (tooling: 0 old gold, 1 bright gold, 2 silver,
     /// 3 blind) in 4..5, volume in 8..15, and from bit 16 flags: 1 the active book in
     /// hand, 2 loose, then its department in bits 2..6 and category in 7..14 (for the
-    /// Seeker's Lens).
+    /// Seeker's Lens). Bit 31 is the shader's own: set for books modelled in the round.
     pub const BOOK: u32 = 2;
     pub const FLOOR: u32 = 3;
     pub const STONE: u32 = 4;
@@ -176,21 +176,32 @@ fn unit_box() -> (Vec<Vertex>, Vec<u16>) {
     (v, idx)
 }
 
-/// Instances (boxes, or glyphs) in a vertex buffer that grows to fit.
+/// Instances (boxes, or glyphs), or a model's vertices or indices, in a buffer that
+/// grows to fit.
 struct GrowBuf<T = Inst> {
     buf: wgpu::Buffer,
     cap: usize,
     len: u32,
     label: &'static str,
+    usage: wgpu::BufferUsages,
     of: PhantomData<T>,
 }
 
 impl<T: Pod> GrowBuf<T> {
     fn new(device: &wgpu::Device, label: &'static str, cap: usize) -> Self {
+        Self::with(device, label, cap, wgpu::BufferUsages::VERTEX)
+    }
+
+    /// For indices rather than vertices.
+    fn index(device: &wgpu::Device, label: &'static str, cap: usize) -> Self {
+        Self::with(device, label, cap, wgpu::BufferUsages::INDEX)
+    }
+
+    fn with(device: &wgpu::Device, label: &'static str, cap: usize, usage: wgpu::BufferUsages) -> Self {
         let buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
             size: (cap * std::mem::size_of::<T>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: usage | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         Self {
@@ -198,13 +209,14 @@ impl<T: Pod> GrowBuf<T> {
             cap,
             len: 0,
             label,
+            usage,
             of: PhantomData,
         }
     }
 
     fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[T]) {
         if data.len() > self.cap {
-            *self = Self::new(device, self.label, data.len().next_power_of_two());
+            *self = Self::with(device, self.label, data.len().next_power_of_two(), self.usage);
         }
         if !data.is_empty() {
             queue.write_buffer(&self.buf, 0, bytemuck::cast_slice(data));
@@ -229,6 +241,15 @@ struct ChunkGpu {
     max: Vec3,
 }
 
+/// The books in hand modelled in the round (`books::model`): the frame's vertices and
+/// indices, and each book's run of indices.
+#[derive(Default)]
+struct HeldModels {
+    verts: Vec<books::ModelVertex>,
+    idx: Vec<u32>,
+    runs: Vec<std::ops::Range<u32>>,
+}
+
 /// What the book shader reads besides its instances (`book_pipe`'s group 1): the glyph
 /// atlas, the library's book table (`books::table`) and the binding materials.
 struct BookData {
@@ -238,6 +259,8 @@ struct BookData {
     materials: wgpu::TextureView,
     sampler: wgpu::Sampler,
     table: wgpu::Buffer,
+    /// The table's words, which the models of books in hand are read from too.
+    words: Vec<u32>,
     bg: wgpu::BindGroup,
 }
 
@@ -258,8 +281,16 @@ impl BookData {
             materials,
             sampler,
             table,
+            words: Vec::new(),
             bg,
         }
+    }
+
+    /// How many raised bands a book (its instance) has.
+    fn bands(&self, inst: &Inst) -> u32 {
+        let record = |w: usize| self.words.get(w).copied().unwrap_or(0) as usize;
+        let at = record(2) + inst.color[3] as usize * books::RECORD;
+        (record(at) as u32 >> 3) & 7
     }
 
     fn table_buffer(device: &wgpu::Device, words: usize) -> wgpu::Buffer {
@@ -322,6 +353,7 @@ impl BookData {
             );
         }
         queue.write_buffer(&self.table, 0, bytemuck::cast_slice(words));
+        self.words = words.to_vec();
     }
 }
 
@@ -366,8 +398,10 @@ pub struct Renderer {
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     scene_pipe: wgpu::RenderPipeline,
-    /// Books, drawn with a fragment shader of their own (`fs_book`).
+    /// Books, drawn with a fragment shader of their own (`fs_book`); books in hand are
+    /// modelled in the round (`books::model`) and drawn with `model_pipe`.
     book_pipe: wgpu::RenderPipeline,
+    model_pipe: wgpu::RenderPipeline,
     book_data: BookData,
     trans_pipe: wgpu::RenderPipeline,
     beam_pipe: wgpu::RenderPipeline,
@@ -399,6 +433,9 @@ pub struct Renderer {
     /// moonbeams and the other translucent things.
     split: [Vec<Inst>; 4],
     held_buf: GrowBuf,
+    models: HeldModels,
+    model_verts: GrowBuf<books::ModelVertex>,
+    model_idx: GrowBuf<u32>,
     chunks: Vec<ChunkGpu>,
     timer: Option<Timer>,
     targets: Targets,
@@ -563,6 +600,7 @@ impl Renderer {
         ];
         let make_scene = |label: &str,
                           layout: &wgpu::PipelineLayout,
+                          (vs, buffers): (&str, &[wgpu::VertexBufferLayout]),
                           fs: &str,
                           blend: Option<wgpu::BlendState>,
                           (write, compare): (bool, wgpu::CompareFunction),
@@ -572,9 +610,9 @@ impl Renderer {
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: &scene_shader,
-                    entry_point: Some("vs_main"),
+                    entry_point: Some(vs),
                     compilation_options: Default::default(),
-                    buffers: &vb_layouts,
+                    buffers,
                 },
                 primitive: wgpu::PrimitiveState {
                     cull_mode: if cull { Some(wgpu::Face::Back) } else { None },
@@ -606,10 +644,12 @@ impl Renderer {
             })
         };
         use wgpu::CompareFunction::{Always, Less};
-        let scene_pipe = make_scene("scene", &scene_layout, "fs_main", None, (true, Less), true);
+        let boxes = ("vs_main", &vb_layouts[..]);
+        let scene_pipe = make_scene("scene", &scene_layout, boxes, "fs_main", None, (true, Less), true);
         let trans_pipe = make_scene(
             "trans",
             &trans_layout,
+            boxes,
             "fs_trans",
             Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             (false, Less),
@@ -620,6 +660,7 @@ impl Renderer {
         let beam_pipe = make_scene(
             "beams",
             &trans_layout,
+            boxes,
             "fs_beam",
             Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             (false, Always),
@@ -787,13 +828,24 @@ impl Renderer {
                 samp_entry(5),
             ],
         });
-        let book_pipe = make_scene(
-            "books",
-            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("books"),
-                bind_group_layouts: &[Some(&globals_layout), Some(&book_layout)],
-                immediate_size: 0,
-            }),
+        let book_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("books"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&book_layout)],
+            immediate_size: 0,
+        });
+        let book_pipe = make_scene("books", &book_pl, boxes, "fs_book", None, (true, Less), true);
+        let model_layouts = [
+            wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<books::ModelVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 8 => Float32x3],
+            },
+            vb_layouts[1].clone(),
+        ];
+        let model_pipe = make_scene(
+            "book models",
+            &book_pl,
+            ("vs_book_model", &model_layouts),
             "fs_book",
             None,
             (true, Less),
@@ -968,6 +1020,9 @@ impl Renderer {
             beam_buf: GrowBuf::new(&device, "beams", 64),
             split: Default::default(),
             held_buf: GrowBuf::new(&device, "held", 256),
+            models: Default::default(),
+            model_verts: GrowBuf::new(&device, "held models", 4096),
+            model_idx: GrowBuf::index(&device, "held model indices", 16384),
             chunks: Vec::new(),
             timer,
             window,
@@ -977,6 +1032,7 @@ impl Renderer {
             config,
             scene_pipe,
             book_pipe,
+            model_pipe,
             book_data,
             trans_pipe,
             beam_pipe,
@@ -1246,6 +1302,22 @@ impl Renderer {
         self.trans_buf.upload(&self.device, &self.queue, rest);
         self.beam_buf.upload(&self.device, &self.queue, beams);
         self.held_buf.upload(&self.device, &self.queue, f.held);
+        let m = &mut self.models;
+        m.verts.clear();
+        m.idx.clear();
+        m.runs.clear();
+        for inst in f.held {
+            let from = m.idx.len() as u32;
+            books::model(
+                Vec3::from(inst.scale),
+                self.book_data.bands(inst),
+                &mut m.verts,
+                &mut m.idx,
+            );
+            m.runs.push(from..m.idx.len() as u32);
+        }
+        self.model_verts.upload(&self.device, &self.queue, &m.verts);
+        self.model_idx.upload(&self.device, &self.queue, &m.idx);
 
         // Chunks in view, nearest first (so near books hide far ones early).
         let planes = frustum(Mat4::from_cols_array_2d(&f.globals.view_proj));
@@ -1382,11 +1454,14 @@ impl Renderer {
             });
             if self.held_buf.len > 0 {
                 rp.set_bind_group(0, &self.globals_bg, &[]);
-                rp.set_vertex_buffer(0, self.box_vb.slice(..));
-                rp.set_index_buffer(self.box_ib.slice(..), wgpu::IndexFormat::Uint16);
-                rp.set_pipeline(&self.book_pipe);
                 rp.set_bind_group(1, &self.book_data.bg, &[]);
-                draw_boxes(&mut rp, &self.held_buf);
+                rp.set_pipeline(&self.model_pipe);
+                rp.set_vertex_buffer(0, self.model_verts.buf.slice(..));
+                rp.set_vertex_buffer(1, self.held_buf.buf.slice(..));
+                rp.set_index_buffer(self.model_idx.buf.slice(..), wgpu::IndexFormat::Uint32);
+                for (i, run) in self.models.runs.iter().enumerate() {
+                    rp.draw_indexed(run.clone(), 0, i as u32..i as u32 + 1);
+                }
             }
         }
         // Bloom: downsample chain then additive upsample back to level 0.
