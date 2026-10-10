@@ -15,6 +15,7 @@ Needs fontTools. Rerun it when text::CHARS changes (`every_face_has_every_glyph`
 fails until then).
 """
 import os
+import re
 import shutil
 import sys
 import urllib.parse
@@ -89,12 +90,17 @@ def fetch(url, path):
 
 
 def reserved_names(licence, font):
-    """The copyright statement, heading the licence or in the font itself, that
-    reserves a font name, if one does (the OFL's terms, which follow the heading,
-    define the phrase in any case)."""
-    head = " ".join(licence.split("This Font Software is licensed under")[0].split())
-    texts = [("its licence", head)] + [("the font", str(n)) for n in font["name"].names if n.nameID == 0]
-    return next((f'{where}: "{t}"' for where, t in texts if "reserved font name" in t.lower()), None)
+    """The copyright statement, heading the licence or in the font's own copyright or
+    licence strings, that reserves a font name, if one does (the OFL's terms, which
+    follow the heading, define the phrase in any case). Line breaks and spacing are
+    read as single spaces."""
+
+    def head(text):
+        return " ".join(text.split()).split("This Font Software is licensed under")[0].strip()
+
+    texts = [("its licence", head(licence))]
+    texts += [("the font", head(str(n))) for n in font["name"].names if n.nameID in (0, 13)]
+    return next((f'{where}: "{t}"' for where, t in texts if re.search(r"reserved font ?names?", t, re.I)), None)
 
 
 def kern_lookups(gpos):

@@ -425,13 +425,13 @@ Signs, labels and words are laid out at generation into glyph quads, one static 
 after the opaque scene, depth-biased onto the surfaces under them (testing depth,
 not writing it). Every face's glyphs are cut from one signed-distance atlas built at
 startup (64 px to the em, 1632 glyphs in 2048 x 2272; exact distances to outlines
-flattened to within a twentieth of a pixel, each segment measured from the texels
-near it only; threaded, ~40 ms; mipmapped), so they stay sharp up close. Each is
-lit like its surface (gold leaf, ink) or glows; small letters are set a little
-bolder, and those under about four pixels to the em fade out rather than shimmer.
-Names are therefore read in the world, at the distance their size allows (a
-category board from ~20 m at 1000 pixels tall, a shelf's keys from ~3 m); only the
-Signposts' guides are drawn over the scene.
+flattened to a twentieth of a pixel, or 8 and 12 pieces a curve at most as before,
+each segment measured from the texels near it only; threaded, ~40 ms; mipmapped), so
+they stay sharp up close. Each is lit like its surface (gold leaf, ink) or glows;
+small letters are set a little bolder, and those under about four pixels to the em
+fade out rather than shimmer. Names are therefore read in the world, at the distance
+their size allows (a category board from ~20 m at 1000 pixels tall, a shelf's keys
+from ~3 m); only the Signposts' guides are drawn over the scene.
 
 Books have a pipeline and fragment shader of their own (`fs_book`): their material
 needs more than the rest of the scene's, whose shader sits at 64 registers on the
@@ -448,9 +448,11 @@ read by the same material as the points of the box they stand for. The material
 reads the library's book table (`gfx::books::table`; made once per library, ~40 ms
 for the Great Library, and handed to the renderer with the lettering): each
 series' look, face and where its lettering goes, glyphs cut from the lettering's
-distance-field atlas inside the shader by bisection over each line. So a title follows its book
-wherever it is drawn (shelved, piled, flying, held) with no work per book on the
-CPU, and fades below four pixels to the em as the signs' do. Binding materials
+distance-field atlas inside the shader: found by bisection over each line, with the
+neighbours whose cells may reach the point (kerned capitals overlap, Fell's Q trails
+its tail under the next letter). So a title follows its book wherever it is drawn
+(shelved, piled, flying, held) with no work per book on the CPU, and fades below four
+pixels to the em as the signs' do. Binding materials
 (leather grain, cloth weave, marbling, mottle: a 64 mm tile, mipmapped) are drawn at
 startup (~20 ms). Edges of regions within a face (labels, marbled sides, boards'
 edges) are antialiased over the pixel's footprint, and fine relief (bands, bevels)

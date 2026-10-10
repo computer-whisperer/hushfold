@@ -325,6 +325,19 @@ pub fn cap_height(face: Face) -> f32 {
     cells().faces[face as usize].cap
 }
 
+/// How far `face`'s glyphs' cells reach left and right of their pens, at most, in ems
+/// (left negative): letters kerned close, and long tails, overlap their neighbours'.
+pub fn reach(face: Face) -> (f32, f32) {
+    let n = chars();
+    let f = face as usize;
+    (cells().cells[f * n..(f + 1) * n].iter())
+        .filter(|cell| cell.size[0] > 0)
+        .fold((0.0f32, 0.0f32), |(left, right), cell| {
+            let (lo, hi) = (cell.min[0], cell.min[0] + cell.size[0] as i32);
+            (left.min(lo as f32 / EM_PX), right.max(hi as f32 / EM_PX))
+        })
+}
+
 /// Whether a slot's glyph shows anything (a space does not).
 pub fn inked(slot: usize) -> bool {
     cells().cells[slot].size[0] > 0
@@ -478,6 +491,8 @@ mod tests {
     fn every_face_has_every_glyph() {
         assert!((' '..='~').zip(CHARS.chars()).all(|(a, b)| a == b));
         assert_eq!(index('–'), 95);
+        // A face's index is its place in `ALL`, by which the atlas and table keep it.
+        assert!(Face::ALL.iter().enumerate().all(|(i, &f)| f as usize == i));
         let c = cells();
         let n = chars();
         for face in Face::ALL {

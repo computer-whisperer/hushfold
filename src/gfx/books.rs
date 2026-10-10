@@ -4,7 +4,7 @@
 //!
 //! The table: a header; the glyph atlas's cells (`text::cell_words`); volume numbers
 //! set roman and arabic in every face; a record of `RECORD` words per series; the
-//! glyphs every block of lettering points into; and each face's capital height. A block
+//! glyphs every block of lettering points into; and `FACE_WORDS` per face. A block
 //! is one word, `first | count << 22 | lines << 29`; each of its glyphs a word, `slot |
 //! pen << 14 | line << 30`, the pen in 1/1024 ems from the middle of its line biased by
 //! 32 ems, so a block's glyphs sort by line, then pen (the shader finds a glyph by
@@ -17,9 +17,12 @@ use crate::text::{self, Face};
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
-/// Words before the cells: where the cells, numerals, records, glyphs and faces'
-/// capital heights (in ems, as f32 bits, in `Face::ALL`'s order) start.
+/// Words before the cells: where the cells, numerals, records, glyphs and faces start.
 const HEADER: usize = 8;
+/// Words per face, in `Face::ALL`'s order: its capitals' height, and how far its
+/// glyphs' cells reach left and right of their pens (`text::reach`, widened by the
+/// pens' rounding to 1/1024 em), in ems as f32 bits.
+const FACE_WORDS: usize = 3;
 /// Words per series: the look; label colour; accent colour; spine lettering's block
 /// and its (em, centre); the label's (half length, centre); the front cover's block
 /// and its (em, centre); the volume number's (em, centre); the face. Centres are metres
@@ -383,7 +386,11 @@ pub fn table(series: &[Series]) -> Vec<u32> {
     out.extend(numerals);
     out.extend(records);
     out.extend(glyphs);
-    out.extend(Face::ALL.map(|face| text::cap_height(face).to_bits()));
+    for face in Face::ALL {
+        let (left, right) = text::reach(face);
+        let words: [f32; FACE_WORDS] = [text::cap_height(face), left - 1.0 / 512.0, right + 1.0 / 512.0];
+        out.extend(words.map(f32::to_bits));
+    }
     out
 }
 
@@ -792,14 +799,16 @@ mod tests {
         assert!(glyphs.windows(2).all(|g| g[0] >> 14 < g[1] >> 14));
     }
 
-    /// Every series' lettering points at its glyphs in the table, in order, and is set
-    /// big enough to read from somewhere: its capitals at least 1.35 mm tall, whatever
-    /// its face. Every face but the signs' letters some spine.
+    /// Every series' lettering points at its glyphs in the table, in order, in its own
+    /// face, each cell within the face's reach of its pen (as far as the shader looks
+    /// for glyphs), and is set big enough to read from somewhere: its capitals at least
+    /// 1.35 mm tall, whatever its face. Every face but the signs' letters some spine.
     #[test]
     fn tables_hold_their_lettering() {
         let g = crate::game::Game::new(crate::library::Layout::Hall);
         let t = table(&g.lib.series);
         let (glyphs, faces) = (t[3] as usize, t[4] as usize);
+        let per_face = (t[1] - t[0]) as usize / 2 / Face::ALL.len();
         let half = |w: u32| {
             let h = |b: u32| {
                 let exp = (b >> 10 & 31) as i32 - 15;
@@ -810,16 +819,25 @@ mod tests {
         let mut used = [false; Face::ALL.len()];
         for (i, s) in g.lib.series.iter().enumerate() {
             let r = t[2] as usize + i * RECORD;
+            let face = t[r + 9] as usize;
+            assert_eq!(face, s.look.face as usize);
+            let reach = |k: usize| f32::from_bits(t[faces + face * FACE_WORDS + k]);
             for blk in [t[r + 3], t[r + 6]] {
                 let (first, count) = ((blk & 0x3f_ffff) as usize, (blk >> 22 & 127) as usize);
                 assert!(glyphs + first + count <= faces);
                 let words = &t[glyphs + first..glyphs + first + count];
                 assert!(words.windows(2).all(|w| w[0] >> 14 < w[1] >> 14), "{}", s.title);
+                for w in words {
+                    let slot = (w & 0x3fff) as usize;
+                    assert_eq!(slot / per_face, face, "{}", s.title);
+                    let c1 = t[t[0] as usize + slot * 2 + 1];
+                    let min = ((c1 >> 16) & 255) as f32 - 128.0;
+                    let (lo, hi) = (min / text::EM_PX, (min + (c1 & 255) as f32) / text::EM_PX);
+                    assert!(reach(1) <= lo && hi <= reach(2), "{}: {lo}..{hi}", s.title);
+                }
             }
-            let face = t[r + 9] as usize;
-            assert_eq!(face, s.look.face as usize);
             used[face] = true;
-            let cap = f32::from_bits(t[faces + face]);
+            let cap = f32::from_bits(t[faces + face * FACE_WORDS]);
             let (em, at) = half(t[r + 4]);
             assert!(
                 em * cap > 0.00135 && at > 0.0 && at < s.height,
