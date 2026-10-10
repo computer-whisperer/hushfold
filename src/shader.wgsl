@@ -387,11 +387,16 @@ fn stone(base: vec3<f32>, w: vec3<f32>, n: vec3<f32>, fw: f32, look: u32, mid: v
     let db = min(fb, 1.0 - fb) * size.x + chip;
     let tint = mix(vec3<f32>(1.05, 1.0, 0.92), vec3<f32>(0.95, 0.98, 1.04), fract(id * 7.7));
     // Marble's clouding is broader, and draws its veins.
-    let mottle = fbm(vec3<f32>(a, b, id) * (6.0 - 4.8 * marble));
+    let mottle = fbm(vec3<f32>(a, b, id) * (6.0 - 3.6 * marble));
     let broad = vnoise(w * 0.5);
-    // Veins wander along a contour of the clouding, a softer haze about them.
+    // Veins wander along contours of the clouding: a main one with a haze about it,
+    // finer ones between.
     let off_vein = abs(mottle - 0.47);
-    let vein = 1.0 - smoothstep(0.004, 0.016 + fw * 3.0, off_vein) * (0.7 + 0.3 * smoothstep(0.0, 0.07, off_vein));
+    let fine = abs(fract(mottle * 5.0 + id) - 0.5) * 0.2;
+    let vein = max(
+        1.0 - smoothstep(0.004, 0.014 + fw * 2.0, off_vein) * (0.65 + 0.35 * smoothstep(0.0, 0.06, off_vein)),
+        0.55 * (1.0 - smoothstep(0.001, 0.005 + fw * 2.0, fine)),
+    );
     let tone = mix(0.8 + 0.35 * id, 0.65 + 0.55 * id - 0.35 * step(0.9, id), brick) * (1.0 - 0.18 * marble * (1.0 - id));
     var col = base * tint * tone * (0.75 + 0.35 * mottle) * (0.82 + 0.32 * broad);
     col = mix(col, base * 0.42, vein * marble * 0.75);
@@ -738,21 +743,21 @@ fn ink(mode: u32, uv: vec2<f32>, ext: vec2<f32>, seed: f32, fw: f32) -> f32 {
         case 4u: {
             // Sheet music: staves of five lines, notes on and between them with their
             // stems, bar lines every four; grey staves from further off.
-            let pitch = 0.024;
-            let gap = 0.0017;
+            let pitch = 0.034;
+            let gap = 0.0022;
             let row = floor(uv.y / pitch);
-            let f = (uv.y - row * pitch - 0.007) / gap;
+            let f = (uv.y - row * pitch - 0.01) / gap;
             let staff = step(-0.3, f) * step(f, 4.3);
-            let lines = line_aa(abs(fract(f + 0.5) - 0.5) * gap, 0.00012, fw) * staff;
-            let col = floor(uv.x / 0.011);
+            let lines = line_aa(abs(fract(f + 0.5) - 0.5) * gap, 0.0002, fw) * staff;
+            let col = floor(uv.x / 0.013);
             let h = hash3(vec3<f32>(col, row, seed * 7.0));
-            let d = uv - vec2<f32>((col + 0.5) * 0.011, row * pitch + 0.007 + (floor(h * 9.0) - 0.5) * gap * 0.5);
+            let d = uv - vec2<f32>((col + 0.5) * 0.013, row * pitch + 0.01 + (floor(h * 9.0) - 0.5) * gap * 0.5);
             let note = step(0.25, h) * step(0.3, fract(col * 0.25 + 0.1));
-            let head = line_aa(length(vec2<f32>(d.x * 0.8 + d.y * 0.35, d.y)), 0.00105, fw);
-            let stem = line_aa(abs(d.x - 0.0011), 0.00012, fw) * step(0.0, d.y) * step(d.y, 0.0075);
-            let bar = line_aa(abs(fract(uv.x / 0.044 + 0.5) - 0.5) * 0.044, 0.00012, fw) * staff;
+            let head = line_aa(length(vec2<f32>(d.x * 0.8 + d.y * 0.35, d.y)), 0.0013, fw);
+            let stem = line_aa(abs(d.x - 0.00135), 0.00018, fw) * step(0.0, d.y) * step(d.y, 0.009);
+            let bar = line_aa(abs(fract(uv.x / 0.052 + 0.5) - 0.5) * 0.052, 0.0002, fw) * staff;
             let near = max(max(lines, bar), max(head, stem) * note);
-            return mix(near, 0.3 * staff, smoothstep(0.0008, 0.0025, fw)) * margin;
+            return mix(near, 0.3 * staff, smoothstep(0.0012, 0.0035, fw)) * margin;
         }
         default: {
             return 0.0;
@@ -769,7 +774,7 @@ fn arms(uv: vec2<f32>, ext: vec2<f32>, seed: f32, fw: f32) -> vec4<f32> {
     let p = uv / size - vec2<f32>(0.0, 0.1);
     let fp = fw / size;
     // Straight sides down to the middle, then curving in to the point.
-    let low = clamp((-0.15 - p.y) / 1.05, 0.0, 1.0);
+    let low = max((-0.15 - p.y) / 1.05, 0.0);
     let edge = min(1.0 - pow(low, 1.7) - abs(p.x), 0.95 - p.y);
     let inside = smoothstep(-0.5 * fp, 0.5 * fp, edge);
     let h = fract(seed * 13.7);
