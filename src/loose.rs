@@ -1428,9 +1428,10 @@ impl Loose {
     }
 
     /// Resting books lying sunk into what is under them, the floor or low furniture
-    /// such as a rug: saved before it was something books lie on. Read where a fit
-    /// reads (`fit_on`), at the centres of the cells under a book, as between them a
-    /// tilted book may dip a little below a cell's height while resting on it.
+    /// such as a rug. Read where a fit reads (`fit_on`), at the centres of the cells
+    /// under a book, as between them a tilted book may dip a little below a cell's
+    /// height while resting on it.
+    #[cfg(test)]
     fn sunk(&self) -> Vec<u32> {
         (0..self.rest.len() as u32)
             .filter(|&b| self.resting[b as usize])
@@ -1441,28 +1442,6 @@ impl Loose {
                     let base = g.base_k(k);
                     base - g.y <= SHED_HEIGHT && base - (r.c.y + l.x * r.su + l.y * r.sv) > KEEP_EPS
                 })
-            })
-            .collect()
-    }
-
-    /// Lift the books lying sunk (after a load) and drop them where they are, from
-    /// just over what is there now; what rested on them settles first. Returns each
-    /// one and where it falls from.
-    pub fn lift_sunk(&mut self) -> Vec<(u32, Vec3, Quat)> {
-        let sunk = self.sunk();
-        let poses: Vec<(u32, usize, Vec3, Quat)> = (sunk.iter())
-            .map(|&b| {
-                let (p, q) = self.pose(b);
-                (b, self.level[b as usize], p, q)
-            })
-            .collect();
-        self.take(&sunk);
-        (poses.into_iter())
-            .map(|(b, lv, p, q)| {
-                let over = self.height_at(lv, Vec2::new(p.x, p.z)) + FLY_R + 0.02;
-                let from = Vec3::new(p.x, over.max(p.y), p.z);
-                self.throw(b, from, Vec3::ZERO, q, Vec3::ZERO, 0.0);
-                (b, from, q)
             })
             .collect()
     }
@@ -1667,10 +1646,8 @@ mod tests {
         assert_settled(&mut loose, (0..n).step_by(3));
     }
 
-    /// Books lie on rugs, not under them: the thinnest book, dropped on each rug,
-    /// comes to rest on top; one saved lying under a rug (from before rugs were
-    /// something books lie on) is lifted onto it when loaded; and a fresh library has
-    /// none to lift.
+    /// Books lie on rugs, not under them: a fresh library has none lying sunk, and the
+    /// thinnest book, dropped on each rug, comes to rest on top.
     #[test]
     fn books_lie_on_rugs() {
         for layout in crate::library::Layout::ALL {
@@ -1732,15 +1709,10 @@ mod tests {
                 su: 0.0,
                 sv: 0.0,
             };
+            // One laid under it is seen as sunk, so a fresh library's none means something.
             loose.restore(b, lv, under);
             loose.rebuild_all();
             assert_eq!(loose.sunk(), vec![b]);
-            assert_eq!(loose.lift_sunk().len(), 1);
-            let low = settle(&mut loose);
-            assert!(
-                low >= mx.y - 0.004,
-                "{layout:?}: lifted off the floor under {mn}..{mx}, lies at {low}"
-            );
         }
     }
 

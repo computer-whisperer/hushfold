@@ -521,18 +521,18 @@ impl Player {
     }
 }
 
-/// Saves before phase 3's skills are version 0 (the field is absent); version 1
-/// had the guide signs and the glow of carried series free.
+/// The save format: one in another starts fresh, kept aside, as one from another
+/// generation does (`generation`). Bump it whenever `SaveData` changes meaning.
 const SAVE_VERSION: u32 = 2;
 
 /// Which generation of its library a save was made in: saves name books by index,
 /// so one made in another generation would put the wrong books on the shelves. The
-/// Hall's is pinned (`hall_generates_as_before`), so its stamp stays 0, as 0.1.x
-/// saves have it. Bump the Great Library's whenever where its books go changes.
+/// Hall's is pinned (`hall_generates_as_before`). Bump either whenever where its
+/// books go changes.
 fn generation(layout: Layout) -> u32 {
     match layout {
-        Layout::Hall => 0,
-        Layout::Great => 2,
+        Layout::Hall => 1,
+        Layout::Great => 3,
     }
 }
 
@@ -546,9 +546,6 @@ struct SaveData {
     /// Upgrade levels by name.
     #[serde(default)]
     levels: BTreeMap<String, u32>,
-    /// 0.1.x saves: levels by position in the 0.1 upgrade order.
-    #[serde(default, skip_serializing)]
-    upgrades: Vec<u32>,
     shelved: Vec<u32>,
     /// Books mid-flight to a shelf; they fly home on load so their rewards are paid
     /// through the normal path.
@@ -558,9 +555,8 @@ struct SaveData {
     player: [f32; 5],
     play_time: f64,
     /// Loose books that left their generated pose: (book, [x, y, z, ux, uz, su, sv]).
-    /// Absent in 0.1.x saves, whose piles re-settle around the books taken from them.
     #[serde(default)]
-    loose: Option<Vec<(u32, [f32; 7])>>,
+    loose: Vec<(u32, [f32; 7])>,
     /// The level of each book in `loose` that lies above the ground floor.
     #[serde(default)]
     loose_levels: Vec<(u32, u8)>,
@@ -574,19 +570,6 @@ struct SaveData {
     #[serde(default)]
     generation: u32,
 }
-
-/// The 0.1.x upgrade order, for reading old saves.
-const LEGACY_ORDER: [Upg; 9] = [
-    Upg::Arms,
-    Upg::Slippers,
-    Upg::SortSense,
-    Upg::Tidy,
-    Upg::Bundle,
-    Upg::Lodestone,
-    Upg::Shelver,
-    Upg::Aura,
-    Upg::Wings,
-];
 
 pub struct Game {
     pub layout: Layout,
@@ -2454,18 +2437,14 @@ impl Game {
                 .map(|&u| (format!("{u:?}"), self.level(u)))
                 .filter(|&(_, l)| l > 0)
                 .collect(),
-            upgrades: Vec::new(),
             shelved,
             pending,
             held: self.held.clone(),
             player: [p.pos.x, p.pos.y, p.pos.z, p.yaw, p.pitch],
             play_time: self.play_time,
-            loose: Some(
-                self.loose
-                    .moved()
-                    .map(|(b, _, r)| (b, [r.c.x, r.c.y, r.c.z, r.u.x, r.u.y, r.su, r.sv]))
-                    .collect(),
-            ),
+            loose: (self.loose.moved())
+                .map(|(b, _, r)| (b, [r.c.x, r.c.y, r.c.z, r.u.x, r.u.y, r.su, r.sv]))
+                .collect(),
             loose_levels: (self.loose.moved())
                 .filter(|&(_, l, _)| l > 0)
                 .map(|(b, l, _)| (b, l as u8))
@@ -2514,7 +2493,7 @@ impl Game {
         if data.seed != SEED {
             return false;
         }
-        if data.generation != generation(self.layout) {
+        if data.generation != generation(self.layout) || data.version != SAVE_VERSION {
             // Kept aside rather than overwritten by the fresh game's first save.
             let old = self.save_path().with_extension("old.json");
             eprintln!(
@@ -2525,7 +2504,7 @@ impl Game {
             return false;
         }
         let n = self.lib.books.len() as u32;
-        // Books no longer loose leave their piles; nothing is re-settled until all are placed.
+        // Books no longer loose leave their piles; the piles are rebuilt once all are placed.
         let mut lifted = Vec::new();
         for &b in &data.shelved {
             if b < n && self.state[b as usize] == BookState::Loose {
@@ -2577,32 +2556,19 @@ impl Game {
         for &b in lifted.iter().chain(airborne.iter().map(|(b, _)| b)) {
             self.loose.forget(b);
         }
-        match &data.loose {
-            Some(rests) => {
-                let levels: std::collections::HashMap<u32, u8> = data.loose_levels.iter().copied().collect();
-                for &(b, [x, y, z, ux, uz, su, sv]) in rests {
-                    if loose_ok(b) {
-                        let r = Rest {
-                            c: Vec3::new(x, y, z),
-                            u: Vec2::new(ux, uz),
-                            su,
-                            sv,
-                        };
-                        self.loose.restore(b, levels.get(&b).map_or(0, |&l| l as usize), r);
-                    }
-                }
-                self.loose.rebuild_all();
-                // Books saved lying under what they now lie on (a rug) fall back onto it.
-                for (b, p, q) in self.loose.lift_sunk() {
-                    (self.pos[b as usize], self.rot[b as usize]) = (p, q);
-                }
-            }
-            None => {
-                // A 0.1.x save: piles keep their generated shape and fall into the gaps.
-                self.loose.rebuild_all();
-                self.loose.resettle(&lifted);
+        let levels: std::collections::HashMap<u32, u8> = data.loose_levels.iter().copied().collect();
+        for &(b, [x, y, z, ux, uz, su, sv]) in &data.loose {
+            if loose_ok(b) {
+                let r = Rest {
+                    c: Vec3::new(x, y, z),
+                    u: Vec2::new(ux, uz),
+                    su,
+                    sv,
+                };
+                self.loose.restore(b, levels.get(&b).map_or(0, |&l| l as usize), r);
             }
         }
+        self.loose.rebuild_all();
         for (b, p) in airborne {
             self.loose
                 .throw(b, p, Vec3::ZERO, self.rot[b as usize], Vec3::ZERO, 0.0);
@@ -2612,33 +2578,9 @@ impl Game {
                 (self.pos[b as usize], self.rot[b as usize]) = self.loose.pose(b);
             }
         }
-        if data.levels.is_empty() {
-            for (u, &l) in LEGACY_ORDER.iter().zip(&data.upgrades) {
-                self.upg[upg_index(*u)] = l;
-            }
-        } else {
-            for (i, u) in UPGRADES.iter().enumerate() {
-                self.upg[i] = data.levels.get(&format!("{u:?}")).copied().unwrap_or(0);
-            }
-        }
-        if data.version == 0 {
-            // Sort Sense found the slot from anywhere before it had levels.
-            if self.level(Upg::SortSense) == 1 {
-                self.upg[upg_index(Upg::SortSense)] = 2;
-            }
-            // Paper Familiars filed books from anywhere; they come back as shelvers.
-            if let Some(&n) = data.levels.get("Familiar") {
-                self.upg[upg_index(Upg::Shelver)] = n;
-            }
-        }
-        if data.version < 2 {
-            // Guide signs and the glow of carried series were free before they were
-            // skills; a game begun then keeps them.
-            self.upg[upg_index(Upg::Signposts)] = 1;
-            self.upg[upg_index(Upg::Glow)] = 3;
-        }
         for (i, &u) in UPGRADES.iter().enumerate() {
-            self.upg[i] = self.upg[i].min(upg_costs(self.layout, u).len() as u32);
+            let l = data.levels.get(&format!("{u:?}")).copied().unwrap_or(0);
+            self.upg[i] = l.min(upg_costs(self.layout, u).len() as u32);
         }
         self.lumens = data.lumens;
         self.earned = data.earned;
@@ -2723,7 +2665,7 @@ mod tests {
     }
 
     /// Saves name books by index and rebuild unmoved piles from generation, so the
-    /// Hall must generate exactly as it did (0.1.x saves included).
+    /// Hall must generate exactly as it did for saves of its generation.
     #[test]
     fn hall_generates_as_before() {
         let g = Game::new(Layout::Hall);
@@ -2750,9 +2692,9 @@ mod tests {
             eat(s.trim);
         }
         assert_eq!(g.lib.books.len(), 11690);
-        // Changed once since 0.1.1, when rugs became something books lie on: 23 books at
-        // the rugs start on them, a few centimetres from where they were.
-        assert_eq!(h, 13018789756892078726, "hall fingerprint");
+        // Generation 1, since the titles were rewritten: the same books, reshelved in the
+        // new order. A change here needs a new generation.
+        assert_eq!(h, 16481460485559855951, "hall fingerprint");
     }
 
     /// Every slot's approach (the aisle in front of it) is a walk away from the start,
@@ -3616,24 +3558,15 @@ mod tests {
         let mut hall = Game::new(Layout::Hall);
         assert!(hall.load());
         assert_eq!(hall.lumens, 42);
-        // A save from before phase 3: Paper Familiars come back as shelvers (riding),
-        // and Sort Sense, which then reached anywhere, as Sort Sense II.
+        // A 0.1.x save (levels by position, no stamps) starts fresh, kept aside.
         let json = format!(
-            r#"{{"seed":{SEED},"lumens":5,"earned":900,"levels":{{"Familiar":3,"SortSense":1,"Arms":2}},
-                "shelved":[],"held":[],"player":[0.0,0.0,6.5,0.0,0.0],"play_time":60.0}}"#
+            r#"{{"seed":{SEED},"lumens":5,"earned":900,"upgrades":[2,1],"shelved":[1,2,3],"held":[],
+                "player":[0.0,0.0,6.5,0.0,0.0],"play_time":60.0}}"#
         );
         std::fs::write(hall.save_path(), json).unwrap();
-        let mut old = Game::new(Layout::Hall);
-        assert!(old.load());
-        assert_eq!(old.level(Upg::Shelver), 3);
-        assert_eq!(old.level(Upg::SortSense), 2);
-        assert_eq!(old.level(Upg::Arms), 2);
-        let riding = old.familiars().filter(|&(r, posted)| r == Role::Shelver && !posted);
-        assert_eq!(riding.count(), 3);
-        // Saves before reading was earned keep the guide signs and the full glow.
-        assert_eq!((old.level(Upg::Signposts), old.level(Upg::Glow)), (1, 3));
-        assert_eq!((hall.level(Upg::Signposts), hall.level(Upg::Glow)), (0, 0));
-        // A Great Library save from another generation of it starts fresh, kept aside.
+        assert!(!Game::new(Layout::Hall).load());
+        assert!(!hall.save_path().exists() && hall.save_path().with_extension("old.json").exists());
+        // So does a Great Library save from another generation of it.
         let great = Game::new(Layout::Great);
         let json = format!(
             r#"{{"seed":{SEED},"lumens":5,"earned":900,"shelved":[1,2,3],"held":[],"player":[0.0,0.0,6.5,0.0,0.0],"play_time":60.0}}"#
