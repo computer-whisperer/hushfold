@@ -796,7 +796,7 @@ impl Library {
 
     /// A blind arch on the wall on `side` over the bay `l..r` (between pilasters'
     /// faces) of the storey with its floor at `y`, springing from imposts: a ring of
-    /// voussoirs with a keystone, round a darker recess with a round head.
+    /// voussoirs with a keystone, round a darker recess.
     fn blind_arch(&mut self, side: Side, (l, r): Span, y: f32) {
         const RECESS: [f32; 3] = [0.2, 0.18, 0.16];
         let spring = y + SPRING;
@@ -829,14 +829,20 @@ impl Library {
         for a in [(l - 0.04, l + 0.12), (r - 0.12, r + 0.04)] {
             self.part(side, a, (FACE - 0.2, FACE), (spring - 0.16, spring), kind::STONE, PALE);
         }
-        // The recess: from the panelling up to the springing and round, its edges
-        // tucked behind the pilasters and the ring.
-        let (rr, foot) = (ri + 0.04, y + 1.16 - spring);
-        let mut outline = vec![Vec2::new(-rr, foot), Vec2::new(rr, foot)];
-        outline.extend(arc(rr, (0.0, PI), 32));
-        let recess = self.shape(Mesh::prism(&outline, 0.012));
-        let at = side.at3(c, FACE - 0.006, spring);
-        self.decor(recess.at(at, wall, kind::STONE, rgba(RECESS, 1.0)));
+        // The recess: from the panelling up to the springing, then strips narrowing
+        // as the arch does, their corners under the ring. Boxes, laid down before the
+        // wall's face, so the wall behind them is never shaded (meshes are drawn after
+        // every box).
+        let recess = (FACE - 0.012, FACE);
+        self.part(side, (l, r), recess, (y + 1.16, spring), kind::STONE, RECESS);
+        let strips = 6;
+        let h = ri / strips as f32;
+        for k in 0..strips {
+            let y0 = k as f32 * h;
+            let hw = (ri * ri - y0 * y0).sqrt();
+            let ys = (spring + y0, spring + y0 + h);
+            self.part(side, (c - hw, c + hw), recess, ys, kind::STONE, RECESS);
+        }
     }
 
     /// A banner on the wall on `side`, centred at `c` across, hung from a gilt rod at
@@ -861,6 +867,17 @@ impl Library {
         let lozenge = Vec3::Y * (y0 + 0.75);
         let turned = Quat::from_rotation_z(FRAC_PI_4);
         let one = Vec3::ONE;
+        // The field, made first: meshes are drawn in the order they were made, and it
+        // hides most of the border behind it.
+        let mut field = Mesh::default();
+        let (at, d) = layer((0.08, 0.055));
+        field.add(
+            &Mesh::prism(&pennant(w * 0.5 - 0.1, y1 - 0.1, y0), d),
+            at,
+            Quat::IDENTITY,
+            one,
+        );
+        let field = self.shape(field);
         // The border, the band across its head and the lozenge's frame, one cloth.
         let mut border = Mesh::default();
         let (at, d) = layer((0.076, 0.05));
@@ -871,15 +888,6 @@ impl Library {
         let (at, d) = layer((0.086, 0.065));
         border.add(&Mesh::cube(), at + lozenge, turned, Vec3::new(0.5, 0.5, d));
         let border = self.shape(border);
-        let mut field = Mesh::default();
-        let (at, d) = layer((0.08, 0.055));
-        field.add(
-            &Mesh::prism(&pennant(w * 0.5 - 0.1, y1 - 0.1, y0), d),
-            at,
-            Quat::IDENTITY,
-            one,
-        );
-        let field = self.shape(field);
         let tassel = [
             (0.0, 0.0),
             (0.022, 0.0),
@@ -916,22 +924,20 @@ impl Library {
         let pivot = side.at3(c, FACE - ROD, top);
         let gilt = rgba(GILT, 1.0);
         self.decor(rod.at(pivot, wall, kind::METAL, gilt));
-        // Swinging about the rod, a turn about `lift` taking its foot off the wall; laid
-        // down lifted as far as it swings, so it swings between hanging flat and twice
-        // that.
+        // Swinging about the rod, a turn about `lift` taking its foot off the wall: two
+        // swings a little out of time, one riding the other, so it stirs now and then
+        // and hangs nearly still between. Laid down lifted as far as they swing
+        // together, so it swings between hanging flat and twice that.
         let lift = -side.across3();
-        let (amp, period) = (0.016 + 0.006 * (k % 3) as f32, 9.0 + 1.7 * (k % 4) as f32);
-        let m = self.mover(
-            pivot,
-            Motion::Swing {
-                axis: lift,
-                amp,
-                period,
-            },
-            k as f32 * 2.3,
-            None,
-        );
-        let rot = Quat::from_axis_angle(lift, amp) * wall;
+        let (amp, period) = (0.01 + 0.003 * (k % 3) as f32, 9.0 + 1.7 * (k % 4) as f32);
+        let swing = |period: f32| Motion::Swing {
+            axis: lift,
+            amp,
+            period,
+        };
+        let draught = self.mover(pivot, swing(period * 1.17), k as f32 * 5.1, None);
+        let m = self.mover(pivot, swing(period), k as f32 * 2.3, Some(draught));
+        let rot = Quat::from_axis_angle(lift, 2.0 * amp) * wall;
         self.moving(m, border.at(pivot, rot, kind::CLOTH, rgba(BORDER, 1.0)));
         let fill = colour.map(|v| v * 0.6);
         self.moving(m, field.at(pivot, rot, kind::CLOTH, rgba(fill, 1.0)));
