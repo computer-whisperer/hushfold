@@ -13,7 +13,25 @@ so the hall gets visibly brighter and more colourful as you sort.
 
 ## Book model
 - 16 categories (colour family, vocabulary), 8 per wing.
-- Series: 1–12 volumes, shared colour/pattern/trim/height. Volume number on spine.
+- Series: 1–12 volumes, shared colour/pattern/trim/height and binding. Volume numbers
+  on the spine (roman on leather and vellum, arabic on cloth and boards), none on a
+  single volume.
+- Bindings (`catalog::Look`, drawn from a random stream seeded by the title, never
+  generation's, so how books look never moves one): full leather over raised bands,
+  half leather with marbled sides, publisher's cloth, limp vellum or paper boards;
+  edges plain, sprinkled, gilt, marbled or stained; an age that rubs corners, joints,
+  bands and headcaps. Each category favours a binding; in the Great Library a
+  category's books share theirs and a label colour (but for the odd one), as they
+  share a spine pattern, so the binding is a second cue to the category. The
+  pattern (the gilt shape that reads from across a room) and the series colour stay
+  the first cues: marbling is drawn in the binding's own colours.
+- Titles are on the books: down the spine, or across it on a label (the leather
+  label between bands, pattern 2's dark panel, a printed paper label on boards), in
+  gold (gilt even where the trim is blind), inked on vellum and paper labels; and
+  stamped or printed on the front covers of cloth and boards. Down the spine half are
+  set 14 mm to the em or more and read from about 2.5 m; a label's from about a
+  metre (its title in capitals, or in the title's own case where capitals would
+  come out under 4 mm).
 - Every book has exactly one slot. Category -> 3 cases on one face-row of a wing.
   Series alphabetical (ignoring leading articles), top shelf to bottom,
   left to right; a series never splits across shelves; shelves are justified.
@@ -111,6 +129,10 @@ touch or two a room, not everything glowing), still objects only.
   flat, and it is fragile); shadows for moonlight and the big fires; projected
   window light; ambient occlusion in piles and shelf corners; per-room fog and
   light colour; dust motes on the GPU.
+- **Books:** books near the eye in the world modelled in the round too, not only those
+  in hand (a near set from the chunks round the eye, their boxes collapsed in the
+  vertex shader); tooled centre and corner pieces on leather covers; spine labels
+  standing proud; books lying open (endpapers, a page's text) on lecterns and tables.
 - **Play:** door gems brightening as a department nears done; a wing sign over the
   Hall's veil (needs a thought about Signposts); a finished back for wall cases
   standing free (the Bestiary's and others' are covered with boards).
@@ -308,10 +330,10 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   the Great Library 9.76 h. Costs not refit for it.
 
 ## Rendering
-Box-only geometry; each instance's `kind` picks a procedural material in WGSL:
-wood, book, floor, stone, rug, emissive, plaque, window glass, paper, metal,
-cloth, leaf, crystal and parchment, each documented in `gfx::kind` with what its
-colour and `param` mean. Materials work from the box's local coordinates, a
+Box-only geometry (but for books in hand, below); each instance's `kind` picks a
+procedural material in WGSL: wood, book, floor, stone, rug, emissive, plaque,
+window glass, paper, metal, cloth, leaf, crystal and parchment, each documented in
+`gfx::kind` with what its colour and `param` mean. Materials work from the box's local coordinates, a
 per-instance seed and the pixel's footprint, so fine detail fades out rather
 than shimmers. The scene shader is register-bound: materials work out what they
 need inside their own branch rather than keeping values alive across the switch
@@ -338,6 +360,30 @@ pixels to the em fade out rather than shimmer. Names are therefore read in the
 world, at the distance their size allows (a category board from ~20 m at 1000
 pixels tall, a shelf's keys from ~3 m); only the Signposts' guides are drawn over
 the scene.
+
+Books have a pipeline and fragment shader of their own (`fs_book`): their material
+needs more than the rest of the scene's, whose shader sits at 64 registers on the
+Radeon VII (four waves; past 64 it drops to three, the +25-30% above); splitting
+them off also took the book branch out of the scene shader. A book's box is its
+envelope: the rounded spine with its raised bands and grooved joints, the boards'
+rounded edges and rubbed corners, and the page block sunk between the boards are
+drawn on its faces, the page block shaded where the eye's ray meets it (the squares
+at head, tail and fore-edge, the fore-edge hollowed to match the spine, the headband
+in the recess). Books in hand, few and nearest the eye, are modelled in the round
+instead (`gfx::books::model`, built each frame: two boards, the sunk page block, a
+rounded spine with its bands standing out, grooved joints, all inside the box) and
+read by the same material as the points of the box they stand for. The material
+reads the library's book table (`gfx::books::table`; made once per library, ~40 ms
+for the Great Library, and handed to the renderer on the scene's chunks): each
+series' look and where its lettering goes, glyphs cut from the signs' distance-field
+atlas inside the shader by bisection over each line. So a title follows its book
+wherever it is drawn (shelved, piled, flying, held) with no work per book on the
+CPU, and fades below four pixels to the em as the signs' do. Binding materials
+(leather grain, cloth weave, marbling, mottle: a 64 mm tile, mipmapped) are drawn at
+startup (~20 ms). Edges of regions within a face (labels, marbled sides, boards'
+edges) are antialiased over the pixel's footprint, and fine relief (bands, bevels)
+fades with distance. Book-dense views cost within ±3% of the plain boxes on the GPU
+(the split paid for the material).
 
 `scene.rs` keeps books lying still (in piles or shelved) and the ghosts of empty
 slots in 8 × 6 × 8 m chunks with their own GPU buffers. Each frame every book's
