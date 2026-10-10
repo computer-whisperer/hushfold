@@ -3,7 +3,7 @@
 //! earshot and the familiars in flight.
 
 use super::*;
-use crate::audio::{Place, Scene};
+use crate::audio::{Place, Scene, Wingbeat};
 
 /// How far in from its doorway a room's sound has wholly taken over, and how far
 /// out into the atrium it carries.
@@ -13,9 +13,6 @@ const OUT_OF_ROOM: f32 = 6.0;
 /// and at most this high above its floor (chandeliers hang higher).
 const FIRE_LIGHT: f32 = 2.0;
 const FIRE_HIGH: f32 = 1.5;
-/// A posted familiar further than this from its post is on the wing (its perch is
-/// lower).
-const PERCHED: f32 = 1.5;
 /// Familiars further off than this go unheard.
 const WINGS_REACH: f32 = 25.0;
 
@@ -90,15 +87,25 @@ impl Game {
         for (slot, (_, at, heard)) in scene.fires.iter_mut().zip(fires) {
             *slot = (at, heard);
         }
-        // Familiars on the wing, nearest first.
-        let mut wings: Vec<(f32, usize, Vec3)> = (self.familiars.iter().enumerate())
-            .filter(|(_, f)| f.post.as_ref().is_some_and(|p| f.pos.distance(p.at) > PERCHED))
-            .map(|(i, f)| (f.pos.distance(ears), i, f.pos))
+        // Familiars on the wing, nearest first, each beating as it is drawn.
+        let mut wings: Vec<(f32, Wingbeat)> = (self.familiars.iter().enumerate())
+            .filter(|(_, f)| f.on_the_wing())
+            .map(|(i, f)| {
+                let beat = Wingbeat {
+                    id: i,
+                    at: f.pos,
+                    phase: f.look.phase,
+                    rate: f.look.rate,
+                    flap: f.look.flap,
+                    courier: f.role == Role::Courier,
+                };
+                (f.pos.distance(ears), beat)
+            })
             .filter(|w| w.0 < WINGS_REACH)
             .collect();
         wings.sort_by(|a, b| a.0.total_cmp(&b.0));
-        for (slot, (_, i, at)) in scene.wings.iter_mut().zip(wings) {
-            *slot = Some((i, at));
+        for (slot, (_, beat)) in scene.wings.iter_mut().zip(wings) {
+            *slot = Some(beat);
         }
         scene
     }

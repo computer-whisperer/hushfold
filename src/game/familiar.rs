@@ -16,6 +16,7 @@
 //! drawn (`Look`) follows what it does without touching it.
 
 use super::*;
+use crate::audio::DOWNSTROKE;
 use crate::gfx::crane::{Crane, Fold, Paper, Print};
 use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_4, TAU};
@@ -38,8 +39,6 @@ const GRASP: f32 = 0.8;
 const SETTLED: f32 = 2.5;
 /// Seconds a posted familiar finds nothing to do before it comes back to the shoulder.
 const IDLE_HOME: f32 = 120.0;
-/// How much of a wingbeat is the downstroke.
-const DOWNSTROKE: f32 = 0.42;
 /// Height of the tray on top of a perch, which a perched bird sits in.
 const TRAY: f32 = 1.16;
 /// A riding familiar's size, to a posted one's.
@@ -192,6 +191,17 @@ impl Familiar {
             self.look.size = self.role.fold().1;
             self.look.settled = 1.0;
         }
+    }
+
+    /// Posted and off its perch, or beating its wings: heard.
+    pub(super) fn on_the_wing(&self) -> bool {
+        self.post.is_some() && (self.look.settled < 0.5 || self.look.flap > 0.01)
+    }
+
+    /// Which of the Unfold and Fold sounds it makes (`Sfx`): its role's, each
+    /// familiar of a role one of three.
+    fn voice(&self, i: usize) -> usize {
+        self.role as usize * 3 + i % 3
     }
 
     /// Ease how familiar `i` is drawn toward what it is doing, `dt` seconds on, at
@@ -423,7 +433,7 @@ impl Game {
     pub(super) fn post_or_recall(&mut self, audio: &mut Audio) {
         if let Aim::Familiar(i) = self.aim {
             self.recall(i);
-            audio.play(Sfx::Fold, 0.4);
+            audio.play_pitched(Sfx::Fold, 0.4, self.familiars[i].voice(i));
             return;
         }
         let riding = (0..self.familiars.len())
@@ -448,7 +458,7 @@ impl Game {
             return;
         };
         self.post_familiar(i, at);
-        audio.play(Sfx::Unfold, 0.3);
+        audio.play_pitched(Sfx::Unfold, 0.3, self.familiars[i].voice(i));
     }
 
     /// Post familiar `i` at `at` (a free spot on a floor).

@@ -420,7 +420,16 @@ bells and glints where something magical happens. Everything is synthesised;
   weights each frame: a room fills in from its doorway and spills out into the
   atrium; the engine eases between them over a second. Fires are found by their
   light (a bright flicker near the floor) and heard from where they burn;
-  familiars on the wing beat their paper wings where they fly.
+  familiars on the wing beat their paper wings where they fly: a soft push of air
+  through paper on each downstroke, in time with the beat the bird is drawn with
+  (`Scene::wings` carries it), fluttering a little, with the paper's faint snap at
+  the bottom of the stroke, and silent while it glides. A shelver's are deeper and
+  slower (~1.9 beats a second, air round 400–600 Hz), a courier's lighter and
+  quicker (~2.9, round 650–1000 Hz); both are dulled above ~2 kHz. One circling 3 m
+  off peaks −28 to −30 dBFS (a footfall −27). The first wings (noise round 1.4 kHz
+  at a random 6–8.5 beats a second, apart from the drawn beat) peaked −26 with 30%
+  of their energy above 3 kHz; now 3–6%. Posting a familiar and taking it back
+  (`Unfold`, `Fold`) sound its role's wings, in one of three voices each.
 - **Music** is composed a piece at a time (key, mode, metre, ensemble of music
   box, celesta, felt piano, harp, pad and bass, progressions, a motif and its
   answer in A A B A), then a quiet spell of 35–95 s. Tonal effects and the

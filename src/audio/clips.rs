@@ -2,8 +2,8 @@
 //! built from, all synthesised at startup. Tonal clips are composed in D (major
 //! pentatonic) and transposed to the music's key as they play.
 
-use super::Sfx;
 use super::dsp::*;
+use super::{DOWNSTROKE, Sfx};
 use rand::prelude::*;
 use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
@@ -87,8 +87,8 @@ impl Banks {
                     Sfx::Veil => vec![veil(&mut rng)],
                     Sfx::Purchase => (0..3).map(|v| purchase(&mut rng, v)).collect(),
                     Sfx::Spell => (0..5).map(|k| spell(&mut rng, k)).collect(),
-                    Sfx::Unfold => (0..3).map(|_| unfold(&mut rng)).collect(),
-                    Sfx::Fold => (0..3).map(|_| fold(&mut rng)).collect(),
+                    Sfx::Unfold => (0..6).map(|v| unfold(&mut rng, v >= 3)).collect(),
+                    Sfx::Fold => (0..6).map(|v| fold(&mut rng, v >= 3)).collect(),
                     Sfx::Nope => (0..2).map(|_| nope(&mut rng)).collect(),
                     Sfx::Tick => (0..4).map(|_| tick(&mut rng)).collect(),
                     Sfx::Step => (0..16).map(|_| step(&mut rng)).collect(),
@@ -550,30 +550,53 @@ fn spell(rng: &mut StdRng, slot: usize) -> Vec<f32> {
     }
 }
 
-/// A familiar posted: paper unfolding into wings, a flutter, a small bright note.
-fn unfold(rng: &mut StdRng) -> Vec<f32> {
+/// A familiar's wings: its beats a second, and the band of the air they push (a
+/// courier's quicker and lighter than a shelver's, as they sound in flight).
+fn wings(courier: bool) -> (f32, (f32, f32)) {
+    if courier {
+        (2.9, (450.0, 1500.0))
+    } else {
+        (1.9, (260.0, 900.0))
+    }
+}
+
+/// One soft downstroke of paper wings, `len` seconds long, at `start`.
+fn wingbeat(out: &mut [f32], rng: &mut StdRng, start: usize, len: f32, band: (f32, f32), amp: f32) {
+    burst(out, rng, start, len, band, amp, |t| (PI * t / len).sin().powi(2));
+}
+
+/// A familiar posted: paper opening out, two soft wingbeats as it takes off, a small
+/// bright note (a courier's a little higher).
+fn unfold(rng: &mut StdRng, courier: bool) -> Vec<f32> {
     let mut out = vec![0.0; secs(3.5)];
-    crinkles(&mut out, rng, 0, 0.22, 60.0, 0.7, (1800.0, 4500.0));
-    let rate = rng.gen_range(11.0..14.0);
-    burst(&mut out, rng, secs(0.18), 0.35, (700.0, 2600.0), 0.3, |t| {
-        (0.5 + 0.5 * (TAU * rate * t).sin()).powi(4) * ar(t, 0.03, 0.12)
-    });
-    celesta(&mut out, secs(0.3), 78.0, 0.3, 0.45);
-    celesta(&mut out, secs(0.37), 81.0, 0.25, 0.5);
+    crinkles(&mut out, rng, 0, 0.3, 40.0, 0.45, (700.0, 2000.0));
+    let (rate, band) = wings(courier);
+    for k in 0..2 {
+        let at = secs(0.25 + k as f32 / rate);
+        wingbeat(&mut out, rng, at, DOWNSTROKE / rate, band, 0.4 - 0.1 * k as f32);
+    }
+    let note = if courier { 81.0 } else { 78.0 };
+    celesta(&mut out, secs(0.3), note, 0.3, 0.45);
+    celesta(&mut out, secs(0.37), note + 3.0, 0.25, 0.5);
+    lowpass2(&mut out, 3000.0);
     finish(out, 1.0)
 }
 
-/// A familiar taken back: paper creasing as it folds, a soft tap.
-fn fold(rng: &mut StdRng) -> Vec<f32> {
+/// A familiar taken back: its wings closing with a soft push of air, paper creasing
+/// as it folds, a soft tap.
+fn fold(rng: &mut StdRng, courier: bool) -> Vec<f32> {
     let mut out = vec![0.0; secs(0.8)];
+    let (rate, band) = wings(courier);
+    wingbeat(&mut out, rng, 0, DOWNSTROKE / rate * 0.6, band, 0.3);
     for k in 0..3 {
-        let at = secs(k as f32 * rng.gen_range(0.07..0.1));
-        burst(&mut out, rng, at, 0.05, (1200.0, 4000.0), 0.5 - k as f32 * 0.1, |t| {
-            ar(t, 0.001, 0.008)
+        let at = secs(0.12 + k as f32 * rng.gen_range(0.06..0.09));
+        burst(&mut out, rng, at, 0.04, (700.0, 2200.0), 0.35 - k as f32 * 0.07, |t| {
+            ar(t, 0.002, 0.01)
         });
     }
-    crinkles(&mut out, rng, 0, 0.25, 50.0, 0.3, (1500.0, 3500.0));
-    mode(&mut out, secs(0.27), 420.0, 0.12, 0.015);
+    crinkles(&mut out, rng, secs(0.1), 0.2, 35.0, 0.2, (800.0, 2000.0));
+    mode(&mut out, secs(0.34), if courier { 520.0 } else { 400.0 }, 0.12, 0.015);
+    lowpass2(&mut out, 3000.0);
     finish(out, 1.0)
 }
 

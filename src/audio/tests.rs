@@ -57,6 +57,77 @@ fn scene_in(place: Place) -> Scene {
     s
 }
 
+/// A familiar flying steadily, its wings beating as the game draws them: bouts of a
+/// few beats with a glide between (a shelver's or a courier's).
+struct Flier {
+    beat: Wingbeat,
+    glide: f32,
+    beats: u32,
+    rng: StdRng,
+}
+
+impl Flier {
+    fn new(id: usize, courier: bool) -> Self {
+        let rate = if courier { 2.95 } else { 1.93 };
+        Flier {
+            beat: Wingbeat {
+                id,
+                at: Vec3::ZERO,
+                phase: 0.0,
+                rate,
+                flap: 0.65,
+                courier,
+            },
+            glide: 0.0,
+            beats: 3,
+            rng: StdRng::seed_from_u64(id as u64),
+        }
+    }
+
+    /// `dt` seconds on, at `at`.
+    fn step(&mut self, dt: f32, at: Vec3) -> Wingbeat {
+        let b = &mut self.beat;
+        b.at = at;
+        if self.glide > 0.0 {
+            self.glide -= dt;
+            b.flap -= b.flap * (1.0 - (-dt * 8.0).exp());
+            return *b;
+        }
+        b.flap += (0.65 - b.flap) * (1.0 - (-dt * 8.0).exp());
+        b.phase += b.rate * dt;
+        if b.phase >= 1.0 {
+            b.phase = b.phase.fract();
+            if self.beats == 0 {
+                let (short, long) = if b.courier { (0.35, 0.8) } else { (0.6, 1.3) };
+                self.glide = self.rng.gen_range(short..long);
+                self.beats = self.rng.gen_range(2..5);
+                b.phase = 0.0;
+            } else {
+                self.beats -= 1;
+            }
+        }
+        *b
+    }
+}
+
+/// `secs` of familiars flying round the listener at the origin, each from where `at`
+/// puts it at a time.
+fn fliers(seed: u64, banks: &Arc<Banks>, secs: f32, flying: &mut [(Flier, &dyn Fn(f32) -> Vec3)]) -> Vec<f32> {
+    let mut o = Offline::new(seed, banks, 0.0);
+    let mut out = Vec::new();
+    let dt = 1.0 / 60.0;
+    for k in 0..(secs / dt) as usize {
+        let t = k as f32 * dt;
+        let mut s = Scene::default();
+        for (slot, (f, at)) in s.wings.iter_mut().zip(flying.iter_mut()) {
+            *slot = Some(f.step(dt, at(t)));
+        }
+        o.scene(s);
+        out.extend(o.render(dt));
+    }
+    out
+}
+
 fn check_clip(name: &str, buf: &[f32]) {
     assert!(buf.len() > 10, "{name} is empty");
     assert!(buf.iter().all(|x| x.is_finite()), "{name} has non-finite samples");
@@ -97,7 +168,7 @@ fn the_mix_stays_in_bounds_and_moves_smoothly() {
     for place in Place::ALL {
         let mut scene = scene_in(place);
         scene.fires[0] = (Vec3::new(2.0, 0.5, -3.0), 1.0);
-        scene.wings[0] = Some((0, Vec3::new(-1.0, 1.8, -2.0)));
+        scene.wings[0] = Some(Flier::new(0, false).step(0.1, Vec3::new(-1.0, 1.8, -2.0)));
         o.scene(scene);
         for i in 0..20 {
             o.play(Sfx::Thunk, 0.5, None, Some(Vec3::new(i as f32 * 0.4 - 4.0, 1.0, -1.5)));
@@ -279,17 +350,22 @@ fn export_sounds() {
         out.extend(o.render(0.5));
     }
     write_wav(&dir.join("walk_atrium_clockworks_weatherhouse.wav"), 2, &out);
-    // A familiar circling the listener.
-    let mut o = Offline::new(6, &banks, 0.0);
-    let mut out = Vec::new();
-    for k in 0..400 {
-        let a = k as f32 * 0.025;
-        let mut s = Scene::default();
-        s.wings[0] = Some((0, Vec3::new(3.0 * a.sin(), 1.8, -3.0 * a.cos())));
-        o.scene(s);
-        out.extend(o.render(0.025));
+    // A shelver circling the listener 3 m off, a courier, and the two side by side,
+    // passing to and fro on either hand.
+    let round = |t: f32| Vec3::new(3.0 * t.sin(), 1.8, -3.0 * t.cos());
+    for (name, courier) in [("familiar_circling", false), ("familiar_courier_circling", true)] {
+        let out = fliers(6, &banks, 15.0, &mut [(Flier::new(0, courier), &round)]);
+        write_wav(&dir.join(format!("{name}.wav")), 2, &out);
     }
-    write_wav(&dir.join("familiar_circling.wav"), 2, &out);
+    let left = |t: f32| Vec3::new(-2.5, 1.8, -4.0 * (t * 0.5).sin());
+    let right = |t: f32| Vec3::new(2.5, 1.8, 4.0 * (t * 0.45).sin());
+    let both: &mut [(Flier, &dyn Fn(f32) -> Vec3)] =
+        &mut [(Flier::new(0, false), &left), (Flier::new(1, true), &right)];
+    write_wav(
+        &dir.join("familiars_side_by_side.wav"),
+        2,
+        &fliers(6, &banks, 15.0, both),
+    );
     // Busy shelving in the Hall: a Shelving Aura's thunks all round, books taken up
     // and tossed, chimes, steps, and the music.
     let busy = |gain: f32| {
