@@ -714,7 +714,8 @@ impl Library {
             kind::METAL,
             gilt,
         );
-        let (top, tie, foot) = (6.95, 3.4, 2.05);
+        // Falling to the sill, clear above anyone's head where they stir.
+        let (top, tie, foot) = (6.95, 3.4, 2.25);
         let tassel = tassel(self);
         for s in [-1.0f32, 1.0] {
             let mut below = Vec::new();
