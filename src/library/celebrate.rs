@@ -121,7 +121,8 @@ impl Awaits {
 /// pushed about at random by up to `wander` m/s², and each lives `life` seconds. An
 /// `EMISSIVE` one glows `rgba` (w its brightness) and fades as it goes; any other
 /// kind (a petal of `LEAF`, a scrap of `PAPER`) tumbles and shrinks away at the end.
-/// `size` is a box's. Build from `burst` or `motes` and change what differs.
+/// `size` is a box's. `spread`, `vel` and `jitter` are in the world's axes (a room's
+/// from `RoomFrame::size`). Build from `burst` or `motes` and change what differs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sparks {
     pub finish: Finish,

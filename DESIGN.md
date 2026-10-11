@@ -280,10 +280,11 @@ finished when every book that belongs in it is home (`library::Finish`). Each ha
 its moment when that happens and a lasting change after it. Generation lays both
 down where it lays down everything else (`library/celebrate.rs`):
 - **Movers that wait** (`Library::awaiting`, or `waiting` for a piece that only
-  waits). A piece can be hidden until then and come in, rising and growing. It can be
-  there and then move off, turn or go, and stay that way. Or it can be dim until then
-  and kindle, along with the lights it carries. Its own motion can also wait, still
-  until then and easing up to speed.
+  waits and `waiter` for one with no parts of its own). A piece can be hidden until
+  then and come in, rising and growing. It can be there and then move off, turn or
+  go, and stay that way. Or it can be dim until then and kindle, along with the
+  lights it carries. Its own motion can also wait, still until then and easing up to
+  speed (`still`, or `Awaits::starts` when nothing else changes).
 - **Sparks** (`Library::sparks`). These are glints, petals or scraps of paper,
   either for a moment or for good.
 - **Sounds** (`Library::cue`).
@@ -294,6 +295,114 @@ finished long ago, with its lasting change in place and its moment past. A room,
 storey and the library each say so in words when finished. The cheat window and
 scripts (`cheat finish room|storey|face|category <n>`, `cheat finish all`) finish
 any part at once.
+
+What each area does was built in one pass (2026-10-10) by nine agents, one per area,
+against a brief. Each room has a moment and a lasting change of its own, made from
+its character; storeys are celebrated more than rooms; floors may change. Nothing
+that waits is in anyone's way, and no book moved: a test pins the Great Library's
+generation whole.
+- **Every bookcase side.** When its last book goes home, a ring runs out across it
+  from that book. As the ring passes, each book eases out of its slot, tipping
+  forward a few degrees, and settles back over 0.8 s, its cover warming at the
+  crest. A soft warm light rides the ring, and each shelf's label flares as it
+  arrives. Afterwards a finished side's labels glow a little warmer, its only
+  lasting mark. While a side ripples its books are held out of their chunks and
+  drawn per frame (`game/cases.rs`). Sides finished more than 30 m off keep still,
+  and only the two rippling sides nearest the eye carry a light.
+- **The atrium.** A finished room hangs a double swag of laurel under its door's
+  sign, with bows and blossoms in its colour, and colours its rose window in the
+  lantern: one window per room, left to right up the storeys, so the rooms done
+  can be read from the well. A finished storey runs festoons with hung lamps once
+  round the well at its top. When the whole library is done, a few seconds after
+  the last book, the library's emblem spreads over the reading floor and kindles,
+  glints fountain up the well, 24 more lanterns rise one by one to fill it, and a
+  glory of stained-glass and gold rays opens round the skylight's boss, one ray per
+  department at its bearing.
+- **The Hall.** Each finished category raises a gilt crescent on a finial out of the
+  cornice at either end of its run. A finished wing lays a red runner down its
+  middle aisle, rug after rug, and wakes the wall at its end: in the West Wing the
+  great map's compass rose kindles and a model ship rises out of its sea and sails
+  across it from then on; in the East Wing a moon dial rises behind the clock and
+  turns, one moon rising as the other sets. The whole Hall finished, stars come down
+  from the painted sky into two rings round the chandelier and turn there, and the
+  emblem over the hearth kindles.
+- **The Observatory.** Each finished category traces its constellation over its
+  cases in gold, line by line. The room finished wakes its sky: the zodiac's houses
+  light one by one, the orrery's sun brightens and its planets' paths are drawn out
+  round it, light runs along the meridian in the floor, a new star comes out where
+  the telescope looks, and a shooting star crosses now and then from then on.
+- **The Alchemical Wing.** Each finished category kindles the jars of reagents on its
+  end cases' tops. The room finished does the Great Work: embers fly from the
+  athanor, the violet circle draws in and rises as light to the red stone, which
+  flares and is crowned with a wheeling ring of gold; gold flows out in the circle's
+  lines in the floor and stays, and the brews on the benches kindle.
+- **The Herbarium.** Each finished row side hangs ivy in festoons along its cornice.
+  The room finished blooms: new moonflowers rise in the bed, moonflower vines climb
+  the glasshouse piers with their trumpets kindling, the drying herbs shed petals
+  that settle on the paving, and fireflies stay over the garden.
+- **The Bestiary.** Each finished category stirs the egg and lights it a little
+  brighter. The room finished, the egg rocks, cracks and hatches: a small dragon
+  rises in the cup of its shell, stretches its wings and stays, breathing and
+  looking about. The old dragon's eyes flare as it hatches, and it nods slightly on
+  its chains from then on.
+- **The Map Room.** Each finished category raises a little turning globe on its
+  cornice. The room finished is charted: the globe wears a glowing graticule, a
+  brass portolan of rhumb lines and roses spreads out round the compass rose in the
+  floor, and the model ship leaves the map table to sail round the globe.
+- **The Chronicle Hall.** Each finished category writes its stretch of the timeline
+  in fresh gold ink and kindles the gems in its medallions. The room finished, two
+  pens write the rest, crowning the bare-headed busts with laurel as they pass, and
+  the tapestry's golden tree lights from root to crown.
+- **The Verse Gallery.** Each finished category folds a paper crane out of its middle
+  case to hover at its alcove's mouth. When the room's own verse is home (the songs
+  may still wait by the door), pages lift from the open book, the hanging cranes
+  slip their threads, and all fifteen fly to two slowly turning rings over the
+  lounge; a lamp over each portrait lights in turn.
+- **The Arcanum.** Each corner crystal of the ward is dull until the category meeting
+  at its corner is done. The room finished draws the ward in: its light streams from
+  the doorway to the great crystal, a ring of runes spreads across the floor, three
+  rings of violet light grow from the crystal and turn about it, and the grimoires
+  drop their chains and fall open.
+- **The Clockworks.** Each finished case side raises a wheel on its cornice that
+  turns. The room finished winds itself back up: the floating clocks take back their
+  works in turn, a bell and a pair of turning wheels each, the great clock's hours
+  glint round as it strikes, and a clock face spreads over the floor before it,
+  its brass hands keeping the great clock's time.
+- **The Music Room.** Each finished category strings its lyres with light. The room
+  finished plays: glints run down the harp and the chimes, a warm light wells up
+  behind the organ pipes, notes rise from the organ to circle under the chandelier,
+  and staves of a waltz are written along the floor beside the carpet.
+- **The Weatherhouse.** Each finished category unfurls a pennant in its colour on a
+  staff past its sign, streaming downwind and turning with the vane
+  (`weatherhouse::wind`, the mover chain they share), so the draught can be read
+  from the signs. The room finished turns fair: the rest of the compass's
+  thirty-two points light one by one round the wind rose, and the cloud jar's lid
+  tips open to let four fair-weather clouds rise out and drift under the skylight,
+  where they stay.
+- **The Hearth Library.** A candle stands on every case side's cornice, clear of the
+  signs, and lights when that side is filled, so the room lights up case by case.
+  The room finished, the fire leaps up and settles burning fuller, the kettle
+  steams, and a ginger cat gathers out of golden motes to sleep in the reading
+  chair by the knitting.
+
+### Wanted next (celebrations)
+- **Changes:** one that acts and comes back, or flares and settles to a lower
+  glow (four rooms built it from two movers); growth along one axis, for a line
+  drawing out or a runner unrolling (five rooms approximated it); `still` keeping a
+  mover's phase, so two motions in step can both wait; lights riding an arriving
+  mover kindling with it rather than coming on whole.
+- **Triggers:** a piece keyed to one series (each floating clock taking back its
+  works when its own clock starts); which book finished a part (the case ripple
+  keeps its own record); where a category's signs hang, as data.
+- **Sparks** that follow a mover (trails), and that turn along their velocity with a
+  bright head (shooting stars).
+- **Lettering** that can wait or ride a mover: names of the ages on the timeline,
+  numerals on the floor clock, verse changing on the gallery's book.
+- **Rendering:** `kind::SHAFT` on a mover drawn in the translucent pass; occlusion or
+  room culling for movers (a finished room's pieces are drawn from the next room);
+  the case ripple in the vertex shader from per-side finish times, with no chunk
+  rebuilds.
+- **Sound:** a bell, a soft crack, a rustle of leaves.
 
 ## Loose books
 Every book not shelved or carried is loose (`src/loose.rs`), simulated with
