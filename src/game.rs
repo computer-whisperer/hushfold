@@ -3065,6 +3065,43 @@ mod tests {
         assert_eq!(h, 16675921118826712809, "great library fingerprint");
     }
 
+    /// Saves of generation 5 name books by index and rebuild unmoved piles from
+    /// generation, so the Great Library must generate as it does in generation 5:
+    /// every book, where every book starts (upstairs too, and those the stopped clocks
+    /// hold, as they hang), and where each is first dropped.
+    #[test]
+    fn great_library_generates_as_before() {
+        let g = Game::new(Layout::Great);
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut eat = |x: u32| {
+            h ^= x as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        };
+        for (b, info) in g.lib.books.iter().enumerate() {
+            eat(info.series);
+            eat(info.volume);
+            eat(info.face);
+            for v in [info.size, info.slot_pos, info.front] {
+                v.to_array().iter().for_each(|f| eat(f.to_bits()));
+            }
+            let (at, turn) = g.loose.pose(b as u32);
+            at.to_array()
+                .iter()
+                .chain(&turn.to_array())
+                .for_each(|f| eat(f.to_bits()));
+            eat(g.loose.is_frozen(b as u32) as u32);
+        }
+        for &(b, level, p, d) in &g.lib.drops {
+            eat(b);
+            eat(level as u32);
+            [p.x, p.y, d.x, d.y].iter().for_each(|f| eat(f.to_bits()));
+        }
+        assert_eq!(g.lib.books.len(), 117_715);
+        // Taken at generation 5 (round 7's kit, 99de4d5); any change needs a new
+        // generation.
+        assert_eq!(h, 2620615749400869521, "great library fingerprint");
+    }
+
     /// Every slot's approach (the aisle in front of it) is a walk away from the start,
     /// with every gate open.
     #[test]
