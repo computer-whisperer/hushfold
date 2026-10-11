@@ -867,12 +867,20 @@ those bits into books centimetres apart. `clippy.toml` forbids the std calls
 outside audio. Save = seed + shelved/held/in-flight ids +
 lumens + upgrade levels by name (and those turned down) + the poses of loose books that moved from where
 they were generated (books in the air are saved where they are and fall on
-load), JSON in $XDG_DATA_HOME/hushfold/save.json (%APPDATA% on Windows),
-autosaved. Settings live beside it in settings.json. Each library has its own save
-(the Great Library's is great.json), stamped with the generation of the library it
-was made in (`game::generation`): saves name books by index, so one from another
-generation starts fresh, kept aside as *.old.json, as does one in another save
-format (`SAVE_VERSION`); nothing older is migrated. Each generation is bumped
+load), JSON, autosaved. Each game is a file of its own in
+$XDG_DATA_HOME/hushfold/saves/ (%APPDATA% on Windows), `<n>.json` numbered in the
+order games were begun (never reusing a number), naming its library and, for the
+save list, how many books it has (`saves.rs`). The title screen opens over the save
+written last (Continue plays on there) and lists the rest to open or delete;
+opening one builds its library, which blocks for up to ~1.5 s behind an "Opening…"
+card. Settings live in settings.json beside the folder. Before the list each
+library had one save there (save.json, the Great Library's great.json); the first
+run with the list copies them in, library written in and times kept, and leaves
+them be (`saves::import_old`). A save is stamped with the generation of the
+library it was made in (`game::generation`): saves name books by index, so one
+from another generation starts fresh, kept aside as `<n>.old.json` (the list says
+it will), as does one in another save format (`SAVE_VERSION`); nothing older is
+migrated. Each generation is bumped
 whenever where its books go changes. The Hall's (pinned by
 `hall_generates_as_before`) was 0, as 0.1.x saves have it, until the titles were
 rewritten: 1 (kept when the maths moved to libm, which moved 176 loose books by

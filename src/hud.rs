@@ -3,18 +3,23 @@
 use crate::catalog;
 use crate::game::{Aim, Cheat, ECHO_SPEED, Game, Group, SPELLS, Tier, UPGRADES, Upg, spell_times, upg_costs, upg_def};
 use crate::library::{Finish, LabelKind, Layout, ROWS};
+use crate::saves::Save;
 use crate::settings::Settings;
 use egui::{Align2, Color32, FontFamily, FontId, Pos2, Rect, RichText, Stroke, Vec2};
 use glam::{Mat4, Vec3, Vec4};
+use std::path::PathBuf;
+
+mod menus;
 
 pub struct Hud {
     pub settings: Settings,
-    pub menu_open: bool,
-    /// The cheat window (F9).
-    pub cheats_open: bool,
-    pub show_intro: bool,
-    /// The pause screen is asking whether to start over.
-    pub confirm_restart: bool,
+    pub screen: Screen,
+    /// The saves, for the title screen (the one written last first).
+    pub saves: Vec<Save>,
+    /// The save the title screen is asking whether to delete.
+    pub confirm_delete: Option<PathBuf>,
+    /// What is being opened, shown while it is (from the frame before, as it blocks).
+    pub loading: Option<String>,
     pub show_stats: bool,
     pub fps: f32,
     pub frame_ms: f32,
@@ -22,20 +27,68 @@ pub struct Hud {
     pub render_ms: f32,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Screen {
+    /// The title screen, over the library last played.
+    Title(TitlePage),
+    /// A new game's opening words.
+    Intro,
+    Play,
+    /// Esc while playing.
+    Pause,
+    /// Tab while playing.
+    Grimoire,
+    /// F9 while playing.
+    Cheats,
+    /// Reached from the title screen or the pause screen, where it goes back to.
+    Settings {
+        from_title: bool,
+    },
+}
+
+impl Screen {
+    /// Where Esc goes from here (from the stacks, to the pause screen); none from the
+    /// title screen's first page.
+    pub fn back(self) -> Option<Screen> {
+        Some(match self {
+            Screen::Play => Screen::Pause,
+            Screen::Pause | Screen::Grimoire | Screen::Cheats | Screen::Intro => Screen::Play,
+            Screen::Settings { from_title: false } => Screen::Pause,
+            Screen::Settings { from_title: true } | Screen::Title(TitlePage::NewGame | TitlePage::Load) => {
+                Screen::Title(TitlePage::Main)
+            }
+            Screen::Title(TitlePage::Main) => return None,
+        })
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TitlePage {
+    Main,
+    /// Which library a new game is of.
+    NewGame,
+    Load,
+}
+
 pub enum HudAction {
     Buy(Upg),
     /// Use a skill at this level (0: off), up to the level learned.
     Use(Upg, u32),
     Cheat(Cheat),
-    CloseCheats,
-    Begin,
-    CloseMenu,
+    Show(Screen),
+    /// Play on the save written last: the one open, or else it opened.
+    Continue,
+    /// Begin a new save of this library.
+    NewGame(Layout),
+    /// Open this save and play it.
+    Open(Layout, PathBuf),
+    Delete(PathBuf),
+    /// Save, and go to the title screen.
+    ToTitle,
     SettingsChanged,
+    /// Back from the settings screen.
+    SettingsDone,
     Quit,
-    /// Start this library over (confirmed).
-    NewGame,
-    /// Go to the other library (its save, or a fresh one).
-    Switch(Layout),
 }
 
 const INK: Color32 = Color32::from_rgb(236, 224, 200);
@@ -109,6 +162,33 @@ fn panel_frame() -> egui::Frame {
 
 pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<HudAction> {
     let mut actions = Vec::new();
+    if hud.show_stats {
+        stats(ctx, g, hud);
+    }
+    if let Some(what) = &hud.loading {
+        menus::loading(ctx, what);
+        return actions;
+    }
+    match hud.screen {
+        Screen::Play => play(ctx, g, hud, aspect),
+        Screen::Grimoire => {
+            play(ctx, g, hud, aspect);
+            grimoire(ctx, g, &mut actions);
+        }
+        Screen::Cheats => {
+            play(ctx, g, hud, aspect);
+            cheat_window(ctx, g, &mut actions);
+        }
+        Screen::Title(page) => menus::title(ctx, hud, page, &mut actions),
+        Screen::Intro => menus::intro(ctx, &mut actions),
+        Screen::Pause => menus::pause(ctx, g, &mut actions),
+        Screen::Settings { .. } => menus::settings(ctx, hud, &mut actions),
+    }
+    actions
+}
+
+/// What is drawn over the stacks while playing.
+fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
     let screen = ctx.content_rect().size();
     let vp = g.view_proj(aspect);
     let painter = ctx.layer_painter(egui::LayerId::background());
@@ -658,215 +738,74 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         painter.rect_filled(r, 4.0, Color32::from_rgba_unmultiplied(10, 8, 6, (150.0 * a) as u8));
         painter.galley(r.min + Vec2::new(7.0, 3.0), galley, INK);
     }
+}
 
-    if hud.show_stats {
-        egui::Area::new("perf".into())
-            .anchor(Align2::RIGHT_TOP, [-16.0, 16.0])
-            .interactable(false)
-            .show(ctx, |ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "{:.0} fps · {:.2} ms\ncpu {:.2} ms · render {:.2} ms\n{} instances",
-                        hud.fps,
-                        hud.frame_ms,
-                        hud.cpu_ms,
-                        hud.render_ms,
-                        g.dyn_insts.len() + g.trans_insts.len()
-                    ))
-                    .monospace()
+/// The frame rate and timings (F3).
+fn stats(ctx: &egui::Context, g: &Game, hud: &Hud) {
+    egui::Area::new("perf".into())
+        .anchor(Align2::RIGHT_TOP, [-16.0, 16.0])
+        .interactable(false)
+        .show(ctx, |ui| {
+            ui.label(
+                RichText::new(format!(
+                    "{:.0} fps · {:.2} ms\ncpu {:.2} ms · render {:.2} ms\n{} instances",
+                    hud.fps,
+                    hud.frame_ms,
+                    hud.cpu_ms,
+                    hud.render_ms,
+                    g.dyn_insts.len() + g.trans_insts.len()
+                ))
+                .monospace()
+                .color(INK),
+            );
+        });
+}
+
+/// The Grimoire (Tab), where lumens buy skills.
+fn grimoire(ctx: &egui::Context, g: &Game, actions: &mut Vec<HudAction>) {
+    let screen = ctx.content_rect().size();
+    let mut open = true;
+    egui::Window::new(RichText::new("The Grimoire").font(serif(24.0)).color(GOLD))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(panel_frame().fill(Color32::from_rgba_unmultiplied(24, 16, 12, 240)))
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.set_width(560.0);
+            ui.label(
+                RichText::new(format!("You have ✦ {} lumens.", g.lumens))
+                    .font(serif(16.0))
                     .color(INK),
-                );
-            });
-    }
-
-    // ---- Grimoire.
-    if hud.menu_open {
-        let mut open = true;
-        egui::Window::new(RichText::new("The Grimoire").font(serif(24.0)).color(GOLD))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-            .frame(panel_frame().fill(Color32::from_rgba_unmultiplied(24, 16, 12, 240)))
-            .open(&mut open)
-            .show(ctx, |ui| {
-                ui.set_width(560.0);
-                ui.label(
-                    RichText::new(format!("You have ✦ {} lumens.", g.lumens))
-                        .font(serif(16.0))
-                        .color(INK),
-                );
-                ui.add_space(6.0);
-                egui::ScrollArea::vertical().max_height(screen.y * 0.7).show(ui, |ui| {
-                    for tier in Tier::ALL {
-                        let skills: Vec<Upg> = (UPGRADES.iter().copied())
-                            .filter(|&u| upg_def(u).tier == tier && !upg_costs(g.layout, u).is_empty())
-                            .collect();
-                        if skills.is_empty() {
-                            continue;
-                        }
-                        ui.add_space(6.0);
-                        ui.label(RichText::new(tier.name()).font(serif(19.0)).color(GOLD));
-                        ui.label(RichText::new(tier.blurb()).font(serif(12.0)).color(DIM).italics());
-                        ui.separator();
-                        for u in skills {
-                            grimoire_entry(ui, g, u, &mut actions);
-                        }
+            );
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().max_height(screen.y * 0.7).show(ui, |ui| {
+                for tier in Tier::ALL {
+                    let skills: Vec<Upg> = (UPGRADES.iter().copied())
+                        .filter(|&u| upg_def(u).tier == tier && !upg_costs(g.layout, u).is_empty())
+                        .collect();
+                    if skills.is_empty() {
+                        continue;
                     }
-                });
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new("Press Tab to return to the stacks.")
-                        .font(serif(13.0))
-                        .color(DIM),
-                );
-            });
-        if !open {
-            actions.push(HudAction::CloseMenu);
-        }
-    }
-
-    if hud.cheats_open {
-        cheat_window(ctx, g, &mut actions);
-    }
-
-    // ---- Intro / pause.
-    if hud.show_intro {
-        let fresh = g.total_shelved() == 0 && g.held.is_empty() && g.lumens == 0;
-        egui::Window::new(RichText::new("Hushfold Library").font(serif(30.0)).color(GOLD))
-            .collapsible(false)
-            .resizable(false)
-            .title_bar(true)
-            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-            .frame(panel_frame().fill(Color32::from_rgba_unmultiplied(24, 16, 12, 240)))
-            .show(ctx, |ui| {
-                ui.set_width(520.0);
-                for style in [egui::TextStyle::Body, egui::TextStyle::Button] {
-                    ui.style_mut().text_styles.insert(style, serif(15.0));
-                }
-                // Which library: each keeps its own place.
-                ui.horizontal(|ui| {
-                    for layout in Layout::ALL {
-                        let here = layout == g.layout;
-                        let text = RichText::new(layout.name())
-                            .font(serif(15.0))
-                            .color(if here { GOLD } else { DIM });
-                        let b = egui::Button::new(text).selected(here).frame(here);
-                        if ui.add(b).on_hover_text(layout.blurb()).clicked() && !here {
-                            actions.push(HudAction::Switch(layout));
-                        }
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(tier.name()).font(serif(19.0)).color(GOLD));
+                    ui.label(RichText::new(tier.blurb()).font(serif(12.0)).color(DIM).italics());
+                    ui.separator();
+                    for u in skills {
+                        grimoire_entry(ui, g, u, actions);
                     }
-                });
-                ui.add_space(6.0);
-                if fresh {
-                    let body = "The night librarian has gone missing, and the library has come undone. \
-                        Thousands of books lie in piles across the floor.\n\n\
-                        Tap a book to take it, or hold on a pile to scoop an armful. Then find each book's home: \
-                        its category's bookcases (look for the signs), the shelf whose letters take its title, \
-                        and its series' run of outlines in its colour. Click anywhere on the run to file a volume.\n\n\
-                        Every book you file earns a lumen ✦. Spend them in the Grimoire to make the work lighter.";
-                    ui.label(RichText::new(body).font(serif(15.0)).color(INK));
-                } else {
-                    let mins = (g.play_time / 60.0) as u64;
-                    let time = if mins >= 60 {
-                        format!("{} h {} min", mins / 60, mins % 60)
-                    } else {
-                        format!("{mins} min")
-                    };
-                    let done = g.total_shelved() == g.total_books();
-                    let summary = if done {
-                        format!("Every book is home · {time} in the stacks")
-                    } else {
-                        format!(
-                            "{} of {} books are home · {time} in the stacks",
-                            g.total_shelved(),
-                            g.total_books()
-                        )
-                    };
-                    ui.label(RichText::new(summary).font(serif(16.0)).color(INK));
-                    let note = if done {
-                        "The library is in order. Start over for a fresh one."
-                    } else {
-                        "Your place is kept; progress saves as you go."
-                    };
-                    ui.label(RichText::new(note).font(serif(13.0)).color(DIM));
                 }
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new(
-                        "WASD walk · Shift hurry · Space jump · Mouse look\n\
-                         Tap a book to take it · Hold on a pile to scoop · Click a run to file\n\
-                         Hold right mouse to toss a group, release to throw · X the whole armful\n\
-                         F seek the kind of a book or shelf · R sort by department, category or series\n\
-                         1–5 cast the spells you have learned\n\
-                         G post a familiar where you aim, or take one back\n\
-                         Scroll or Q/E cycle the active book · Tab Grimoire\n\
-                         M music · F11 fullscreen · F12 screenshot · Esc pause",
-                    )
+            });
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Press Tab to return to the stacks.")
                     .font(serif(13.0))
                     .color(DIM),
-                );
-                ui.add_space(6.0);
-                egui::CollapsingHeader::new(RichText::new("Settings").font(serif(15.0)).color(INK))
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        let st = &mut hud.settings;
-                        let before = *st;
-                        ui.add(
-                            egui::Slider::new(&mut st.look_speed, 0.2..=4.0)
-                                .logarithmic(true)
-                                .fixed_decimals(2)
-                                .text("Look speed"),
-                        );
-                        ui.checkbox(&mut st.invert_look, "Invert vertical look");
-                        ui.add(
-                            egui::Slider::new(&mut st.fov, 55.0..=90.0)
-                                .suffix("°")
-                                .integer()
-                                .text("Field of view"),
-                        );
-                        ui.checkbox(&mut st.head_bob, "Head bob while walking");
-                        fn pct(v: &mut f32) -> egui::Slider<'_> {
-                            egui::Slider::new(v, 0.0..=1.0).custom_formatter(|x, _| format!("{:.0}%", x * 100.0))
-                        }
-                        let music = if st.music { "Music" } else { "Music (off: press M)" };
-                        ui.add(pct(&mut st.music_volume).text(music));
-                        ui.add(pct(&mut st.effects_volume).text("Effects and ambience"));
-                        if *st != before {
-                            actions.push(HudAction::SettingsChanged);
-                        }
-                    });
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let label = if fresh { "Begin" } else { "Return to the stacks" };
-                    let w = ui.available_width();
-                    ui.add_space((w - 220.0 - 160.0 - 12.0).max(0.0) * 0.5);
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new(label).font(serif(20.0)).color(GOLD))
-                                .min_size(Vec2::new(220.0, 40.0)),
-                        )
-                        .clicked()
-                    {
-                        actions.push(HudAction::Begin);
-                    }
-                    ui.add_space(12.0);
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new("Save and quit").font(serif(16.0)).color(DIM))
-                                .min_size(Vec2::new(160.0, 40.0)),
-                        )
-                        .clicked()
-                    {
-                        actions.push(HudAction::Quit);
-                    }
-                });
-                if !fresh {
-                    ui.add_space(8.0);
-                    restart_controls(ui, hud, &mut actions);
-                }
-            });
+            );
+        });
+    if !open {
+        actions.push(HudAction::Show(Screen::Play));
     }
-    actions
 }
 
 /// The cheat window (F9), for trying late-game situations.
@@ -945,7 +884,7 @@ fn cheat_window(ctx: &egui::Context, g: &Game, actions: &mut Vec<HudAction>) {
             });
         });
     if !open {
-        actions.push(HudAction::CloseCheats);
+        actions.push(HudAction::Show(Screen::Play));
     }
 }
 
@@ -1009,40 +948,4 @@ fn grimoire_entry(ui: &mut egui::Ui, g: &Game, u: Upg, actions: &mut Vec<HudActi
         });
     });
     ui.add_space(4.0);
-}
-
-/// "Start over…", then a confirmation, on the pause screen.
-fn restart_controls(ui: &mut egui::Ui, hud: &mut Hud, actions: &mut Vec<HudAction>) {
-    ui.vertical_centered(|ui| {
-        if !hud.confirm_restart {
-            let link = egui::Button::new(RichText::new("Start over…").font(serif(14.0)).color(DIM)).frame(false);
-            if ui.add(link).clicked() {
-                hud.confirm_restart = true;
-            }
-            return;
-        }
-        ui.label(
-            RichText::new(
-                "Start this library over? Every book goes back on the floor, and its lumens and \
-                 upgrades are lost. Settings, and the other library, are kept.",
-            )
-            .font(serif(14.0))
-            .color(INK),
-        );
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let w = ui.available_width();
-            ui.add_space((w - 160.0 * 2.0 - 12.0).max(0.0) * 0.5);
-            let size = Vec2::new(160.0, 34.0);
-            let start = egui::Button::new(RichText::new("Start over").font(serif(16.0)).color(GOLD)).min_size(size);
-            if ui.add(start).clicked() {
-                actions.push(HudAction::NewGame);
-            }
-            ui.add_space(12.0);
-            let keep = egui::Button::new(RichText::new("Keep playing").font(serif(16.0)).color(DIM)).min_size(size);
-            if ui.add(keep).clicked() {
-                hud.confirm_restart = false;
-            }
-        });
-    });
 }

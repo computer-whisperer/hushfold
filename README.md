@@ -6,7 +6,7 @@ volume slot, and file it. Lumens earned from filing buy abilities that make the
 work progressively smoother, up to folded-paper familiars that carry and shelve
 books wherever you post them.
 
-Two libraries, each with its own save (switch on the pause screen):
+Two libraries; a new game picks one, and there can be any number of saves of either:
 - **The Hall**: one storey, ~11,700 books in ~2,300 series, two wings.
 - **The Great Library** (in development): three storeys round a skylit atrium,
   twelve department rooms opened one by one, each laid out and furnished in its
@@ -44,13 +44,17 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | F9 | cheats, for trying late-game situations: lumens, every skill, lifting veils, shelving the library to a fraction, going to any room |
 | F11 | fullscreen (remembered) |
 | F12 | screenshot to `~/Pictures` (`%USERPROFILE%\Pictures` on Windows); a note says where it went |
-| Esc | pause: which library, settings (look speed, invert, field of view, head bob, volumes), save-and-quit, and start over |
+| Esc | pause: resume, settings, save and return to the title screen, or save and quit |
 
-Progress autosaves every 20 s and on pause or quit. Saves live in
-`$XDG_DATA_HOME/hushfold/` on Linux and `%APPDATA%\hushfold\` on Windows:
-`save.json` for the Hall, `great.json` for the Great Library. **Start over** on the
-pause screen replaces the current library's save with a fresh one (settings, in
-`settings.json` beside them, and the other library are kept).
+The game opens on a title screen over the library played last: **Continue** plays
+on there, **New Game** begins a fresh save of either library, and **Load** lists
+every save (its library, books home, time played, when it was last played) to
+open or delete. Progress autosaves every 20 s and on pause or quit. Saves live in
+`$XDG_DATA_HOME/hushfold/saves/` on Linux and `%APPDATA%\hushfold\saves\` on
+Windows, one file per game; settings are in `settings.json` beside the folder.
+Saves from before the list (`save.json` for the Hall, `great.json` for the Great
+Library) are copied into it the first time a version with it runs, and left where
+they were.
 
 ## How filing works
 
@@ -183,16 +187,18 @@ all back to use.
   `tuning/retune.py`; see its header.
 - Scripted runs for screenshots and smoke tests:
   `HUSHFOLD_UNPACED=1 HUSHFOLD_SCRIPT=script.txt HUSHFOLD_SHOT_DIR=out cargo run --release`.
-  Scripted runs use a fixed 60 Hz step and never touch the real save; they start
-  in the Hall unless `HUSHFOLD_LIBRARY=great`. Commands
+  Scripted runs use a fixed 60 Hz step and default settings, and keep their saves
+  apart from the player's: in `HUSHFOLD_SCRIPT_DATA` if set, else a temporary
+  directory. They start playing a fresh, unsaved Hall unless `HUSHFOLD_LIBRARY=great`. Commands
   (one per line): `pose x y z yaw pitch`, `wait frames`, `walk fwd frames`,
   `click` (a tap), `press` / `release` (hold and release the left button),
   `cycle n`, `charge [all]` / `throw` (hold and release the toss; `all`: the armful toss, X), `seek`, `regroup`,
-  `post`, `cheats on|off`, `cheat lumens n|skills|veils|shelve fraction|goto [department]`,
+  `post`, `cheat lumens n|skills|veils|shelve fraction|goto [department]`,
   `facepile`, `faceslot`, `facefam i`, `lookat x y z dist`, `fill category fraction`,
-  `take category n`, `unveil`, `library hall|great` (a fresh one), `grant lumens`,
-  `buy <Upgrade>`, `menu on|off`,
-  `intro on|off|confirm`, `newgame`, `stats on|off`, `shot name`, `print` (includes where a charging
+  `take category n`, `unveil`, `library [hall|great]` (a fresh, unsaved one), `grant lumens`,
+  `buy <Upgrade>`, `screen title|new|load|intro|play|pause|grimoire|cheats|settings [title]`,
+  `act continue|new hall|new great|open n|delete n|title` (as the menus do; `n`: the
+  nth save listed), `stats on|off`, `shot name`, `print` (includes where a charging
   toss would land), `printactive`, `quit`. `fill` and `take` pull books from
   anywhere in the piles, which then settle.
 

@@ -610,6 +610,40 @@ struct SaveData {
     /// See `generation`.
     #[serde(default)]
     generation: u32,
+    /// Which library; none in a save from before the save list (which its file named).
+    #[serde(default)]
+    layout: Option<Layout>,
+    /// How many books the library has, for the save list (0 before it kept them).
+    #[serde(default)]
+    books: u32,
+}
+
+/// What the save list shows of a save, read without building its library.
+pub struct SaveSummary {
+    pub layout: Layout,
+    pub shelved: u32,
+    /// The library's books; 0 if the save is from before saves kept the count.
+    pub books: u32,
+    pub play_time: f64,
+    /// False if it is from another version of its library, so it would open fresh.
+    pub fits: bool,
+}
+
+impl SaveSummary {
+    /// None if `path` holds no save, or one that doesn't say which library it is.
+    pub fn read(path: &std::path::Path) -> Option<SaveSummary> {
+        let data: SaveData = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        let layout = data.layout?;
+        let made = data.generation == generation(layout)
+            || (layout == Layout::Great && data.generation == GREAT_BEFORE_UPSTAIRS);
+        Some(SaveSummary {
+            layout,
+            shelved: data.shelved.len() as u32,
+            books: data.books,
+            play_time: data.play_time,
+            fits: data.seed == SEED && data.version == SAVE_VERSION && made,
+        })
+    }
 }
 
 pub struct Game {
@@ -718,8 +752,9 @@ pub struct Game {
     /// Vertical field of view on wide windows, in degrees (a setting).
     pub fov: f32,
     pub dirty_save: bool,
-    /// False in scripted runs so they never touch the player's save.
-    pub persist: bool,
+    /// Where this game is saved; none for one that never is (scripted runs, tests, and
+    /// the library behind the title screen when there are no saves).
+    pub save_path: Option<std::path::PathBuf>,
 }
 
 /// True (and `seen` updated) if the gates have changed since `seen`.
@@ -854,7 +889,7 @@ impl Game {
             echo_kind: None,
             fov: 70.0,
             dirty_save: false,
-            persist: true,
+            save_path: None,
             layout,
             lib,
         }
@@ -2734,19 +2769,10 @@ impl Game {
 
     // -------------------------------------------------------------- save / load
 
-    /// Each library keeps its own save (the Hall's under its 0.1 name).
-    fn save_path(&self) -> std::path::PathBuf {
-        let name = match self.layout {
-            Layout::Hall => "save.json",
-            Layout::Great => "great.json",
-        };
-        crate::platform::data_dir().join(name)
-    }
-
     pub fn save(&mut self) {
-        if !self.persist {
+        let Some(path) = self.save_path.clone() else {
             return;
-        }
+        };
         let mut shelved = Vec::new();
         let mut pending = Vec::new();
         for (b, st) in self.state.iter().enumerate() {
@@ -2760,6 +2786,8 @@ impl Game {
         let data = SaveData {
             version: SAVE_VERSION,
             generation: generation(self.layout),
+            layout: Some(self.layout),
+            books: self.total_books(),
             seed: SEED,
             lumens: self.lumens,
             earned: self.earned,
@@ -2797,7 +2825,6 @@ impl Game {
                 .map(|f| (f.role.name().to_string(), f.post.as_ref().map(|p| p.at.to_array())))
                 .collect(),
         };
-        let path = self.save_path();
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -2816,15 +2843,19 @@ impl Game {
         self.dirty_save = false;
     }
 
+    /// Load the save at `save_path`, if there is one; false leaves the library fresh.
     pub fn load(&mut self) -> bool {
-        let Ok(bytes) = std::fs::read(self.save_path()) else {
+        let Some(path) = self.save_path.clone() else {
+            return false;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
             return false;
         };
         let Ok(data) = serde_json::from_slice::<SaveData>(&bytes) else {
             eprintln!("hushfold: save file unreadable, starting fresh");
             return false;
         };
-        if data.seed != SEED {
+        if data.seed != SEED || data.layout.is_some_and(|l| l != self.layout) {
             return false;
         }
         let ported = self.layout == Layout::Great
@@ -2837,12 +2868,12 @@ impl Game {
             );
         } else if data.generation != generation(self.layout) || data.version != SAVE_VERSION {
             // Kept aside rather than overwritten by the fresh game's first save.
-            let old = self.save_path().with_extension("old.json");
+            let old = path.with_extension("old.json");
             eprintln!(
                 "hushfold: the save is from another version of this library; starting fresh (kept as {})",
                 old.display()
             );
-            let _ = std::fs::rename(self.save_path(), old);
+            let _ = std::fs::rename(&path, old);
             return false;
         }
         let n = self.lib.books.len() as u32;
@@ -3949,12 +3980,9 @@ mod tests {
     /// once it is open.
     #[test]
     fn saves_from_before_the_upper_floors_were_relaid() {
-        let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("hushfold-test-{}", std::process::id()));
-        // SAFETY: tests in this module don't read the environment concurrently.
-        unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
+        let path = scratch("relaid").join("1.json");
         let mut audio = crate::audio::Audio::silent();
-        let mut g = Game::new(Layout::Great);
+        let mut g = saving_to(Layout::Great, &path);
         let n = g.lib.books.len() as u32;
         let shelve = |g: &mut Game, d: usize, count: usize, audio: &mut Audio| {
             let books: Vec<u32> = (0..n)
@@ -3969,7 +3997,6 @@ mod tests {
         };
         let as_before = |g: &mut Game| {
             g.save();
-            let path = g.save_path();
             let mut data: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             data["generation"] = GREAT_BEFORE_UPSTAIRS.into();
             std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
@@ -3977,7 +4004,7 @@ mod tests {
         shelve(&mut g, 0, 3000, &mut audio);
         assert!(g.dept_open(1) && !g.dept_open(RELAID));
         as_before(&mut g);
-        let mut h = Game::new(Layout::Great);
+        let mut h = saving_to(Layout::Great, &path);
         assert!(h.load(), "veiled upstairs: it carries on");
         assert_eq!(h.total_shelved(), g.total_shelved());
         assert!(h.dept_open(1));
@@ -3988,24 +4015,32 @@ mod tests {
         }
         assert!(g.dept_open(RELAID) && g.dept_open(dept::CHRONICLE_HALL));
         as_before(&mut g);
-        let mut h = Game::new(Layout::Great);
+        let mut h = saving_to(Layout::Great, &path);
         assert!(!h.load(), "open upstairs: it starts fresh");
-        let old = h.save_path().with_extension("old.json");
-        assert!(old.exists());
-        let _ = std::fs::remove_file(old);
+        assert!(path.with_extension("old.json").exists());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
-    /// Held by the tests that save and load, which share a data directory (and the
-    /// environment variable naming it).
-    static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// An empty directory of the test's own.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("hushfold-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A fresh game of `layout` that saves to `path`.
+    fn saving_to(layout: Layout, path: &std::path::Path) -> Game {
+        let mut g = Game::new(layout);
+        g.save_path = Some(path.into());
+        g
+    }
 
     #[test]
     fn save_round_trip() {
-        let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("hushfold-test-{}", std::process::id()));
-        // SAFETY: tests in this module don't read the environment concurrently.
-        unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
-        let mut g = Game::new(Layout::Hall);
+        let dir = scratch("round-trip");
+        let (hall_save, great_save) = (dir.join("1.json"), dir.join("2.json"));
+        let mut g = saving_to(Layout::Hall, &hall_save);
         let mut audio = crate::audio::Audio::silent();
         let pile = |g: &Game| {
             let from = Vec3::new(-16.0, 0.0, 0.0);
@@ -4059,7 +4094,7 @@ mod tests {
         g.set_in_use(Upg::Glow, 1, &mut audio);
         g.save();
 
-        let mut l = Game::new(Layout::Hall);
+        let mut l = saving_to(Layout::Hall, &hall_save);
         assert!(l.load());
         assert_eq!(l.total_shelved(), g.total_shelved());
         assert_eq!(l.lumens, 42);
@@ -4089,7 +4124,7 @@ mod tests {
 
         // The Great Library saves beside it: books upstairs come back on their floors,
         // and gates open as far as what is shelved says.
-        let mut g = Game::new(Layout::Great);
+        let mut g = saving_to(Layout::Great, &great_save);
         let up = |g: &Game| g.loose.best_pile(|l, c, _| (l == 2).then(|| c.length())).unwrap();
         for _ in 0..3 {
             let (lv, top) = up(&g);
@@ -4130,7 +4165,7 @@ mod tests {
         let post = g.nav.standable_near(Vec3::new(4.0, 0.0, 6.0));
         g.post_familiar(1, post);
         g.save();
-        let mut l = Game::new(Layout::Great);
+        let mut l = saving_to(Layout::Great, &great_save);
         assert!(l.load());
         let roles: Vec<(Role, bool)> = l.familiars().collect();
         assert_eq!(roles, vec![(Role::Shelver, true), (Role::Courier, false)]);
@@ -4144,27 +4179,41 @@ mod tests {
                 assert_eq!(l.loose.level_of(b), g.loose.level_of(b), "book {b}");
             }
         }
-        // The Hall's save is still there, apart.
-        let mut hall = Game::new(Layout::Hall);
+        // The Hall's save is still there, apart, and says what the save list shows.
+        let mut hall = saving_to(Layout::Hall, &hall_save);
         assert!(hall.load());
         assert_eq!(hall.lumens, 42);
+        let sum = SaveSummary::read(&great_save).unwrap();
+        assert_eq!(
+            (sum.layout, sum.shelved, sum.books),
+            (Layout::Great, g.total_shelved(), g.total_books())
+        );
+        assert!(sum.fits && sum.play_time == g.play_time);
+        // Neither opens as the other library, nor is set aside for trying.
+        assert!(!saving_to(Layout::Hall, &great_save).load());
+        assert!(great_save.exists());
+        // A save from before the list names no library; it opens as the one asked for.
+        let mut data: serde_json::Value = serde_json::from_slice(&std::fs::read(&hall_save).unwrap()).unwrap();
+        data.as_object_mut().unwrap().remove("layout");
+        std::fs::write(&hall_save, serde_json::to_vec(&data).unwrap()).unwrap();
+        assert!(SaveSummary::read(&hall_save).is_none());
+        assert!(saving_to(Layout::Hall, &hall_save).load());
         // A 0.1.x save (levels by position, no stamps) starts fresh, kept aside.
         let json = format!(
             r#"{{"seed":{SEED},"lumens":5,"earned":900,"upgrades":[2,1],"shelved":[1,2,3],"held":[],
                 "player":[0.0,0.0,6.5,0.0,0.0],"play_time":60.0}}"#
         );
-        std::fs::write(hall.save_path(), json).unwrap();
-        assert!(!Game::new(Layout::Hall).load());
-        assert!(!hall.save_path().exists() && hall.save_path().with_extension("old.json").exists());
-        // So does a Great Library save from another generation of it.
-        let great = Game::new(Layout::Great);
+        std::fs::write(&hall_save, json).unwrap();
+        assert!(!saving_to(Layout::Hall, &hall_save).load());
+        assert!(!hall_save.exists() && hall_save.with_extension("old.json").exists());
+        // So does a Great Library save from another generation of it; the list says so.
         let json = format!(
-            r#"{{"seed":{SEED},"lumens":5,"earned":900,"shelved":[1,2,3],"held":[],"player":[0.0,0.0,6.5,0.0,0.0],"play_time":60.0}}"#
+            r#"{{"seed":{SEED},"lumens":5,"earned":900,"shelved":[1,2,3],"held":[],"player":[0.0,0.0,6.5,0.0,0.0],"play_time":60.0,"layout":"Great"}}"#
         );
-        std::fs::write(great.save_path(), json).unwrap();
-        let mut other = Game::new(Layout::Great);
-        assert!(!other.load());
-        assert!(!great.save_path().exists() && great.save_path().with_extension("old.json").exists());
+        std::fs::write(&great_save, json).unwrap();
+        assert!(!SaveSummary::read(&great_save).unwrap().fits);
+        assert!(!saving_to(Layout::Great, &great_save).load());
+        assert!(!great_save.exists() && great_save.with_extension("old.json").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

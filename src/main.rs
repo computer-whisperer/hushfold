@@ -10,6 +10,7 @@ mod library;
 mod loose;
 mod nav;
 mod platform;
+mod saves;
 mod scene;
 mod settings;
 mod text;
@@ -18,10 +19,11 @@ mod world;
 use audio::Audio;
 use game::{Game, Input};
 use gfx::{FrameInput, PostParams, Renderer};
-use hud::{Hud, HudAction};
+use hud::{Hud, HudAction, Screen, TitlePage};
 use library::Layout;
 use settings::Settings;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -52,6 +54,21 @@ struct Running {
     unpaced: bool,
     quit: bool,
     script: Option<Script>,
+    /// Where the saves and settings are.
+    data: PathBuf,
+    /// A library to open, and whether the card saying so has been drawn (opening
+    /// one blocks for a moment, so the card goes up the frame before).
+    opening: Option<(Opening, bool)>,
+    /// While the title screen is up, the way the view faced when it opened: the view
+    /// drifts from there, and is put back before the game is saved or played.
+    title_yaw: Option<f32>,
+}
+
+struct Opening {
+    layout: Layout,
+    path: PathBuf,
+    /// A new game: begun fresh, saved at once, and its opening words shown.
+    new: bool,
 }
 
 /// A scripted camera/action sequence for screenshots and smoke tests
@@ -91,22 +108,14 @@ impl Running {
         self.input.toss_down = false;
     }
 
-    /// Start this library over; its save is overwritten at once so quitting now
-    /// doesn't bring the old game back. Settings are kept.
-    fn new_game(&mut self) {
-        self.open_library(self.game.layout, false);
-        self.game.save();
-    }
-
-    /// Put `layout` in place of the current library: its save if `resume` and it has
-    /// one, else a fresh one. The current library is saved first.
-    fn open_library(&mut self, layout: Layout, resume: bool) {
-        self.game.save();
-        let persist = self.game.persist;
+    /// Put `layout` in place of the current library, saved at `path`: the save there if
+    /// there is one, else a fresh library. The current one is saved first.
+    fn open(&mut self, layout: Layout, path: Option<PathBuf>) {
+        self.save_game();
         let t0 = Instant::now();
         self.game = Game::new(layout);
-        self.game.persist = persist;
-        let loaded = persist && resume && self.game.load();
+        self.game.save_path = path;
+        let loaded = self.game.load();
         eprintln!(
             "hushfold: {}: {} books, generated in {:.0} ms{}",
             layout.name(),
@@ -122,13 +131,48 @@ impl Running {
         // Fill its chunks now, so this frame doesn't draw an empty library.
         self.game.build_instances(self.renderer.aspect());
         self.apply_settings();
-        self.hud.confirm_restart = false;
-        self.hud.menu_open = false;
-        self.hud.cheats_open = false;
-        if self.hud.settings.library != layout {
-            self.hud.settings.library = layout;
-            self.save_settings();
+        if self.title_yaw.is_some() {
+            self.title_yaw = Some(self.game.player.yaw);
         }
+    }
+
+    /// Open a library, after a frame with a card saying so.
+    fn open_soon(&mut self, layout: Layout, path: PathBuf, new: bool) {
+        self.hud.loading = Some(format!("Opening {}…", layout.name()));
+        self.opening = Some((Opening { layout, path, new }, false));
+    }
+
+    fn finish_opening(&mut self, o: Opening) {
+        self.open(o.layout, Some(o.path));
+        self.hud.loading = None;
+        if o.new {
+            self.save_game();
+            self.show(Screen::Intro);
+        } else {
+            self.show(Screen::Play);
+        }
+    }
+
+    /// Save the game, as the player left it if the title screen has turned the view.
+    fn save_game(&mut self) {
+        let yaw = self.game.player.yaw;
+        if let Some(rest) = self.title_yaw {
+            self.game.player.yaw = rest;
+        }
+        self.game.save();
+        self.game.player.yaw = yaw;
+    }
+
+    fn show(&mut self, screen: Screen) {
+        if let Screen::Title(_) = screen {
+            self.hud.saves = saves::list(&self.data);
+            self.title_yaw.get_or_insert(self.game.player.yaw);
+        } else if let Some(yaw) = self.title_yaw.take() {
+            self.game.player.yaw = yaw;
+        }
+        self.hud.confirm_delete = None;
+        self.hud.screen = screen;
+        self.set_grab(screen == Screen::Play);
     }
 
     fn apply_settings(&mut self) {
@@ -146,7 +190,7 @@ impl Running {
     }
 
     fn playing(&self) -> bool {
-        (self.grabbed || self.script.is_some()) && !self.hud.menu_open && !self.hud.cheats_open && !self.hud.show_intro
+        (self.grabbed || self.script.is_some()) && self.hud.screen == Screen::Play
     }
 
     fn on_key(&mut self, code: KeyCode, pressed: bool, event_loop: &ActiveEventLoop) {
@@ -159,40 +203,30 @@ impl Running {
             self.keys.remove(&code);
             return;
         }
+        let screen = self.hud.screen;
         match code {
-            KeyCode::Tab => {
-                if self.hud.show_intro {
-                    return;
+            KeyCode::Tab => match screen {
+                Screen::Play | Screen::Cheats => self.show(Screen::Grimoire),
+                Screen::Grimoire => self.show(Screen::Play),
+                _ => {}
+            },
+            KeyCode::F9 => match screen {
+                Screen::Play | Screen::Grimoire => self.show(Screen::Cheats),
+                Screen::Cheats => self.show(Screen::Play),
+                _ => {}
+            },
+            KeyCode::Escape if self.opening.is_none() => match screen {
+                Screen::Settings { .. } => self.settings_done(),
+                Screen::Play => {
+                    self.save_game();
+                    self.show(Screen::Pause);
                 }
-                self.hud.menu_open = !self.hud.menu_open;
-                self.hud.cheats_open = false;
-                self.set_grab(!self.hud.menu_open);
-            }
-            KeyCode::F9 => {
-                if self.hud.show_intro {
-                    return;
-                }
-                self.hud.cheats_open = !self.hud.cheats_open;
-                self.hud.menu_open = false;
-                self.set_grab(!self.hud.cheats_open);
-            }
-            KeyCode::Escape => {
-                if self.hud.menu_open || self.hud.cheats_open {
-                    self.hud.menu_open = false;
-                    self.hud.cheats_open = false;
-                    self.set_grab(true);
-                } else if self.hud.show_intro {
-                    if self.game.total_shelved() > 0 || !self.game.held.is_empty() {
-                        self.hud.show_intro = false;
-                        self.save_settings();
-                        self.set_grab(true);
+                _ => {
+                    if let Some(to) = screen.back() {
+                        self.show(to);
                     }
-                } else {
-                    self.hud.show_intro = true;
-                    self.set_grab(false);
-                    self.game.save();
                 }
-            }
+            },
             KeyCode::KeyM => {
                 self.hud.settings.music = !self.hud.settings.music;
                 self.apply_settings();
@@ -230,7 +264,7 @@ impl Running {
                 self.renderer.capture = Some(dir.join(format!("hushfold-{stamp}.png")));
             }
             KeyCode::F10 => {
-                self.game.save();
+                self.save_game();
                 self.save_settings();
                 event_loop.exit();
             }
@@ -260,6 +294,9 @@ impl Running {
 
         if self.script.is_some() {
             self.run_script();
+        }
+        if self.title_yaw.is_some() {
+            self.game.player.yaw += dt * 0.025;
         }
         let k = |c| self.keys.contains(&c);
         let playing = self.playing();
@@ -292,7 +329,7 @@ impl Running {
         self.save_timer += dt;
         if self.save_timer > AUTOSAVE_SECS && self.game.dirty_save {
             self.save_timer = 0.0;
-            self.game.save();
+            self.save_game();
         }
 
         let aspect = self.renderer.aspect();
@@ -306,30 +343,7 @@ impl Running {
         self.egui_state
             .handle_platform_output(&self.renderer.window, out.platform_output);
         for a in actions {
-            match a {
-                HudAction::Buy(u) => {
-                    self.game.buy(u, &mut self.audio);
-                }
-                HudAction::Use(u, l) => self.game.set_in_use(u, l, &mut self.audio),
-                HudAction::Begin => {
-                    self.hud.show_intro = false;
-                    self.save_settings();
-                    self.set_grab(true);
-                }
-                HudAction::SettingsChanged => self.apply_settings(),
-                HudAction::Quit => self.quit = true,
-                HudAction::NewGame => self.new_game(),
-                HudAction::Switch(layout) => self.open_library(layout, true),
-                HudAction::CloseMenu => {
-                    self.hud.menu_open = false;
-                    self.set_grab(true);
-                }
-                HudAction::Cheat(c) => self.game.cheat(c, &mut self.audio),
-                HudAction::CloseCheats => {
-                    self.hud.cheats_open = false;
-                    self.set_grab(true);
-                }
-            }
+            self.act(a);
         }
         let prims = self.egui_ctx.tessellate(out.shapes, out.pixels_per_point);
 
@@ -368,6 +382,62 @@ impl Running {
         let render_ms = render_start.elapsed().as_secs_f32() * 1000.0;
         self.hud.cpu_ms = self.hud.cpu_ms * 0.9 + cpu_ms * 0.1;
         self.hud.render_ms = self.hud.render_ms * 0.9 + render_ms * 0.1;
+        match self.opening.take() {
+            Some((o, true)) => self.finish_opening(o),
+            Some((o, false)) => self.opening = Some((o, true)),
+            None => {}
+        }
+    }
+
+    /// Do what the menus asked.
+    fn act(&mut self, a: HudAction) {
+        match a {
+            HudAction::Buy(u) => {
+                self.game.buy(u, &mut self.audio);
+            }
+            HudAction::Use(u, l) => self.game.set_in_use(u, l, &mut self.audio),
+            HudAction::Cheat(c) => self.game.cheat(c, &mut self.audio),
+            HudAction::Show(screen) => self.show(screen),
+            HudAction::Continue => match self.hud.saves.first() {
+                Some(s) if self.game.save_path.as_ref() != Some(&s.path) => {
+                    self.open_soon(s.summary.layout, s.path.clone(), false)
+                }
+                _ => self.show(Screen::Play),
+            },
+            HudAction::NewGame(layout) => self.open_soon(layout, saves::new_path(&self.data), true),
+            HudAction::Open(_, path) if self.game.save_path.as_ref() == Some(&path) => self.show(Screen::Play),
+            HudAction::Open(layout, path) => self.open_soon(layout, path, false),
+            HudAction::Delete(path) => {
+                if let Err(e) = saves::delete(&path) {
+                    eprintln!("hushfold: couldn't delete {}: {e}", path.display());
+                }
+                // The library behind the title screen stays, no longer saved.
+                if self.game.save_path.as_ref() == Some(&path) {
+                    self.game.save_path = None;
+                }
+                let page = if saves::list(&self.data).is_empty() {
+                    TitlePage::Main
+                } else {
+                    TitlePage::Load
+                };
+                self.show(Screen::Title(page));
+            }
+            HudAction::ToTitle => {
+                self.save_game();
+                self.show(Screen::Title(TitlePage::Main));
+            }
+            HudAction::SettingsChanged => self.apply_settings(),
+            HudAction::SettingsDone => self.settings_done(),
+            HudAction::Quit => self.quit = true,
+        }
+    }
+
+    /// Back from the settings screen, and write them down.
+    fn settings_done(&mut self) {
+        self.save_settings();
+        if let Some(to) = self.hud.screen.back() {
+            self.show(to);
+        }
     }
 }
 
@@ -447,8 +517,23 @@ impl Running {
                         self.game.set_in_use(u, num(2) as u32, &mut self.audio);
                     }
                 }
-                Some("menu") => self.hud.menu_open = w.get(1) == Some(&"on"),
-                Some("cheats") => self.hud.cheats_open = w.get(1) == Some(&"on"),
+                // screen title|new|load|intro|play|pause|grimoire|cheats|settings [title]
+                Some("screen") => {
+                    let screen = match w.get(1).copied() {
+                        Some("title") => Screen::Title(TitlePage::Main),
+                        Some("new") => Screen::Title(TitlePage::NewGame),
+                        Some("load") => Screen::Title(TitlePage::Load),
+                        Some("intro") => Screen::Intro,
+                        Some("pause") => Screen::Pause,
+                        Some("grimoire") => Screen::Grimoire,
+                        Some("cheats") => Screen::Cheats,
+                        Some("settings") => Screen::Settings {
+                            from_title: w.get(2) == Some(&"title"),
+                        },
+                        _ => Screen::Play,
+                    };
+                    self.show(screen);
+                }
                 // cheat lumens <n> | skills | veils | shelve <fraction> | goto [<department>]
                 // | finish face|category|room|storey <n> | finish all
                 Some("cheat") => {
@@ -475,11 +560,6 @@ impl Running {
                         self.game.cheat(c, &mut self.audio);
                     }
                 }
-                // intro on|off|confirm (confirm: the pause screen asking whether to start over)
-                Some("intro") => {
-                    self.hud.show_intro = matches!(w.get(1), Some(&"on" | &"confirm"));
-                    self.hud.confirm_restart = w.get(1) == Some(&"confirm");
-                }
                 Some("stats") => self.hud.show_stats = w.get(1) == Some(&"on"),
                 Some("shot") => {
                     let name = w.get(1).copied().unwrap_or("shot");
@@ -487,8 +567,26 @@ impl Running {
                     sc.wait = 1;
                     return;
                 }
+                // act continue | new hall|great | open <n> | delete <n> | title: as the menus
+                // do (n: the nth save listed, from 1) on the saves in HUSHFOLD_SCRIPT_DATA.
+                Some("act") => {
+                    self.hud.saves = saves::list(&self.data);
+                    let nth = |i: f32| self.hud.saves.get((i as usize).saturating_sub(1));
+                    let a = match w.get(1).copied() {
+                        Some("continue") => Some(HudAction::Continue),
+                        Some("new") if w.get(2) == Some(&"great") => Some(HudAction::NewGame(Layout::Great)),
+                        Some("new") => Some(HudAction::NewGame(Layout::Hall)),
+                        Some("open") => nth(num(2)).map(|s| HudAction::Open(s.summary.layout, s.path.clone())),
+                        Some("delete") => nth(num(2)).map(|s| HudAction::Delete(s.path.clone())),
+                        Some("title") => Some(HudAction::ToTitle),
+                        _ => None,
+                    };
+                    if let Some(a) = a {
+                        self.act(a);
+                    }
+                }
                 Some("print") => eprintln!(
-                    "script: fps {:.0} cpu {:.2}ms render {:.2}ms (acquire {:.2} gpu {:.2} scene {:.2} chunks {} up {}) | shelved {} held {} lumens {} aim {:?} pos {:?} toss lands {:?}",
+                    "script: fps {:.0} cpu {:.2}ms render {:.2}ms (acquire {:.2} gpu {:.2} scene {:.2} chunks {} up {}) | shelved {} held {} lumens {} aim {:?} pos {:?} yaw {} screen {:?} save {:?} toss lands {:?}",
                     self.hud.fps,
                     self.hud.cpu_ms,
                     self.hud.render_ms,
@@ -502,6 +600,9 @@ impl Running {
                     self.game.lumens,
                     self.game.aim,
                     self.game.player.pos,
+                    self.game.player.yaw,
+                    self.hud.screen,
+                    self.game.save_path,
                     self.game.toss_land
                 ),
                 Some("printactive") => {
@@ -519,15 +620,14 @@ impl Running {
                         );
                     }
                 }
-                Some("newgame") => self.new_game(),
-                // library hall|great: switch to a fresh copy of that library.
+                // library [hall|great]: a fresh copy of that library (or of this one).
                 Some("library") => {
-                    let layout = if w.get(1) == Some(&"great") {
-                        Layout::Great
-                    } else {
-                        Layout::Hall
+                    let layout = match w.get(1).copied() {
+                        Some("great") => Layout::Great,
+                        Some("hall") => Layout::Hall,
+                        _ => self.game.layout,
                     };
-                    self.open_library(layout, false);
+                    self.open(layout, None);
                 }
                 Some("quit") => std::process::exit(0),
                 _ => {}
@@ -570,12 +670,24 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let mut renderer = Renderer::new(window.clone());
         let t0 = Instant::now();
-        // Scripts start in the Hall (or HUSHFOLD_LIBRARY=great).
-        let layout = match std::env::var("HUSHFOLD_LIBRARY").as_deref() {
-            Ok("great") => Layout::Great,
-            Ok(_) => Layout::Hall,
-            Err(_) if scripted => Layout::Hall,
-            Err(_) => settings.library,
+        // Scripted runs keep apart from the player's saves.
+        let data = match std::env::var_os("HUSHFOLD_SCRIPT_DATA") {
+            Some(dir) if scripted => dir.into(),
+            _ if scripted => std::env::temp_dir().join(format!("hushfold-script-{}", std::process::id())),
+            _ => platform::data_dir(),
+        };
+        // The title screen opens over the save written last, or with none a fresh Hall
+        // never saved; scripts play a fresh, unsaved Hall (or HUSHFOLD_LIBRARY=great).
+        let latest = if scripted {
+            None
+        } else {
+            saves::import_old(&data);
+            saves::list(&data).into_iter().next()
+        };
+        let layout = match (&latest, std::env::var("HUSHFOLD_LIBRARY").as_deref()) {
+            (Some(s), _) => s.summary.layout,
+            (None, Ok("great")) if scripted => Layout::Great,
+            _ => Layout::Hall,
         };
         let mut game = Game::new(layout);
         let script = std::env::var("HUSHFOLD_SCRIPT").ok().map(|path| Script {
@@ -588,8 +700,8 @@ impl ApplicationHandler for App {
             wait: 10,
             dir: std::env::var("HUSHFOLD_SHOT_DIR").unwrap_or_else(|_| ".".into()).into(),
         });
-        let loaded = script.is_none() && game.load();
-        game.persist = script.is_none();
+        game.save_path = latest.map(|s| s.path);
+        let loaded = game.load();
         eprintln!(
             "hushfold: {}: {} books in {} series, generated in {:.0} ms{}",
             layout.name(),
@@ -620,10 +732,10 @@ impl ApplicationHandler for App {
             audio: Audio::new(),
             hud: Hud {
                 settings,
-                menu_open: false,
-                cheats_open: false,
-                show_intro: script.is_none(),
-                confirm_restart: false,
+                screen: Screen::Play,
+                saves: Vec::new(),
+                confirm_delete: None,
+                loading: None,
                 show_stats: false,
                 fps: 0.0,
                 frame_ms: 0.0,
@@ -640,8 +752,14 @@ impl ApplicationHandler for App {
             unpaced: std::env::var_os("HUSHFOLD_UNPACED").is_some(),
             quit: false,
             script,
+            data,
+            opening: None,
+            title_yaw: None,
         };
         run.apply_settings();
+        if !scripted {
+            run.show(Screen::Title(TitlePage::Main));
+        }
         self.run = Some(run);
     }
 
@@ -666,7 +784,7 @@ impl ApplicationHandler for App {
         };
         match event {
             WindowEvent::CloseRequested => {
-                r.game.save();
+                r.save_game();
                 r.save_settings();
                 event_loop.exit();
             }
@@ -675,9 +793,9 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => {
                 // A release that happens in another window never arrives.
                 r.input.toss_down = false;
-                if r.grabbed {
-                    r.set_grab(false);
-                    r.hud.show_intro = true;
+                if r.hud.screen == Screen::Play {
+                    r.save_game();
+                    r.show(Screen::Pause);
                 }
                 r.keys.clear();
             }
@@ -697,7 +815,7 @@ impl ApplicationHandler for App {
                     if pressed {
                         r.input.primary_pressed = true;
                     }
-                } else if pressed && !consumed && !r.hud.menu_open && !r.hud.cheats_open && !r.hud.show_intro {
+                } else if pressed && !consumed && r.hud.screen == Screen::Play {
                     r.set_grab(true);
                 }
             }
@@ -741,7 +859,7 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(r) = &mut self.run {
             if r.quit {
-                r.game.save();
+                r.save_game();
                 r.save_settings();
                 event_loop.exit();
                 return;

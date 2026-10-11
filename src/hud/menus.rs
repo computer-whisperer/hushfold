@@ -1,0 +1,392 @@
+//! The title screen (with its saves), the pause screen, settings, a new game's
+//! opening words, and the card shown while a library opens.
+
+use super::*;
+use crate::game::SaveSummary;
+use std::time::SystemTime;
+
+/// Darken the stacks behind a menu: `left` at the left edge to `right` at the right.
+fn shade(ctx: &egui::Context, left: f32, right: f32) {
+    let r = ctx.content_rect();
+    let a = |x: f32| Color32::from_black_alpha((x * 255.0) as u8);
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(r.left_top(), a(left));
+    mesh.colored_vertex(r.right_top(), a(right));
+    mesh.colored_vertex(r.right_bottom(), a(right));
+    mesh.colored_vertex(r.left_bottom(), a(left));
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    ctx.layer_painter(egui::LayerId::background()).add(mesh);
+}
+
+/// One line of a menu, in ink; gold, with a star before it, while pointed at.
+fn item(ui: &mut egui::Ui, text: &str, size: f32) -> egui::Response {
+    let font = serif(size);
+    let galley = ui.painter().layout_no_wrap(text.into(), font.clone(), INK);
+    let pad = Vec2::new(size * 1.1, size * 0.2);
+    let (rect, resp) = ui.allocate_exact_size(galley.size() + pad * 2.0, egui::Sense::click());
+    let lit = resp.hovered() || resp.has_focus();
+    let p = ui.painter();
+    let at = rect.left_center() + Vec2::new(pad.x, 0.0);
+    p.text(at, Align2::LEFT_CENTER, text, font, if lit { GOLD } else { INK });
+    if lit {
+        let star = rect.left_center() + Vec2::new(pad.x * 0.45, 0.0);
+        p.text(star, Align2::CENTER_CENTER, "✦", serif(size * 0.5), GOLD);
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A line under a menu item, lined up with its text.
+fn under(ui: &mut egui::Ui, text: impl Into<String>, item_size: f32) {
+    ui.horizontal(|ui| {
+        ui.add_space(item_size * 1.1);
+        ui.label(RichText::new(text).font(serif(14.0)).color(DIM));
+    });
+}
+
+fn button(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
+    ui.add(egui::Button::new(RichText::new(text).font(serif(15.0)).color(color)).min_size(Vec2::new(84.0, 30.0)))
+}
+
+/// Time in the stacks: "12 min", "3 h 5 min".
+fn hours(secs: f64) -> String {
+    let mins = (secs / 60.0) as u64;
+    if mins >= 60 {
+        format!("{} h {} min", mins / 60, mins % 60)
+    } else {
+        format!("{mins} min")
+    }
+}
+
+/// A count with its thousands set off: 117,715.
+fn count(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// How long ago `when` was, in words.
+fn ago(when: SystemTime) -> String {
+    let secs = SystemTime::now().duration_since(when).map_or(0, |d| d.as_secs());
+    let (n, unit) = match secs {
+        0..60 => return "just now".into(),
+        60..3600 => (secs / 60, "minute"),
+        3600..86400 => (secs / 3600, "hour"),
+        86400..172800 => return "yesterday".into(),
+        _ => (secs / 86400, "day"),
+    };
+    format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" })
+}
+
+fn progress(s: &SaveSummary) -> String {
+    match s.books {
+        0 => format!("{} books home", count(s.shelved)),
+        n if n == s.shelved => "every book home".into(),
+        n => format!("{} of {} books home", count(s.shelved), count(n)),
+    }
+}
+
+pub(super) fn title(ctx: &egui::Context, hud: &mut Hud, page: TitlePage, actions: &mut Vec<HudAction>) {
+    shade(ctx, 0.85, 0.15);
+    let screen = ctx.content_rect();
+    egui::Area::new("title".into())
+        .anchor(Align2::LEFT_CENTER, [screen.width() * 0.08, 0.0])
+        .show(ctx, |ui| {
+            ui.label(RichText::new("Hushfold Library").font(serif(64.0)).color(GOLD));
+            ui.label(
+                RichText::new("A cozy game of putting a magical library back in order")
+                    .font(serif(17.0))
+                    .italics()
+                    .color(DIM),
+            );
+            ui.add_space(40.0);
+            match page {
+                TitlePage::Main => title_menu(ui, hud, actions),
+                TitlePage::NewGame => new_game(ui, actions),
+                TitlePage::Load => load(ui, hud, actions),
+            }
+        });
+    egui::Area::new("version".into())
+        .anchor(Align2::RIGHT_BOTTOM, [-16.0, -12.0])
+        .interactable(false)
+        .show(ctx, |ui| {
+            let v = concat!("version ", env!("CARGO_PKG_VERSION"));
+            ui.label(RichText::new(v).font(serif(12.0)).color(DIM.gamma_multiply(0.7)));
+        });
+}
+
+fn title_menu(ui: &mut egui::Ui, hud: &Hud, actions: &mut Vec<HudAction>) {
+    const SIZE: f32 = 30.0;
+    if let Some(latest) = hud.saves.first() {
+        if item(ui, "Continue", SIZE).clicked() {
+            actions.push(HudAction::Continue);
+        }
+        let s = &latest.summary;
+        under(ui, format!("{} · {}", s.layout.name(), progress(s)), SIZE);
+        ui.add_space(6.0);
+    }
+    if item(ui, "New Game", SIZE).clicked() {
+        actions.push(HudAction::Show(Screen::Title(TitlePage::NewGame)));
+    }
+    if !hud.saves.is_empty() && item(ui, "Load", SIZE).clicked() {
+        actions.push(HudAction::Show(Screen::Title(TitlePage::Load)));
+    }
+    if item(ui, "Settings", SIZE).clicked() {
+        actions.push(HudAction::Show(Screen::Settings { from_title: true }));
+    }
+    if item(ui, "Quit", SIZE).clicked() {
+        actions.push(HudAction::Quit);
+    }
+}
+
+fn new_game(ui: &mut egui::Ui, actions: &mut Vec<HudAction>) {
+    const SIZE: f32 = 28.0;
+    ui.label(RichText::new("Which library?").font(serif(20.0)).color(INK));
+    ui.add_space(10.0);
+    for layout in Layout::ALL {
+        if item(ui, layout.name(), SIZE).clicked() {
+            actions.push(HudAction::NewGame(layout));
+        }
+        under(ui, layout.blurb(), SIZE);
+        ui.add_space(8.0);
+    }
+    ui.add_space(16.0);
+    if item(ui, "Back", 22.0).clicked() {
+        actions.push(HudAction::Show(Screen::Title(TitlePage::Main)));
+    }
+}
+
+fn load(ui: &mut egui::Ui, hud: &mut Hud, actions: &mut Vec<HudAction>) {
+    let tall = ui.ctx().content_rect().height() * 0.45;
+    let (mut ask, mut keep) = (None, false);
+    egui::ScrollArea::vertical().max_height(tall).show(ui, |ui| {
+        ui.set_width(560.0);
+        for save in &hud.saves {
+            let s = &save.summary;
+            panel_frame().show(ui, |ui| {
+                ui.set_width(540.0);
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(s.layout.name()).font(serif(20.0)).color(GOLD));
+                        let line = format!("{} · {} in the stacks", progress(s), hours(s.play_time));
+                        ui.label(RichText::new(line).font(serif(14.0)).color(INK));
+                        let when = format!("Last played {}", ago(save.when));
+                        ui.label(RichText::new(when).font(serif(13.0)).color(DIM));
+                        if !s.fits {
+                            let note = "Made by another version of the game: it opens as a fresh library.";
+                            ui.label(RichText::new(note).font(serif(13.0)).italics().color(DIM));
+                        }
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if hud.confirm_delete.as_ref() == Some(&save.path) {
+                            return;
+                        }
+                        if button(ui, "Delete", DIM).clicked() {
+                            ask = Some(save.path.clone());
+                        }
+                        if button(ui, "Open", GOLD).clicked() {
+                            actions.push(HudAction::Open(s.layout, save.path.clone()));
+                        }
+                    });
+                });
+                if hud.confirm_delete.as_ref() == Some(&save.path) {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new("Delete this game? It can't be undone.")
+                            .font(serif(14.0))
+                            .color(INK),
+                    );
+                    ui.horizontal(|ui| {
+                        if button(ui, "Delete", GOLD).clicked() {
+                            actions.push(HudAction::Delete(save.path.clone()));
+                        }
+                        if button(ui, "Keep", DIM).clicked() {
+                            keep = true;
+                        }
+                    });
+                }
+            });
+            ui.add_space(6.0);
+        }
+    });
+    if ask.is_some() {
+        hud.confirm_delete = ask;
+    } else if keep {
+        hud.confirm_delete = None;
+    }
+    ui.add_space(16.0);
+    if item(ui, "Back", 22.0).clicked() {
+        actions.push(HudAction::Show(Screen::Title(TitlePage::Main)));
+    }
+}
+
+pub(super) fn pause(ctx: &egui::Context, g: &Game, actions: &mut Vec<HudAction>) {
+    shade(ctx, 0.6, 0.6);
+    egui::Area::new("pause".into())
+        .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new(g.layout.name()).font(serif(36.0)).color(GOLD));
+                let done = g.total_shelved() == g.total_books();
+                let books = if done {
+                    "Every book is home".to_string()
+                } else {
+                    format!(
+                        "{} of {} books are home",
+                        count(g.total_shelved()),
+                        count(g.total_books())
+                    )
+                };
+                let summary = format!("{books} · {} in the stacks", hours(g.play_time));
+                ui.label(RichText::new(summary).font(serif(16.0)).color(INK));
+                ui.add_space(28.0);
+                const SIZE: f32 = 26.0;
+                if item(ui, "Resume", SIZE).clicked() {
+                    actions.push(HudAction::Show(Screen::Play));
+                }
+                if item(ui, "Settings", SIZE).clicked() {
+                    actions.push(HudAction::Show(Screen::Settings { from_title: false }));
+                }
+                if item(ui, "Save and return to title", SIZE).clicked() {
+                    actions.push(HudAction::ToTitle);
+                }
+                if item(ui, "Save and quit", SIZE).clicked() {
+                    actions.push(HudAction::Quit);
+                }
+                ui.add_space(12.0);
+                ui.label(
+                    RichText::new("Your place is kept; progress saves as you go.")
+                        .font(serif(13.0))
+                        .color(DIM),
+                );
+            });
+        });
+}
+
+pub(super) fn intro(ctx: &egui::Context, actions: &mut Vec<HudAction>) {
+    shade(ctx, 0.6, 0.6);
+    egui::Area::new("intro".into())
+        .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            panel_frame()
+                .fill(Color32::from_rgba_unmultiplied(24, 16, 12, 240))
+                .show(ui, |ui| {
+                    ui.set_width(540.0);
+                    let body = "The night librarian has gone missing, and the library has come undone. \
+                    Thousands of books lie in piles across the floor.\n\n\
+                    Tap a book to take it, or hold on a pile to scoop an armful. Then find each book's home: \
+                    its category's bookcases (look for the signs), the shelf whose letters take its title, \
+                    and its series' run of outlines in its colour. Click anywhere on the run to file a volume.\n\n\
+                    Every book you file earns a lumen ✦. Spend them in the Grimoire to make the work lighter.";
+                    ui.label(RichText::new(body).font(serif(15.0)).color(INK));
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(CONTROLS).font(serif(13.0)).color(DIM));
+                    ui.add_space(10.0);
+                    ui.vertical_centered(|ui| {
+                        if item(ui, "Begin", 26.0).clicked() {
+                            actions.push(HudAction::Show(Screen::Play));
+                        }
+                    });
+                });
+        });
+}
+
+/// Every control, one per line.
+const CONTROLS: &str = "WASD walk · Shift hurry · Space jump · Mouse look\n\
+    Tap a book to take it · Hold on a pile to scoop · Click a run to file\n\
+    Hold right mouse to toss a group, release to throw · X the whole armful\n\
+    F seek the kind of a book or shelf · R sort by department, category or series\n\
+    1–5 cast the spells you have learned\n\
+    G post a familiar where you aim, or take one back\n\
+    Scroll or Q/E cycle the active book · Tab Grimoire\n\
+    M music · F11 fullscreen · F12 screenshot · Esc pause";
+
+pub(super) fn settings(ctx: &egui::Context, hud: &mut Hud, actions: &mut Vec<HudAction>) {
+    shade(ctx, 0.7, 0.7);
+    egui::Area::new("settings".into())
+        .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            panel_frame()
+                .fill(Color32::from_rgba_unmultiplied(24, 16, 12, 240))
+                .show(ui, |ui| {
+                    ui.set_width(520.0);
+                    for style in [egui::TextStyle::Body, egui::TextStyle::Button] {
+                        ui.style_mut().text_styles.insert(style, serif(15.0));
+                    }
+                    ui.label(RichText::new("Settings").font(serif(28.0)).color(GOLD));
+                    ui.add_space(8.0);
+                    let st = &mut hud.settings;
+                    let before = *st;
+                    ui.add(
+                        egui::Slider::new(&mut st.look_speed, 0.2..=4.0)
+                            .logarithmic(true)
+                            .fixed_decimals(2)
+                            .text("Look speed"),
+                    );
+                    ui.checkbox(&mut st.invert_look, "Invert vertical look");
+                    ui.add(
+                        egui::Slider::new(&mut st.fov, 55.0..=90.0)
+                            .suffix("°")
+                            .integer()
+                            .text("Field of view"),
+                    );
+                    ui.checkbox(&mut st.head_bob, "Head bob while walking");
+                    fn pct(v: &mut f32) -> egui::Slider<'_> {
+                        egui::Slider::new(v, 0.0..=1.0).custom_formatter(|x, _| format!("{:.0}%", x * 100.0))
+                    }
+                    let music = if st.music { "Music" } else { "Music (off: press M)" };
+                    ui.add(pct(&mut st.music_volume).text(music));
+                    ui.add(pct(&mut st.effects_volume).text("Effects and ambience"));
+                    if *st != before {
+                        actions.push(HudAction::SettingsChanged);
+                    }
+                    ui.add_space(10.0);
+                    ui.vertical_centered(|ui| {
+                        if item(ui, "Back", 22.0).clicked() {
+                            actions.push(HudAction::SettingsDone);
+                        }
+                    });
+                });
+        });
+}
+
+/// Painted, not laid out in an area: the card is up for two frames, and a new area
+/// draws nothing in its first.
+pub(super) fn loading(ctx: &egui::Context, what: &str) {
+    shade(ctx, 0.8, 0.8);
+    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, "loading".into()));
+    p.text(
+        ctx.content_rect().center(),
+        Align2::CENTER_CENTER,
+        what,
+        serif(26.0),
+        INK,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_and_times_read_as_words() {
+        assert_eq!(count(7), "7");
+        assert_eq!(count(1000), "1,000");
+        assert_eq!(count(117_715), "117,715");
+        assert_eq!(count(1_234_567), "1,234,567");
+        assert_eq!(hours(59.0 * 60.0), "59 min");
+        assert_eq!(hours(35472.3), "9 h 51 min");
+        let back = |secs| SystemTime::now() - std::time::Duration::from_secs(secs);
+        assert_eq!(ago(back(5)), "just now");
+        assert_eq!(ago(back(61)), "1 minute ago");
+        assert_eq!(ago(back(3 * 3600 + 5)), "3 hours ago");
+        assert_eq!(ago(back(30 * 3600)), "yesterday");
+        assert_eq!(ago(back(5 * 86400)), "5 days ago");
+    }
+}
