@@ -4,9 +4,15 @@
 //! stone pillar at each corner; crystals float over the circle, bobbing and turning,
 //! the lesser ones circling the great. Grimoires lie chained to lecterns in the
 //! aisles.
+//!
+//! The ward's strands go out across the door as the room fills (`game::rooms`); put in
+//! order, it draws the ward in: the light streams to the great crystal and circles it
+//! as three rings, runes spread across the floor, and the grimoires slip their chains
+//! and fall open. Each of the ward's corner crystals kindles as its cases fill.
 
 use super::*;
-use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+use crate::audio::Sfx;
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 /// The ward's middle, its sides' distance from it (to their cases' middles), and
 /// where its cases stand along a side (either side of the gate).
@@ -23,13 +29,18 @@ const RUNE: [f32; 4] = [0.75, 0.35, 1.0, 1.6];
 const CRYSTAL_RGBA: [f32; 4] = [0.5, 0.26, 0.88, 1.1];
 const DRAPE: [f32; 3] = [0.1, 0.04, 0.13];
 const IRON: [f32; 4] = [0.16, 0.16, 0.18, 1.0];
+/// The ward's light, as its strands across the door are drawn (`game::rooms`).
+const STRAND: [f32; 4] = [0.62, 0.36, 1.0, 1.5];
+const PAGES: [f32; 4] = [0.72, 0.66, 0.53, 1.0];
 
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     walls(lib, frame);
     shelves(lib, frame, rng, titles);
     pillars(lib, frame);
     rune_circle(lib, frame);
+    outer_runes(lib, frame);
     crystals(lib, frame);
+    ward_drawn_in(lib, frame);
     for (i, (s, o)) in [(-1.0f32, 19.9f32), (-1.0, 27.3), (1.0, 19.9), (1.0, 27.3)]
         .into_iter()
         .enumerate()
@@ -221,8 +232,16 @@ fn folds(lib: &mut Library, at: &Spot, w: f32, y0: f32) {
 
 /// The ward's corner pillars, round on square plinths under square abaci (in the
 /// way as the square blocks they stand in), each with a small crystal floating over
-/// it.
+/// it, dull until the category whose cases meet at that corner is done, then
+/// kindling.
 fn pillars(lib: &mut Library, f: &RoomFrame) {
+    // Where each category's cases are, on the whole: one of the ward's at each corner.
+    let middles: Vec<(usize, Vec3)> = (f.categories.clone())
+        .map(|c| {
+            let at: Vec<Vec3> = lib.faces_of(c).map(|i| lib.faces[i].center).collect();
+            (c, at.iter().sum::<Vec3>() / at.len() as f32)
+        })
+        .collect();
     let (p0, p1) = PILLAR;
     let stone = [0.3, 0.28, 0.27];
     let shaft = [
@@ -274,14 +293,26 @@ fn pillars(lib: &mut Library, f: &RoomFrame) {
             kind::STONE,
             [0.36, 0.34, 0.32],
         );
-        crystal(lib, f, Vec3::new(am, 4.05, om), 0.6, sa * so * 0.3, k, None);
+        let gem = crystal(lib, f, Vec3::new(am, 4.05, om), 0.6, sa * so * 0.3, k, None);
+        let corner = f.at(am, om, 0.0);
+        let (cat, _) = (middles.iter())
+            .min_by(|p, q| p.1.distance(corner).total_cmp(&q.1.distance(corner)))
+            .expect("categories");
+        let done = Finish::Category(*cat);
+        lib.awaiting(gem, Awaits::new(done, Change::Kindles { dim: 0.4 }).over(3.0));
+        lib.sparks(Sparks {
+            rgba: STRAND,
+            rate: 40.0,
+            ..Sparks::burst(done, f.at(am, om, 4.35))
+        });
     }
 }
 
 /// A crystal `size` long floating at `p` (a, height, o), leaning by `lean`: a
 /// six-sided prism pointed at both ends, bobbing gently and turning slowly on its own
-/// axis (each in its own time, by `k`), riding `orbit` if given.
-fn crystal(lib: &mut Library, f: &RoomFrame, p: Vec3, size: f32, lean: f32, k: usize, orbit: Option<u32>) {
+/// axis (each in its own time, by `k`), riding `orbit` if given. Returns the mover it
+/// floats on.
+fn crystal(lib: &mut Library, f: &RoomFrame, p: Vec3, size: f32, lean: f32, k: usize, orbit: Option<u32>) -> u32 {
     let at = f.at(p.x, p.z, p.y);
     let tilt = f.turn() * Quat::from_rotation_z(lean) * Quat::from_rotation_y(lean * 2.0);
     let (r, tip) = (size * 0.15, size * 0.24);
@@ -300,6 +331,7 @@ fn crystal(lib: &mut Library, f: &RoomFrame, p: Vec3, size: f32, lean: f32, k: u
     };
     let m = lib.mover(at, turn, 0.0, Some(bob));
     lib.moving(m, gem.inst(at, tilt, kind::CRYSTAL, CRYSTAL_RGBA));
+    bob
 }
 
 /// The great crystal over a low round dais in the middle of the circle, and its
@@ -406,6 +438,109 @@ fn rune_circle(lib: &mut Library, f: &RoomFrame) {
     }
 }
 
+/// A ring of runes round the old circle, an inlay of light laid as one piece: once the
+/// room is in order it spreads out from the dais across the floor and settles there.
+fn outer_runes(lib: &mut Library, f: &RoomFrame) {
+    let h = 0.0028;
+    let circle = |r: f32| -> Vec<Vec2> { (0..128).map(|k| Vec2::from_angle(k as f32 / 128.0 * TAU) * r).collect() };
+    let mut runes = Mesh::default();
+    let ring = Mesh::ring(&circle(3.47), &circle(3.43), h);
+    runes.add(&ring, Vec3::ZERO, Quat::from_rotation_x(FRAC_PI_2), Vec3::ONE);
+    let cube = Mesh::cube();
+    let mut line = |p: Vec2, q: Vec2, w: f32| {
+        let (d, c) = (q - p, (p + q) * 0.5);
+        let turn = Quat::from_rotation_y(-libm::atan2f(d.y, d.x));
+        runes.add(&cube, Vec3::new(c.x, 0.0, c.y), turn, Vec3::new(d.length(), h, w));
+    };
+    let mut r = StdRng::seed_from_u64(0x4f75_7465_7252);
+    for k in 0..20 {
+        let t = (k as f32 + 0.5) / 20.0 * TAU;
+        let c = Vec2::from_angle(t) * 3.2;
+        let up = Vec2::from_angle(t) * 0.14;
+        let side = up.perp();
+        line(c - up, c + up, 0.02);
+        for _ in 0..r.gen_range(1..3) {
+            let a = r.gen_range(-1.0..1.0f32);
+            let b = r.gen_range(-1.0..1.0f32);
+            let s = if r.gen_bool(0.5) { 1.0 } else { -1.0 };
+            line(c + up * a, c + up * b + side * s * 0.6, 0.018);
+        }
+    }
+    let middle = f.at(0.0, WARD, h * 0.5 + 0.0002);
+    let spreads = Change::Arrives {
+        from: Vec3::ZERO,
+        grow: 0.0,
+    };
+    let runes = lib.shape(runes).at(middle, f.turn(), kind::EMISSIVE, RUNE);
+    lib.waiting(
+        middle,
+        Awaits::new(Finish::Room(f.dept), spreads).after(0.4).over(2.4),
+        [runes],
+    );
+}
+
+/// The ward, drawn in: once the room is in order its light streams in from over the
+/// doorway to the great crystal, and three rings of it (the three strands that barred
+/// the door) grow out of the crystal one after another and turn slowly about it, a
+/// light riding them. Motes drift in the court after.
+fn ward_drawn_in(lib: &mut Library, f: &RoomFrame) {
+    let fin = Finish::Room(f.dept);
+    let heart = f.at(0.0, WARD, 3.85);
+    // From the doorway's head, over anyone's head, straight to the crystal.
+    let door = f.at(f.door, RoomFrame::O_NEAR + 0.3, 2.95);
+    lib.sparks(Sparks {
+        rgba: [0.62, 0.36, 1.0, 3.0],
+        size: Vec3::splat(0.02),
+        spread: f.size(1.2, 0.25, 0.05),
+        vel: (heart - door).normalize() * 3.4,
+        jitter: Vec3::splat(0.08),
+        lift: 0.0,
+        drag: 0.0,
+        wander: 0.05,
+        life: 2.7,
+        rate: 50.0,
+        lasts: Some(2.0),
+        ..Sparks::burst(fin, door)
+    });
+    let rings = [
+        (0.7f32, 1.15f32, TAU / 26.0),
+        (0.85, 1.3, -TAU / 34.0),
+        (1.0, 1.0, TAU / 43.0),
+    ];
+    for (k, (r, tilt, rate)) in rings.into_iter().enumerate() {
+        let ring = lib.shape(Mesh::torus(0.024 / r, 96, 8)).scaled(r);
+        let lean = Quat::from_rotation_y(k as f32 * TAU / 3.0) * Quat::from_rotation_x(tilt);
+        let m = lib.mover(heart, Motion::Spin { axis: Vec3::Y, rate }, 0.0, None);
+        let grows = Change::Arrives {
+            from: Vec3::ZERO,
+            grow: 0.0,
+        };
+        lib.awaiting(m, Awaits::new(fin, grows).after(1.6 + 0.8 * k as f32).over(2.2).still());
+        lib.moving(m, ring.inst(heart, lean, kind::EMISSIVE, STRAND));
+        if k == 0 {
+            lib.light_riding(m, heart, 6.5, [0.62, 0.36, 1.0], 0.8, LightKind::Static);
+        }
+    }
+    lib.sparks(Sparks {
+        delay: 1.6,
+        rgba: [0.62, 0.36, 1.0, 3.0],
+        rate: 90.0,
+        spread: Vec3::splat(0.5),
+        ..Sparks::burst(fin, heart)
+    });
+    lib.sparks(Sparks {
+        rgba: [0.7, 0.45, 1.0, 1.4],
+        ..Sparks::motes(fin, f.at(0.0, WARD, 2.6), Vec3::new(2.8, 1.0, 2.8))
+    });
+    lib.cue(Cue {
+        finish: fin,
+        delay: 1.6,
+        sound: Sfx::Veil,
+        at: heart,
+        volume: 0.7,
+    });
+}
+
 /// A heavy lectern in the aisle on side `s` at `o`, facing the ward, a grimoire on it
 /// chained to its post; `k` picks the grimoire.
 fn lectern(lib: &mut Library, f: &RoomFrame, s: f32, o: f32, k: usize) {
@@ -437,61 +572,88 @@ fn lectern(lib: &mut Library, f: &RoomFrame, s: f32, o: f32, k: usize) {
         kind::METAL,
         IRON,
     );
-    // The grimoire, shut, its boards bound in iron and a sigil on its cover.
+    // The grimoire, shut, its boards bound in iron and a sigil on its cover. Once the
+    // room is in order its chain slips away and it falls open: the front board and half
+    // the pages swing over the spine, the book sliding across to lie open on the desk.
+    let fin = Finish::Room(f.dept);
     let covers = [
         [0.2, 0.05, 0.08],
         [0.06, 0.08, 0.16],
         [0.16, 0.1, 0.05],
         [0.08, 0.12, 0.08],
     ];
+    let cover = rgba(covers[k % 4], 1.0);
     let book = desk + slope * Vec3::new(0.0, 0.1, -0.02);
-    at.part(
-        lib,
-        book,
-        Vec3::new(0.42, 0.1, 0.34),
-        slope,
-        kind::CLOTH,
-        rgba(covers[k % 4], 1.0),
+    let turn = at.q * slope;
+    let point = |p: Vec3| at.at + at.q * (book + slope * p);
+    // Each half (`s` below or above where it opens): its board, its pages (written on
+    // their faces), its half of the spine and of the iron straps, each by its middle
+    // (across, and up from where it opens) and size.
+    let half = |s: f32| {
+        [
+            (0.0, 0.0345, Vec3::new(0.42, 0.031, 0.34), kind::CLOTH, cover),
+            (0.005, 0.0095, Vec3::new(0.4, 0.019, 0.33), kind::PARCHMENT, PAGES),
+            (-0.204, 0.0095, Vec3::new(0.012, 0.019, 0.34), kind::CLOTH, cover),
+            (-0.19, 0.0275, Vec3::new(0.04, 0.055, 0.35), kind::METAL, IRON),
+            (0.19, 0.0275, Vec3::new(0.04, 0.055, 0.35), kind::METAL, IRON),
+        ]
+        .map(|(x, y, size, kind, color)| Inst::new(point(Vec3::new(x, s * y, 0.0)), turn, size, kind, color, 0))
+    };
+    let opens = 4.2 + 0.5 * k as f32;
+    let slides = Change::Shifts {
+        by: turn * Vec3::X * 0.21,
+        turn: Quat::IDENTITY,
+        scale: 1.0,
+    };
+    let base = lib.waiting(
+        point(Vec3::ZERO),
+        Awaits::new(fin, slides).after(opens).over(2.6),
+        half(-1.0),
     );
-    at.part(
-        lib,
-        book + slope * Vec3::new(0.0, 0.0, 0.004),
-        Vec3::new(0.4, 0.08, 0.34),
-        slope,
-        kind::PAPER,
-        [0.0, 0.0, 0.0, 0.0],
-    );
-    for x in [-1.0f32, 1.0] {
-        at.part(
-            lib,
-            book + slope * Vec3::new(x * 0.19, 0.0, 0.0),
-            Vec3::new(0.04, 0.11, 0.35),
-            slope,
-            kind::METAL,
-            IRON,
-        );
+    let spine = point(Vec3::new(-0.21, 0.0, 0.0));
+    let swings = Change::Shifts {
+        by: Vec3::ZERO,
+        turn: Quat::from_axis_angle(turn * Vec3::Z, PI),
+        scale: 1.0,
+    };
+    let front = lib.mover(spine, Motion::Still, 0.0, Some(base));
+    lib.awaiting(front, Awaits::new(fin, swings).after(opens).over(2.6));
+    for part in half(1.0) {
+        lib.moving(front, part);
     }
-    at.part(
-        lib,
-        book + slope * Vec3::new(0.0, 0.052, 0.0),
-        Vec3::new(0.1, 0.004, 0.1),
-        slope * Quat::from_rotation_y(FRAC_PI_4),
-        kind::EMISSIVE,
-        [0.8, 0.4, 1.0, 1.2],
+    lib.moving(
+        front,
+        Inst::new(
+            point(Vec3::new(0.0, 0.052, 0.0)),
+            turn * Quat::from_rotation_y(FRAC_PI_4),
+            Vec3::new(0.1, 0.004, 0.1),
+            kind::EMISSIVE,
+            [0.8, 0.4, 1.0, 1.2],
+            0,
+        ),
     );
-    // The chain, from the book's spine down to a ring on the post.
-    let from = at.at + at.q * (book + slope * Vec3::new(-0.21, 0.0, -0.1));
+    // The chain, from the book's spine down to a ring on the post; it drops away and
+    // is gone a moment before the book opens.
+    let from = point(Vec3::new(-0.21, 0.0, -0.1));
     let to = at.at + at.q * Vec3::new(-0.19, 0.6, 0.07);
     let links = 8;
     let dir = (to - from).normalize();
     let link = lib.shape(Mesh::torus(0.45, 12, 6));
+    let slips = Change::Shifts {
+        by: Vec3::Y * -0.3,
+        turn: Quat::IDENTITY,
+        scale: 0.0,
+    };
+    let chain = lib.mover(from.lerp(to, 0.5), Motion::Still, 0.0, None);
+    lib.awaiting(chain, Awaits::new(fin, slips).after(opens - 1.4).over(1.4));
     for i in 0..links {
         let t = (i as f32 + 0.5) / links as f32;
         // A little sag in the middle; each link turned square to the last.
         let p = from.lerp(to, t) - Vec3::Y * (t * (1.0 - t) * 0.25);
         let twist =
             Quat::from_rotation_arc(Vec3::Z, dir) * Quat::from_rotation_z(if i % 2 == 0 { 0.0 } else { FRAC_PI_2 });
-        lib.decor(
+        lib.moving(
+            chain,
             link.sized(Vec3::new(0.04, 0.01, 0.075))
                 .inst(p, twist, kind::METAL, [0.3, 0.3, 0.32, 1.0]),
         );
@@ -503,7 +665,8 @@ fn lectern(lib: &mut Library, f: &RoomFrame, s: f32, o: f32, k: usize) {
         IRON,
     ));
     if k.is_multiple_of(2) {
-        // A guttering candle on an iron pricket, its flame.
+        // A guttering candle on an iron pricket, its flame. As the book opens beside it,
+        // it rises off the desk to float over the pages, bobbing a little.
         let c = Vec3::new(0.26, 1.15, -0.05);
         let pricket = [
             (0.0, 0.0),
@@ -516,7 +679,19 @@ fn lectern(lib: &mut Library, f: &RoomFrame, s: f32, o: f32, k: usize) {
         ];
         let pricket = lib.shape(Mesh::lathe(&pricket.map(Vec2::from), 16));
         let foot = at.at + at.q * (c - Vec3::Y * 0.1);
-        lib.decor(pricket.at(foot, at.q, kind::METAL, IRON));
+        let floats = Motion::Bob {
+            amp: 0.02,
+            period: 4.5,
+            rock: 0.0,
+        };
+        let candle = lib.mover(foot, floats, 0.0, None);
+        let rises = Change::Shifts {
+            by: at.q * Vec3::new(-0.08, 0.28, -0.08),
+            turn: Quat::IDENTITY,
+            scale: 1.0,
+        };
+        lib.awaiting(candle, Awaits::new(fin, rises).after(opens - 0.8).over(2.2).still());
+        lib.moving(candle, pricket.at(foot, at.q, kind::METAL, IRON));
         let wax = [
             (0.0, 0.0),
             (0.026, 0.0),
@@ -526,7 +701,10 @@ fn lectern(lib: &mut Library, f: &RoomFrame, s: f32, o: f32, k: usize) {
             (0.0, 0.106),
         ];
         let wax = lib.shape(Mesh::lathe(&wax.map(Vec2::from), 16));
-        lib.decor(wax.at(foot + Vec3::Y * 0.06, at.q, kind::PLAIN, [0.75, 0.7, 0.58, 1.0]));
+        lib.moving(
+            candle,
+            wax.at(foot + Vec3::Y * 0.06, at.q, kind::PLAIN, [0.75, 0.7, 0.58, 1.0]),
+        );
         let drop = [
             (0.0, 0.0),
             (0.22, 0.06),
@@ -536,13 +714,17 @@ fn lectern(lib: &mut Library, f: &RoomFrame, s: f32, o: f32, k: usize) {
             (0.0, 1.0),
         ];
         let drop = lib.shape(Mesh::lathe(&drop.map(Vec2::from), 12));
-        lib.translucent(drop.scaled(0.05).at(
-            foot + Vec3::Y * 0.17,
-            Quat::IDENTITY,
-            kind::FIRE,
-            [1.0, 0.55, 0.22, 4.0],
-        ));
-        lib.light(
+        lib.moving(
+            candle,
+            drop.scaled(0.05).at(
+                foot + Vec3::Y * 0.17,
+                Quat::IDENTITY,
+                kind::FIRE,
+                [1.0, 0.55, 0.22, 4.0],
+            ),
+        );
+        lib.light_riding(
+            candle,
             at.at + at.q * (c + Vec3::Y * 0.4),
             4.0,
             [1.0, 0.6, 0.3],
