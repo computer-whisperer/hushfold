@@ -42,7 +42,7 @@ const SIDE_REACH: f32 = 1.9;
 /// A side ripples if it is finished within this of the eye; its lit labels are drawn
 /// to `LABELS_SEEN`, fading out over its last quarter into the case's own.
 const RIPPLE_SEEN: f32 = 30.0;
-const LABELS_SEEN: f32 = 18.0;
+const LABELS_SEEN: f32 = 14.0;
 
 /// Each side's books, the one that came home last on each, and their ripples.
 pub(super) struct Cases {
