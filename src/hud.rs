@@ -343,11 +343,19 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                     let done = g.series_shelved[r.series as usize];
                     let col = if have > 0 { GOLD } else { INK };
                     painter.circle_stroke(c, 6.0, Stroke::new(1.5_f32, col));
-                    let extra = if have > 0 {
+                    let mut extra = if have > 0 {
                         format!(" · file {have}")
                     } else {
                         String::new()
                     };
+                    if g.level(Upg::Sift) > 0 {
+                        let book = g.lib.series_books[r.series as usize][0];
+                        if g.sought().is_some_and(|(group, key)| group.of(&g.lib, book) == key) {
+                            extra.push_str(" · F stop seeking");
+                        } else {
+                            extra.push_str(&format!(" · F seek {}", g.group.name()));
+                        }
+                    }
                     tip = Some((format!("{} · {}/{} shelved{}", s.title, done, s.volumes, extra), col));
                 }
                 None => {
@@ -788,7 +796,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                         "WASD walk · Shift hurry · Space jump · Mouse look\n\
                          Tap a book to take it · Hold on a pile to scoop · Click a run to file\n\
                          Hold right mouse to toss a group, release to throw · X the whole armful\n\
-                         F seek a book's kind · R sort by department, category or series\n\
+                         F seek the kind of a book or shelf · R sort by department, category or series\n\
                          1–5 cast the spells you have learned\n\
                          G post a familiar where you aim, or take one back\n\
                          Scroll or Q/E cycle the active book · Tab Grimoire\n\

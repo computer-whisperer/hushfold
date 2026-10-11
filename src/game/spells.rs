@@ -138,7 +138,7 @@ impl Game {
             .sought()
             .or_else(|| self.active_book().map(|b| (self.group, self.group_of(b))));
         let Some((group, key)) = kind else {
-            self.hint = Some(("Seek a kind of book first (F), or hold one.".into(), 2.0));
+            self.hint = Some(("Seek a kind first (F at a book or a shelf), or hold one.".into(), 2.0));
             return false;
         };
         let (eye, reach) = (self.player.eye(), echo_reach(lvl));

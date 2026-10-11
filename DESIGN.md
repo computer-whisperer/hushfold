@@ -464,9 +464,11 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
   playtest asked for a way to throw it; the playtester had been using the group
   toss, often one book in a mixed early armful, to throw books toward their own
   sections, so the armful got its own key instead.
-- F (Sifting Touch): *seek* the aimed book's group (F at a book of the group
-  sought, or at nothing, stops; at nothing while not seeking, seeks the active
-  book's group). While seeking, the scoop takes only the group sought, from any
+- F (Sifting Touch): *seek* the aimed book's group, or the group of the run on the
+  aimed shelf (F at a book or run of the group sought, or at nothing, stops; at
+  nothing while not seeking, seeks the active book's group). The shelf came after
+  play: with a group's last books lost somewhere, none was about to aim at, so it
+  could be neither sought nor found with Echo. While seeking, the scoop takes only the group sought, from any
   depth, and grows to Sifting Touch's reach; the HUD names what is sought. Chose
   one explicit filter after the first playtest: the lens lit the held book's
   group while sift took the aimed one's, so aiming a hair off sifted the

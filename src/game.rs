@@ -1537,8 +1537,9 @@ impl Game {
         self.seek.map(|b| (self.group, self.group_of(b)))
     }
 
-    /// F (with Sifting Touch): seek the aimed book's group, or stop if it is the one
-    /// sought; aimed at no book, stop, or seek the active book's group.
+    /// F (with Sifting Touch): seek the group of the aimed book, or of the run on the
+    /// aimed shelf (what goes there, when none of it may be about to aim at), or stop
+    /// if it is the one sought; aimed at neither, stop, or seek the active book's group.
     fn press_seek(&mut self, audio: &mut Audio) {
         if self.level(Upg::Sift) == 0 {
             self.hint = Some((
@@ -1548,14 +1549,19 @@ impl Game {
             return;
         }
         let sought = self.sought().map(|(_, key)| key);
-        self.seek = match self.aim {
-            Aim::Loose { book, .. } if sought != Some(self.group_of(book)) => Some(book),
-            Aim::Loose { .. } => None,
-            _ if sought.is_some() => None,
-            _ => self.active_book(),
+        let aimed = match self.aim {
+            Aim::Loose { book, .. } => Some(book),
+            Aim::Shelf { run: Some(r), .. } => self.lib.series_books[r.series as usize].first().copied(),
+            _ => None,
+        };
+        self.seek = match aimed {
+            Some(book) if sought != Some(self.group_of(book)) => Some(book),
+            Some(_) => None,
+            None if sought.is_some() => None,
+            None => self.active_book(),
         };
         if sought.is_none() && self.seek.is_none() {
-            self.hint = Some(("Aim at a book to seek its kind.".into(), 2.0));
+            self.hint = Some(("Aim at a book or a shelf to seek its kind.".into(), 2.0));
             return;
         }
         audio.play(Sfx::Tick, 0.3);
@@ -3898,6 +3904,28 @@ mod tests {
         assert!(g.seek.is_none());
         g.set_in_use(Upg::Fine, 1, &mut audio);
         assert_eq!(g.groups(), vec![Group::Category, Group::Series]);
+    }
+
+    /// F at a shelf seeks what goes there, at the group sorted by, though none of it
+    /// lies about to aim at; F at it again stops.
+    #[test]
+    fn a_shelf_can_be_sought() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = crate::audio::Audio::silent();
+        g.upg[upg_index(Upg::Sift)] = 1;
+        g.group = Group::Category;
+        let run = g.lib.runs[0][0][0];
+        g.aim = Aim::Shelf {
+            face: 0,
+            row: 0,
+            run: Some(run),
+            dist: 1.0,
+        };
+        g.press_seek(&mut audio);
+        let category = g.lib.series[run.series as usize].category;
+        assert_eq!(g.sought(), Some((Group::Category, category)));
+        g.press_seek(&mut audio);
+        assert_eq!(g.sought(), None);
     }
 
     /// Each level of Deeper Arms carries twice the books of the one before, to the
