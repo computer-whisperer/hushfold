@@ -176,11 +176,12 @@ impl Running {
     }
 
     fn apply_settings(&mut self) {
-        let s = self.hud.settings;
+        let s = &self.hud.settings;
         self.game.fov = s.fov;
         self.game.player.head_bob = s.head_bob;
         let (music, effects) = (s.music_volume * s.master_volume, s.effects_volume * s.master_volume);
         self.audio.configure(s.music, music, effects);
+        self.audio.choose(s.output.as_ref().map(|d| d.id.clone()));
         self.egui_ctx.set_zoom_factor(s.ui_scale);
         let window = &self.renderer.window;
         if window.fullscreen().is_some() != s.fullscreen {
@@ -321,6 +322,10 @@ impl Running {
         }
         self.game.update(dt, &self.input, &mut self.audio, playing);
         self.game.update_sound(&mut self.audio);
+        if matches!(self.hud.screen, Screen::Settings { .. }) && self.hud.settings_tab == hud::SettingsTab::Audio {
+            self.audio.list_outputs();
+            self.hud.outputs = self.audio.outputs();
+        }
         self.input.look = glam::Vec2::ZERO;
         self.input.primary_pressed = false;
         self.input.toss_pressed = false;
@@ -542,7 +547,7 @@ impl Running {
                 }
                 // set <name> <value>: a setting, named as in settings.json (for this run).
                 Some("set") => {
-                    let mut all = serde_json::to_value(self.hud.settings).unwrap_or_default();
+                    let mut all = serde_json::to_value(&self.hud.settings).unwrap_or_default();
                     let value = w.get(2).and_then(|v| serde_json::from_str(v).ok());
                     if let (Some(name), Some(value)) = (w.get(1), value) {
                         all[*name] = value;
@@ -550,6 +555,15 @@ impl Running {
                     if let Ok(s) = serde_json::from_value(all) {
                         self.hud.settings = s;
                         self.apply_settings();
+                    }
+                }
+                // outputs: the sound's outputs as last listed (and list them again).
+                Some("outputs") => {
+                    self.audio.list_outputs();
+                    let o = self.audio.outputs();
+                    println!("outputs: playing {:?}, system {:?}", o.playing, o.system);
+                    for d in o.devices {
+                        println!("output {} = {}", d.id, d.name);
                     }
                 }
                 // tab video|audio|controls: the settings screen's.
@@ -758,7 +772,7 @@ impl ApplicationHandler for App {
             egui_ctx,
             egui_state,
             game,
-            audio: Audio::new(),
+            audio: Audio::new(settings.output.as_ref().map(|d| d.id.clone())),
             hud: Hud {
                 settings,
                 screen: Screen::Play,
@@ -766,6 +780,7 @@ impl ApplicationHandler for App {
                 confirm_delete: None,
                 loading: None,
                 settings_tab: hud::SettingsTab::default(),
+                outputs: Default::default(),
                 fps: 0.0,
                 frame_ms: 0.0,
                 cpu_ms: 0.0,
@@ -879,7 +894,7 @@ impl ApplicationHandler for App {
             && r.playing()
             && r.script.is_none()
         {
-            let s = r.hud.settings;
+            let s = &r.hud.settings;
             let y = if s.invert_look { -delta.1 } else { delta.1 };
             r.input.look += glam::Vec2::new(delta.0 as f32, y as f32) * MOUSE_SENS * s.look_speed;
         }

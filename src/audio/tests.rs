@@ -203,6 +203,30 @@ fn the_mix_stays_in_bounds_and_moves_smoothly() {
     assert!(worst < 40.0, "a jump {worst}× the bed's RMS");
 }
 
+/// Effects asked for while nothing played the mix are passed over when it plays
+/// again, not heard all at once; what else was asked (here the gains) is kept.
+#[test]
+fn effects_asked_while_unheard_are_passed_over() {
+    let banks = Arc::new(Banks::synthesize());
+    let fanfare = |effects: f32, asked_while_unheard: bool| {
+        let mut o = Offline::new(5, &banks, 0.0);
+        o.scene(Scene::default());
+        o.render(0.5);
+        if asked_while_unheard {
+            o.play(Sfx::Fanfare, 0.8, None, None);
+        }
+        o.send(Cmd::Gains { music: 0.0, effects });
+        o.engine.catch_up();
+        let late = peak(&o.render(1.0));
+        o.play(Sfx::Fanfare, 0.8, None, None);
+        (late, peak(&o.render(1.5)))
+    };
+    let (late, half) = fanfare(0.5, true);
+    let (_, full) = fanfare(1.0, false);
+    assert!(late < 0.01 * full, "played late: {late} against {full}");
+    assert!((half / full - 0.5).abs() < 0.05, "gains lost: {half} against {full}");
+}
+
 #[test]
 fn far_off_sounds_fade_out_of_the_room_too() {
     let ears = engine::Ears::new(Vec3::ZERO, Vec3::X);

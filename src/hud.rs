@@ -21,6 +21,8 @@ pub struct Hud {
     /// What is being opened, shown while it is (from the frame before, as it blocks).
     pub loading: Option<String>,
     pub settings_tab: SettingsTab,
+    /// The sound's outputs, for the settings screen (kept up while its Audio tab is up).
+    pub outputs: crate::audio::Outputs,
     pub fps: f32,
     pub frame_ms: f32,
     pub cpu_ms: f32,

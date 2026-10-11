@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// Multiplier on the base look speed.
@@ -24,6 +24,8 @@ pub struct Settings {
     pub music: bool,
     pub music_volume: f32,
     pub effects_volume: f32,
+    /// The output the sound plays on; None: the system's.
+    pub output: Option<crate::audio::Device>,
     /// Toggled with F11; restored at launch.
     pub fullscreen: bool,
 }
@@ -45,6 +47,7 @@ impl Default for Settings {
             music: true,
             music_volume: 0.8,
             effects_volume: 1.0,
+            output: None,
             fullscreen: false,
         }
     }
@@ -104,5 +107,20 @@ mod tests {
             (s.brightness, s.ui_scale, s.show_fps, s.master_volume),
             (new.brightness, new.ui_scale, new.show_fps, new.master_volume)
         );
+        assert_eq!(s.output, None);
+    }
+
+    /// An output chosen is kept by its id, with its name to show while it isn't there.
+    #[test]
+    fn the_output_chosen_is_kept() {
+        let s = Settings {
+            output: Some(crate::audio::Device {
+                id: "alsa_output.usb-headset.analog-stereo".into(),
+                name: "Headset".into(),
+            }),
+            ..Settings::default()
+        };
+        let back: Settings = serde_json::from_slice(&serde_json::to_vec_pretty(&s).unwrap()).unwrap();
+        assert!(back == s);
     }
 }

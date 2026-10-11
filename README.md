@@ -53,9 +53,12 @@ open or delete. Progress autosaves every 20 s and on pause or quit. Saves live i
 `$XDG_DATA_HOME/hushfold/saves/` on Linux and `%APPDATA%\hushfold\saves\` on
 Windows, one file per game; settings are in `settings.json` beside the folder.
 **Settings** (on the title and pause screens) has three tabs: Video (fullscreen,
-field of view, head bob, brightness, interface size, frame rate), Audio (master,
-music on/off and its volume, effects and ambience) and Controls (look speed,
-invert vertical look, and every key). Each applies as it changes.
+field of view, head bob, brightness, interface size, frame rate), Audio (output,
+master, music on/off and its volume, effects and ambience) and Controls (look speed,
+invert vertical look, and every key). Each applies as it changes. The sound plays
+on the system's output unless another is chosen; on Linux the game is a stream of
+the sound server (PulseAudio, or PipeWire's stand-in), so a mixer lists it and can
+move it too.
 Saves from before the list (`save.json` for the Hall, `great.json` for the Great
 Library) are copied into it the first time a version with it runs, and left where
 they were.
@@ -172,7 +175,10 @@ all back to use.
   (`src/game/sound.rs` tells the mixer where you are); the music is composed
   afresh piece by piece, with quiet between pieces, and chimes are played in its
   key. `HUSHFOLD_SOUND_DIR=dir cargo test --release export_sounds -- --ignored`
-  writes every sound to WAV files.
+  writes every sound to WAV files. It reaches the speakers through the sound
+  server on Linux (the game speaks its protocol itself) and through cpal elsewhere,
+  or where there is no server (`src/audio/output.rs`; `HUSHFOLD_AUDIO=device`
+  takes the cpal way on Linux too).
 - Loose books use semi-physics (`src/loose.rs`): ballistic flight with spin,
   bounces off furniture, and a 4 cm heightfield per floor that landing books
   settle onto, sliding downhill while the support is steeper than they rest on.
@@ -203,7 +209,8 @@ all back to use.
   `take category n`, `unveil`, `library [hall|great]` (a fresh, unsaved one), `grant lumens`,
   `buy <Upgrade>`, `screen title|new|load|intro|play|pause|grimoire|cheats|settings [title]`,
   `tab video|audio|controls` (the settings screen's), `set name value` (a setting,
-  named as in `settings.json`, for this run),
+  named as in `settings.json`, for this run), `outputs` (the sound's outputs as
+  last listed, and list them again),
   `act continue|new hall|new great|open n|delete n|title` (as the menus do; `n`: the
   nth save listed), `stats on|off`, `shot name`, `print` (includes where a charging
   toss would land), `printactive`, `quit`. `fill` and `take` pull books from

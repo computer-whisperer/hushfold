@@ -1,7 +1,7 @@
 //! Sound, all synthesised: effects heard from where they happen, the ambience of
-//! each place, and generative music, mixed on the audio device's thread by
-//! `engine`. Nothing is loaded from disk; the clips are synthesised on a thread at
-//! startup, and effects asked for before they are ready are skipped.
+//! each place, and generative music, mixed by `engine` on the thread of the stream
+//! `output` keeps open. Nothing is loaded from disk; the clips are synthesised on a
+//! thread at startup, and effects asked for before they are ready are skipped.
 //!
 //! Sound is the one place the platform's float maths may be used (`clippy.toml`):
 //! nothing heard is saved or shapes the world.
@@ -12,14 +12,14 @@ mod clips;
 mod dsp;
 mod engine;
 mod music;
+mod output;
 
-use engine::{BLOCK, Cmd, Engine};
+use engine::{Cmd, Engine};
 use glam::Vec3;
-use rodio::{ChannelCount, SampleRate, Source};
-use std::num::NonZero;
+use output::Output;
+pub use output::{Device, Outputs, Playing};
 use std::sync::Arc;
 use std::sync::mpsc::{SyncSender, sync_channel};
-use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Sfx {
@@ -195,82 +195,65 @@ impl Default for Scene {
     }
 }
 
-/// The engine as a rodio source: interleaved stereo, rendered a block at a time.
-struct Output {
-    engine: Engine,
-    buf: [f32; BLOCK * 2],
-    at: usize,
-}
-
-impl Iterator for Output {
-    type Item = rodio::Sample;
-    fn next(&mut self) -> Option<rodio::Sample> {
-        if self.at == self.buf.len() {
-            self.engine.render(&mut self.buf);
-            self.at = 0;
-        }
-        self.at += 1;
-        Some(self.buf[self.at - 1])
-    }
-}
-
-impl Source for Output {
-    fn current_span_len(&self) -> Option<usize> {
-        None
-    }
-    fn channels(&self) -> ChannelCount {
-        NonZero::new(2).unwrap()
-    }
-    fn sample_rate(&self) -> SampleRate {
-        NonZero::new(dsp::SR).unwrap()
-    }
-    fn total_duration(&self) -> Option<Duration> {
-        None
-    }
-}
-
 /// The game's handle on the sound.
 pub struct Audio {
-    /// Held to keep the device open.
-    _sink: Option<rodio::MixerDeviceSink>,
     tx: Option<SyncSender<Cmd>>,
+    out: Option<Output>,
+    /// The output last asked for (an id; None: the system's).
+    chosen: Option<String>,
 }
 
 impl Audio {
-    pub fn new() -> Self {
-        let sink = match rodio::DeviceSinkBuilder::open_default_sink() {
-            Ok(mut s) => {
-                s.log_on_drop(false);
-                s
-            }
-            Err(e) => {
-                eprintln!("hushfold: audio unavailable ({e}); continuing silently");
-                return Audio { _sink: None, tx: None };
-            }
-        };
+    /// Sound on the output `chosen` (an id from `outputs`; None: the system's), or on
+    /// the system's while that one isn't there.
+    pub fn new(chosen: Option<String>) -> Self {
         let (tx, rx) = sync_channel(1024);
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(1, |d| d.as_nanos() as u64);
-        sink.mixer().add(Output {
-            engine: Engine::new(rx, seed),
-            buf: [0.0; BLOCK * 2],
-            at: BLOCK * 2,
-        });
+        let out = Output::start(Engine::new(rx, seed), chosen.clone());
         let banks = tx.clone();
         std::thread::spawn(move || {
             let _ = banks.send(Cmd::Banks(Arc::new(clips::Banks::synthesize())));
         });
         Audio {
-            _sink: Some(sink),
             tx: Some(tx),
+            out: Some(out),
+            chosen,
         }
     }
 
     /// No output device and no synthesis; every play is a no-op. Used by tests.
     #[cfg(test)]
     pub fn silent() -> Self {
-        Audio { _sink: None, tx: None }
+        Audio {
+            tx: None,
+            out: None,
+            chosen: None,
+        }
+    }
+
+    /// Move the sound to the output `chosen` (as for `new`).
+    pub fn choose(&mut self, chosen: Option<String>) {
+        if chosen != self.chosen
+            && let Some(out) = &self.out
+        {
+            out.choose(chosen.clone());
+        }
+        self.chosen = chosen;
+    }
+
+    /// The outputs as last listed, and where the sound is playing.
+    pub fn outputs(&self) -> Outputs {
+        self.out.as_ref().map(Output::outputs).unwrap_or_default()
+    }
+
+    /// Ask for the outputs to be listed again (while they are on show; at most
+    /// every couple of seconds).
+    pub fn list_outputs(&mut self) {
+        if let Some(out) = &mut self.out {
+            out.list();
+        }
     }
 
     fn send(&self, c: Cmd) {

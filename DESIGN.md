@@ -826,7 +826,7 @@ first. F3 shows GPU time from timestamp queries where the adapter has them.
 A warm, quiet library at night, with a middling amount of magic: real things
 (paper, wood, fire, rain, a clock) carry most of it, and the magic is a few soft
 bells and glints where something magical happens. Everything is synthesised;
-`audio::engine` mixes on the device's thread, a 256-frame block at a time:
+`audio::engine` mixes on the output stream's thread, a 256-frame block at a time:
 - **Effects** are banks of clips (synthesised on a thread at startup, ~0.35 s;
   plays before then are skipped), each play a random variant at a slightly
   random rate. `play` sounds at the ears (the interface, the player's own
@@ -859,6 +859,23 @@ bells and glints where something magical happens. Everything is synthesised;
   near thunk peaks ~−18, a category's fanfare ~−13. A look-ahead limiter at
   −6 dBFS and a soft knee guard the sum; the busiest scenes measured (Aura III,
   Rush) peak at −9 to −11, so it rarely acts.
+- **Output** (`audio/output.rs`): a thread of its own keeps one stream open on the
+  output chosen in the settings, or the system's, and opens it again when the
+  choice changes, when the output goes or comes back, or (through cpal) when the
+  system's output changes; it looks every 2 s. While nothing plays the mix, the
+  engine keeps up with the game's scene and gains but passes over the effects
+  asked for, so none play late in a heap when sound returns. On Linux the game is
+  a client of the sound server (PulseAudio's protocol, which PipeWire speaks; the
+  pure-Rust `pulseaudio` crate), so it is a stream there named "Hushfold Library",
+  left to follow the system's output and movable from any mixer. Elsewhere, or
+  with no server, cpal opens the device as it is set (never setting its rate,
+  which on macOS would change it for everything playing), and the engine's 44.1
+  kHz is resampled (Catmull-Rom) and spread over its channels. Before, rodio asked
+  ALSA for its "default" only: without `pipewire-alsa` that is a card's own
+  hardware, and with the card busy rodio fell back to ALSA's JACK plugin; mixers
+  saw neither. cpal 0.18's own PulseAudio host was passed over: it names every
+  stream `cpal-pulseaudio-<pid>` and pins even the default output's stream to the
+  sink that was the default when it opened.
 
 ### Wanted next (sound)
 - Footsteps by surface (boards, stone, rugs, stairs) and by pace.

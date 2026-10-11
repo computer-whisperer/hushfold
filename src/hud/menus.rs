@@ -2,6 +2,7 @@
 //! opening words, and the card shown while a library opens.
 
 use super::*;
+use crate::audio::{Outputs, Playing};
 use crate::game::SaveSummary;
 use std::time::SystemTime;
 
@@ -376,14 +377,14 @@ pub(super) fn settings(ctx: &egui::Context, hud: &mut Hud, actions: &mut Vec<Hud
                     ui.add_space(6.0);
                     let tab = hud.settings_tab;
                     let st = &mut hud.settings;
-                    let before = *st;
+                    let before = st.clone();
                     let tall = (ctx.content_rect().height() * 0.6).max(200.0);
                     egui::ScrollArea::vertical().max_height(tall).show(ui, |ui| {
                         ui.set_min_height(280.0);
                         let grid = egui::Grid::new("settings").num_columns(2).spacing([28.0, 12.0]);
                         grid.show(ui, |ui| match tab {
                             SettingsTab::Video => video(ui, st),
-                            SettingsTab::Audio => audio(ui, st),
+                            SettingsTab::Audio => audio(ui, st, &hud.outputs),
                             SettingsTab::Controls => look(ui, st),
                         });
                         if tab == SettingsTab::Controls {
@@ -448,7 +449,39 @@ fn video(ui: &mut egui::Ui, st: &mut Settings) {
     ui.end_row();
 }
 
-fn audio(ui: &mut egui::Ui, st: &mut Settings) {
+fn audio(ui: &mut egui::Ui, st: &mut Settings, outputs: &Outputs) {
+    row(ui, "Output", None);
+    ui.vertical(|ui| {
+        let system = match &outputs.system {
+            Some(name) => format!("System default ({name})"),
+            None => "System default".into(),
+        };
+        let shown = st.output.as_ref().map_or(system.clone(), |d| d.name.clone());
+        egui::ComboBox::from_id_salt("output")
+            .width(ui.spacing().slider_width)
+            .selected_text(shown)
+            .truncate()
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(st.output.is_none(), system).clicked() {
+                    st.output = None;
+                }
+                for d in &outputs.devices {
+                    let on = st.output.as_ref().is_some_and(|o| o.id == d.id);
+                    if ui.selectable_label(on, &d.name).clicked() {
+                        st.output = Some(d.clone());
+                    }
+                }
+            });
+        let note = match (outputs.playing, &st.output) {
+            (Playing::Nowhere, _) => Some("No output would open; trying again."),
+            (Playing::System, Some(_)) => Some("Not connected: playing on the system default."),
+            _ => None,
+        };
+        if let Some(note) = note {
+            ui.label(RichText::new(note).font(serif(12.0)).color(DIM));
+        }
+    });
+    ui.end_row();
     row(ui, "Master volume", None);
     ui.add(pct(&mut st.master_volume, 0.0..=1.0));
     ui.end_row();
