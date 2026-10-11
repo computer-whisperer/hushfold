@@ -26,10 +26,12 @@ const EBONY: [f32; 4] = [0.04, 0.035, 0.03, 1.0];
 const GLOW: [f32; 3] = [1.0, 0.82, 0.45];
 /// Sheet music, on the stands and desks.
 const SHEET: [f32; 4] = [0.88, 0.82, 0.66, 1.0];
-/// The room in order (seconds after): a run of glints down the harp's strings and the
-/// chimes, the organ's case lighting from within, notes rising from it to circle under
+/// The room in order (seconds after): a run of glints down the harp's strings with the
+/// category's fanfare (a harp's run), then down the chimes as it dies away, ringing
+/// them; the organ's case lighting from within, notes rising from it to circle under
 /// the chandelier, and staves written along the floor either side of the carpet.
-const GLISSANDO: f32 = 0.2;
+const GLISSANDO: f32 = 0.05;
+const CHIMES_RUN: f32 = 1.6;
 const ORGAN_LIGHTS: f32 = 1.0;
 const NOTES_RISE: f32 = 2.0;
 const STAVES: f32 = 1.6;
@@ -86,6 +88,15 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
             pew_end(lib, frame, s, o, cat);
         }
     }
+    // Along the walls: a lyre on the cornice at either end of each category, clear of
+    // its sign over the middle.
+    let mut along_wall = |lib: &mut Library, faces: Vec<(Vec3, Vec3)>, rng: &mut StdRng| {
+        let (faces, cat) = (left_to_right(faces), cats.next().unwrap());
+        lib.add_category(rng, cat, &faces, titles);
+        for end in [faces[0], faces[faces.len() - 1]] {
+            lyre_crest(lib, end, cat);
+        }
+    };
     for s in [-1.0f32, 1.0] {
         let faces: Vec<_> = (0..4)
             .map(|k| {
@@ -93,7 +104,7 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                 lib.wall_bookcase(frame.at(s * RoomFrame::A_HALF, o, 0.0), -across * s)
             })
             .collect();
-        lib.add_category(rng, cats.next().unwrap(), &left_to_right(faces), titles);
+        along_wall(lib, faces, rng);
     }
     for s in [-1.0f32, 1.0] {
         let faces: Vec<_> = (0..4)
@@ -102,7 +113,7 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                 lib.wall_bookcase(frame.at(a, RoomFrame::O_FAR, 0.0), -out)
             })
             .collect();
-        lib.add_category(rng, cats.next().unwrap(), &left_to_right(faces), titles);
+        along_wall(lib, faces, rng);
     }
 }
 
@@ -130,30 +141,84 @@ fn pew_end(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32, cat: usize) {
         line(lib, (m * 0.2, 1.75), (m * 0.13, 2.08), 0.03);
     }
     line(lib, (-0.17, 2.0), (0.17, 2.0), 0.025);
-    // Each string drawn up from its foot in light, one after another, as if plucked.
-    let fin = Finish::Category(cat);
     let lit = |u: f32, v: f32| frame.at(s * (AISLE + 0.006), o + u, v);
+    let mut strings = Vec::new();
     for k in 0..4 {
         let u = -0.075 + k as f32 * 0.05;
         line(lib, (u, 1.47), (u, 1.99), 0.006);
-        let (foot, top) = (lit(u, 1.47), lit(u, 1.99));
+        strings.push((lit(u, 1.47), lit(u, 1.99)));
+    }
+    strung(lib, Finish::Category(cat), &strings, 0.3, None);
+}
+
+/// Strings drawn up in light from their feet (`(foot, top)`) once `fin` is finished,
+/// one after another from `after` seconds, as if plucked, glints rising off each; on
+/// mover `rides` if given.
+fn strung(lib: &mut Library, fin: Finish, strings: &[(Vec3, Vec3)], after: f32, rides: Option<u32>) {
+    let drawn = Change::Arrives {
+        from: Vec3::ZERO,
+        grow: 0.0,
+    };
+    for (k, &(foot, top)) in strings.iter().enumerate() {
+        let at = after + k as f32 * 0.18;
         let string = lib.pole_inst(foot, top, 0.008, kind::CRYSTAL, rgba(GLOW, 1.6));
-        let drawn = Change::Arrives {
-            from: Vec3::ZERO,
-            grow: 0.0,
-        };
-        let after = 0.3 + k as f32 * 0.18;
-        lib.waiting(foot, Awaits::new(fin, drawn).after(after).over(0.7), [string]);
+        let m = lib.mover(foot, Motion::Still, 0.0, rides);
+        lib.awaiting(m, Awaits::new(fin, drawn).after(at).over(0.7));
+        lib.moving(m, string);
         lib.sparks(Sparks {
-            delay: after + 0.3,
+            delay: at + 0.3,
             lasts: Some(0.3),
             rate: 30.0,
-            spread: Vec3::new(0.01, 0.2, 0.01),
+            spread: Vec3::new(0.01, (top - foot).length() * 0.4, 0.01),
             vel: Vec3::Y * 0.3,
             life: 1.2,
             ..Sparks::burst(fin, (foot + top) * 0.5)
         });
     }
+}
+
+/// A gilt lyre on the cornice of the case side at `c` (its front plane at floor
+/// level) facing `n`, rising out of it once category `cat` is home, then strung with
+/// light: as the rows' lyres are, for the cases on the walls.
+fn lyre_crest(lib: &mut Library, (c, n): (Vec3, Vec3), cat: usize) {
+    let fin = Finish::Category(cat);
+    let right = Vec3::Y.cross(n);
+    let foot = c + Vec3::Y * (UNIT_H + 0.13) - n * 0.12;
+    // Its arms swelling out from the foot and turning in at the top, a yoke across
+    // them, made flat (x across, y up) as one piece.
+    let half = [
+        (0.0, 0.012),
+        (0.045, 0.025),
+        (0.1, 0.09),
+        (0.15, 0.2),
+        (0.175, 0.33),
+        (0.165, 0.43),
+        (0.13, 0.5),
+    ];
+    let arms: Vec<Vec3> = (half.iter().rev().map(|&(x, y)| Vec3::new(-x, y, 0.0)))
+        .chain(half[1..].iter().map(|&(x, y)| Vec3::new(x, y, 0.0)))
+        .collect();
+    let mut body = Mesh::sweep(&arms, &[0.012], &circle(1.0, 8), true);
+    let yoke = Mesh::rod(Vec3::new(-0.165, 0.43, 0.0), Vec3::new(0.165, 0.43, 0.0), 0.022, 8);
+    body.add(&yoke, Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+    let body = lib.shape(body);
+    let face = Quat::from_mat3(&Mat3::from_cols(right, Vec3::Y, n));
+    let rises = Change::Arrives {
+        from: Vec3::Y * -0.55,
+        grow: 0.6,
+    };
+    let m = lib.waiting(
+        foot,
+        Awaits::new(fin, rises).over(1.6),
+        [body.at(foot, face, kind::METAL, rgba(GILT, 1.0))],
+    );
+    let strings: Vec<(Vec3, Vec3)> = (0..4)
+        .map(|k| {
+            let x = -0.06 + k as f32 * 0.04;
+            (foot + right * x + Vec3::Y * 0.05, foot + right * x + Vec3::Y * 0.42)
+        })
+        .collect();
+    strung(lib, fin, &strings, 1.2, Some(m));
 }
 
 /// Panelling where no case stands, a moonlit window in each side wall past the
@@ -1280,7 +1345,7 @@ fn chimes(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     let fin = Finish::Room(frame.dept);
     lib.cue(Cue {
         finish: fin,
-        delay: GLISSANDO + 0.5,
+        delay: CHIMES_RUN,
         sound: Sfx::Chime,
         at: frame.at(a, o, 1.5),
         volume: 0.8,
@@ -1291,7 +1356,7 @@ fn chimes(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         let hang = frame.at(x, o, top);
         // The room in order: a beater run down the tubes after the harp.
         lib.sparks(Sparks {
-            delay: GLISSANDO + 0.5 + k as f32 * 0.1,
+            delay: CHIMES_RUN + k as f32 * 0.1,
             lasts: Some(0.25),
             rate: 50.0,
             spread: Vec3::new(0.03, len * 0.3, 0.03),

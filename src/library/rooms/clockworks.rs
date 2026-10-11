@@ -34,12 +34,12 @@ const PILLAR_W: f32 = UNIT_PITCH;
 const TURRET: f32 = 1.7;
 /// The cases' height to the top of their caps.
 const CASE_TOP: f32 = UNIT_H + 0.13;
-/// The room in order (seconds after): the great clock strikes, the floating clocks
-/// take their works back in turn, nearest the door first, and the clock in the floor
-/// spreads out and its hours kindle.
-const STRIKES: f32 = 0.3;
-const WORKS: (f32, f32) = (0.8, 0.4);
-const FLOOR_CLOCK: f32 = 2.0;
+/// The room in order (seconds after): the floating clocks take their works back in
+/// turn, nearest the door first; the great clock strikes as the category's fanfare
+/// dies away; and the clock in the floor spreads out and its hours kindle.
+const WORKS: (f32, f32) = (0.6, 0.4);
+const STRIKES: f32 = 1.5;
+const FLOOR_CLOCK: f32 = 2.5;
 
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     // The bays and the workshop are laid out round a door in the middle of the wall.
