@@ -5,7 +5,9 @@
 //! double bass; instruments hung on the walls, a chandelier over the aisle. The
 //! harp's strings glow and a few notes drift in the air over it, as if it had just
 //! been played; the chimes stir, and a metronome on the harpsichord keeps a slow
-//! time.
+//! time. Put in order, the organ glows through its fretwork, notes circle under the
+//! chandelier and staves are written along the floor; each category's lyres are
+//! strung with light when it is home.
 
 use super::hearth_library::{candle, turned_leg};
 use super::*;
@@ -970,6 +972,8 @@ fn notes_ring(lib: &mut Library, frame: &RoomFrame) {
         rate: TAU / 60.0,
     };
     let ring = lib.mover(centre, turns, 0.0, None);
+    // Still until the notes are in their places, then easing round (only its turning
+    // waits: a kindling to full brightness changes nothing else).
     let starts = Awaits::new(fin, Change::Kindles { dim: 1.0 })
         .after(NOTES_RISE + 4.5)
         .over(6.0)

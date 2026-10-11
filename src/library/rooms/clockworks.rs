@@ -4,7 +4,9 @@
 //! middle of the far wall with its pendulum below; a workbench and an automaton (a
 //! brass owl looking about the room) stand by the door; gears turn on the walls and
 //! under the ceiling, meshing in trains that keep their teeth together, and the
-//! clocks keep time.
+//! clocks keep time. Put in order, the floating clocks take their works back, the
+//! great clock strikes, and a clock face spreads over the floor before it; a wheel
+//! rises on each case side's cornice as it fills.
 
 use super::hearth_library::{FLAME, turned_leg};
 use super::*;
@@ -684,8 +686,8 @@ pub(in crate::library) fn stopped_clock(lib: &mut Library, c: Vec3, n: Vec3, r: 
 
 /// What a floating clock (its dial at `c`, facing `n`, of radius `r`) takes back when
 /// the room is in order: a bell set down on its case and a pair of wheels coming in
-/// behind it and starting to turn, their teeth showing over its rim. The `k`th clock
-/// to start again (nearest the door first) a moment after the one before.
+/// behind it and starting to turn, their teeth showing over its rim; each clock a
+/// moment after the one before, nearest the door first (`k`, its place).
 fn clock_works(lib: &mut Library, c: Vec3, n: Vec3, r: f32, k: usize) {
     let fin = Finish::Room(dept::CLOCKWORKS);
     let at = WORKS.0 + WORKS.1 * k as f32;
@@ -725,7 +727,8 @@ fn clock_works(lib: &mut Library, c: Vec3, n: Vec3, r: f32, k: usize) {
         Awaits::new(fin, comes_in).after(at).over(1.8),
         std::iter::empty::<Inst>(),
     );
-    // Both wheels start together, so their teeth stay together.
+    // Only their turning waits (a kindling to full brightness changes nothing else);
+    // both start together, so their teeth stay together.
     let starts = Awaits::new(fin, Change::Kindles { dim: 1.0 })
         .after(at + 1.0)
         .over(2.5)
