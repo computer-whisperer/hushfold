@@ -132,7 +132,8 @@ all back to use.
   Charm (Great Library: a heap you aim at streams to the great heap in the
   atrium, where couriers can carry it on to the rooms), Echo (the heaps holding
   the kind of book you seek are marked through the walls), Summon Series (loose
-  volumes of the active book's series fly to your arms), Shelving Rush (for a
+  volumes of the active book's series fly to your arms, or of the series you seek,
+  sorted by series, so even a series none of which you hold), Shelving Rush (for a
   few seconds, books you carry near their slots fly home as fast as you pass, from
   in front of their shelves).
 - A familiar with nothing to do for two minutes comes back to your shoulder by

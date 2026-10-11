@@ -282,7 +282,7 @@ pub fn upg_def(u: Upg) -> UpgDef {
         ),
         Upg::Summon => (
             "Summon Series",
-            "Loose volumes of the active book's series fly to your arms: from the room you are in, then from the whole floor, then from anywhere.",
+            "Loose volumes of the active book's series, or of the series you seek, fly to your arms: from the room you are in, then from the whole floor, then from anywhere.",
             Tier::Spells,
         ),
         Upg::Rush => (

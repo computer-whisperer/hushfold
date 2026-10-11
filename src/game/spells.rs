@@ -172,12 +172,27 @@ impl Game {
         true
     }
 
-    /// Summon Series: loose volumes of the active book's series in reach (nearby, the
-    /// floor, anywhere by level), nearest first, dissolve where they lie and fly to
-    /// the arms from beside you. False, with a hint, if none can come.
+    /// Summon Series: loose volumes of the series sought (sorted by series), else of
+    /// the active book's, in reach (nearby, the floor, anywhere by level), nearest
+    /// first, dissolve where they lie and fly to the arms from beside you. Seeking
+    /// calls a series with no volume to hand, as when its last lie out of reach.
+    /// False, with a hint, if none can come.
     pub(super) fn summon(&mut self, lvl: u32, audio: &mut Audio) -> bool {
-        let Some(active) = self.active_book() else {
-            self.hint = Some(("Hold a volume of the series to summon the rest.".into(), 2.0));
+        let sought = match self.sought() {
+            Some((Group::Series, s)) => Some(s as u32),
+            _ => None,
+        };
+        let held = self.active_book().map(|b| self.lib.books[b as usize].series);
+        let Some(series) = sought.or(held) else {
+            let seek = if self.level(Upg::Fine) > 0 {
+                "sort by series (R) and seek it (F)"
+            } else {
+                "seek it by series (Fine Fingers)"
+            };
+            self.hint = Some((
+                format!("Hold a volume of the series, or {seek}, to summon the rest."),
+                3.0,
+            ));
             return false;
         };
         let room = self.room_in_arms();
@@ -185,7 +200,6 @@ impl Game {
             self.hint = Some(("Your arms are full — file some books first.".into(), 2.0));
             return false;
         }
-        let series = self.lib.books[active as usize].series;
         let mut books = self.summonable(series, lvl);
         if books.is_empty() {
             self.hint = Some(("No loose volumes of that series lie in reach.".into(), 2.0));
@@ -515,6 +529,45 @@ mod tests {
         assert_eq!(g.held.len(), books.len(), "every loose volume came");
         assert!(loose_of(&g, series).is_empty());
         assert!(!g.summon(3, &mut audio), "none left to call");
+    }
+
+    /// Seeking a series, sorted by series, Summon Series calls it with none of it in
+    /// hand: F at the shelf where it goes, then the spell.
+    #[test]
+    fn summon_calls_a_series_sought() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = Audio::silent();
+        g.upg[upg_index(Upg::Arms)] = 4;
+        g.upg[upg_index(Upg::Sift)] = 1;
+        let loose_of = |g: &Game, s: u32| -> Vec<u32> {
+            (0..g.lib.books.len() as u32)
+                .filter(|&b| g.lib.books[b as usize].series == s && g.loose.is_resting(b))
+                .collect()
+        };
+        let series = (0..g.lib.series.len() as u32)
+            .find(|&s| loose_of(&g, s).len() >= 4)
+            .unwrap();
+        let books = loose_of(&g, series);
+        assert!(!g.summon(3, &mut audio), "nothing held, nothing sought");
+        let first = &g.lib.books[books[0] as usize];
+        let (face, row) = (first.face, first.row);
+        let run = (g.lib.runs[face as usize][row as usize].iter())
+            .find(|r| r.series == series)
+            .copied();
+        g.aim = Aim::Shelf {
+            face,
+            row,
+            run,
+            dist: 1.0,
+        };
+        g.group = Group::Category;
+        g.press_seek(&mut audio);
+        assert!(!g.summon(3, &mut audio), "seeking its category isn't seeking it");
+        g.group = Group::Series;
+        assert_eq!(g.sought(), Some((Group::Series, series as usize)));
+        assert!(g.summon(3, &mut audio));
+        assert_eq!(g.held.len(), books.len(), "every loose volume came");
+        assert!(loose_of(&g, series).is_empty());
     }
 
     /// Shelving Rush files the carried books near their slots, all at once rather
