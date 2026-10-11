@@ -39,11 +39,15 @@ const CEILING_REACH: f32 = 4.0;
 /// holding them.
 const SHED_HEIGHT: f32 = 0.9;
 /// How far across tall furniture a book on top of it looks for the way off (a pillar
-/// of cases is some 3.6 m across), and the lip up to a neighbouring top that a book
-/// going across the tops steps up rather than stops at (a case's cap stands a
-/// centimetre over the core between cases).
+/// of cases is some 3.6 m across).
 const WAY_OFF: f32 = 4.0;
+/// How far below the top of tall furniture (not a wall) a book reaching it steps up
+/// onto it rather than stops at it: from a neighbouring top (a case's cap stands a
+/// centimetre over the core between cases), or flying in just under its top.
 const LIP: f32 = 0.1;
+/// How much further a drop (over a well's railing) counts than floor as the way off
+/// a top a book isn't going over: one coming down on a railing lands on the gallery.
+const DROP_PAST: f32 = 0.5;
 /// How fast a book that comes down on tall furniture goes off it, at least: one
 /// thrown over keeps its own speed, one dropped slides off and falls beside it.
 const SLIDE_OFF: f32 = 1.5;
@@ -407,16 +411,16 @@ impl Grid {
     }
 
     /// How far from `at` along `dir` is a way down off tall furniture within `reach`:
-    /// where a book can come down (floor, low furniture or a drop), `WAY_DOWN` square.
-    /// Never through a wall or out of the level.
-    fn way_down(&self, at: Vec2, dir: Vec2, reach: f32) -> Option<f32> {
+    /// where a book can come down (floor, low furniture or a drop), `WAY_DOWN` square,
+    /// and whether it is a drop. Never through a wall or out of the level.
+    fn way_down(&self, at: Vec2, dir: Vec2, reach: f32) -> Option<(f32, bool)> {
         let low = |q: Vec2| self.base_at(q) - self.y <= SHED_HEIGHT;
         let side = dir.perp() * (WAY_DOWN * 0.5);
         let mut down = None;
-        for k in 1..=((reach + WAY_DOWN) / SEARCH_STEP) as usize {
+        for k in 1..=((reach + WAY_DOWN) / SEARCH_STEP).round() as usize {
             let d = k as f32 * SEARCH_STEP;
             let q = at + dir * d;
-            if !(q.cmpgt(self.min).all() && q.cmplt(self.max).all()) || self.base_at(q) >= self.roof - 0.05 {
+            if !(q.cmpgt(self.min).all() && q.cmplt(self.max).all()) || self.wall(self.base_at(q)) {
                 return None;
             }
             if !(low(q) && low(q + side) && low(q - side)) {
@@ -428,7 +432,8 @@ impl Grid {
                 return None;
             }
             if d - start >= WAY_DOWN - 1e-4 {
-                return (!self.crosses_wall(at, q)).then_some(start);
+                let drop = self.is_hole(at + dir * start);
+                return (!self.crosses_wall(at, q)).then_some((start, drop));
             }
         }
         None
@@ -436,22 +441,33 @@ impl Grid {
 
     /// The way off tall furniture from `at` on top of it, and how far: along `travel`
     /// if that comes down within `WAY_OFF`, so a book thrown over a case that falls
-    /// short on its top goes on over; else the shortest of eight ways.
+    /// short on its top goes on over; else the shortest of eight ways, floor before a
+    /// drop not `DROP_PAST` nearer.
     fn way_off(&self, at: Vec2, travel: Vec2) -> Option<(Vec2, f32)> {
         let along = (travel.length() > 0.1).then(|| travel.normalize());
+        let down = |d: Vec2| self.way_down(at, d, WAY_OFF).map(|(far, drop)| (d, far, drop));
         along
-            .and_then(|d| Some((d, self.way_down(at, d, WAY_OFF)?)))
+            .and_then(down)
             .or_else(|| {
                 (0..8)
                     .map(|i| Vec2::from_angle(i as f32 * std::f32::consts::FRAC_PI_4))
-                    .filter_map(|d| Some((d, self.way_down(at, d, WAY_OFF)?)))
-                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .filter_map(down)
+                    .min_by(|a, b| {
+                        let far = |w: &(Vec2, f32, bool)| w.1 + if w.2 { DROP_PAST } else { 0.0 };
+                        far(a).total_cmp(&far(b))
+                    })
             })
+            .map(|(d, far, _)| (d, far))
+    }
+
+    /// Whether a solid whose top is at `top` is a wall: up to the ceiling.
+    fn wall(&self, top: f32) -> bool {
+        top >= self.roof - 0.05
     }
 
     /// Walls: solids up to the ceiling, which nothing passes over, and closed gates.
     fn walls(&self) -> impl Iterator<Item = (Vec3, Vec3)> + '_ {
-        let walls = (self.solids.iter().copied()).filter(|&(_, mx)| mx.y >= self.roof - 0.05);
+        let walls = (self.solids.iter().copied()).filter(|&(_, mx)| self.wall(mx.y));
         walls.chain(self.gates.iter().map(|&(_, mn, mx)| (mn, mx)))
     }
 
@@ -1504,8 +1520,9 @@ impl Loose {
             if p.x <= lo.x || p.x >= hi.x || p.z <= lo.z || p.z >= hi.z || p.y >= hi.y {
                 continue;
             }
-            // Coming down on it, or (a tall piece) going across tops to one a lip higher.
-            let lip = if g.tall(mx) { LIP } else { 1e-4 };
+            // Coming down on it, or reaching the top of tall furniture (not a wall) within
+            // a lip: going across tops to one a lip higher, or flying in just under it.
+            let lip = if g.tall(mx) && !g.wall(mx.y) { LIP } else { 1e-4 };
             if prev.y >= hi.y - lip {
                 if !g.tall(mx) {
                     continue; // a table top: the landing test below catches it
@@ -2211,7 +2228,7 @@ mod tests {
 
     /// No book stays on top of tall furniture anywhere in the Great Library: dropped
     /// over every tall piece, at its corners, the middles of its sides and its middle,
-    /// each comes off. (Some lay at the ends of a top hemmed in by neighbours a lip
+    /// and along every closed veil, each comes off. (Some lay at the ends of a top hemmed in by neighbours a lip
     /// higher, as the Clockworks' pillars are by their cases.)
     #[test]
     fn books_come_off_every_tall_top() {
@@ -2228,7 +2245,7 @@ mod tests {
         for lv in 0..loose.grids.len() {
             let g = &loose.grids[lv];
             let solids: Vec<(Vec3, Vec3)> = (g.solids.iter().copied())
-                .filter(|&(_, mx)| g.tall(mx) && mx.y < g.roof - 0.05)
+                .filter(|&(_, mx)| g.tall(mx) && !g.wall(mx.y))
                 .collect();
             for (mn, mx) in solids {
                 tops += 1;
@@ -2248,6 +2265,24 @@ mod tests {
             }
         }
         assert!(tops > 300, "only {tops} tall tops");
+        // And over each closed veil, which no way off goes over.
+        for i in 0..loose.gate_boxes.len() {
+            loose.set_gate(i, true);
+        }
+        for &(_, mn, mx) in &loose.gate_boxes.clone() {
+            loose.take(&books);
+            for (i, &b) in books.iter().enumerate() {
+                let f = (i as f32 + 0.5) / books.len() as f32;
+                let at = Vec3::new(mn.x + (mx.x - mn.x) * f, mx.y + 0.3, mn.z + (mx.z - mn.z) * f);
+                loose.throw(b, at, Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY, Vec3::ZERO, 0.0);
+            }
+            fly(&mut loose, lib.books.len(), 4.0);
+            for &b in &books {
+                let r = loose.rest[b as usize];
+                assert!(loose.is_resting(b), "book {b} still in the air over a veil {mn}..{mx}");
+                assert!(!loose.out_of_reach(b), "book {b} stayed on a veil {mn}..{mx} at {r:?}");
+            }
+        }
     }
 
     /// A book a save left on top of a Clockworks pillar, at the end hemmed in by the
