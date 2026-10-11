@@ -2075,23 +2075,33 @@ fn rain(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, fw: f32) -> vec4<f32
 // that rises through smoke and billows slowly in cloud. Lit by the room and its lights
 // as a volume, from below and through.
 fn puff(i: VOut, cam: vec3<f32>, ray: vec3<f32>, seen: f32, len: f32) -> vec4<f32> {
-    // In q = 2 local the ellipsoid is the unit sphere: |q|^2 = qa u^2 + 2 qb u + qc.
-    let qa = 4.0 * dot(ray, ray);
-    let qb = 4.0 * dot(cam, ray);
-    let qc = 4.0 * dot(cam, cam);
-    let disc = qb * qb - qa * (qc - 1.0);
-    if (disc <= 0.0) {
+    // In q = 2 local the ellipsoid is the unit sphere. The ray q = o + dir u passes
+    // nearest its middle at um, where 1 - |q|^2 is h2, and is inside it reach either
+    // side: with u = um + reach v, 1 - |q|^2 = h2 (1 - v^2). Taken about um every term
+    // stays small. (Taken about the eye they are thousands from a few metres off, and
+    // what f32 leaves of their difference could fall below nothing, the alpha with it,
+    // brightening what is behind: a fire flashing white and magenta through its smoke.)
+    let o = 2.0 * cam;
+    let dir = 2.0 * ray;
+    let dd = dot(dir, dir);
+    let um = -dot(o, dir) / dd;
+    let nearest = o + dir * um;
+    let h2 = 1.0 - dot(nearest, nearest);
+    if (h2 <= 0.0) {
         return vec4<f32>(0.0);
     }
-    let sq = sqrt(disc);
-    let u0 = max((-qb - sq) / qa, 0.0);
-    let u1 = min((-qb + sq) / qa, seen);
-    if (u1 <= u0) {
+    let reach = sqrt(h2 / dd);
+    // From where the ray enters (or the eye) to where it leaves (or meets the scene).
+    let v0 = max(-um / reach, -1.0);
+    let v1 = min((seen - um) / reach, 1.0);
+    if (v1 <= v0) {
         return vec4<f32>(0.0);
     }
+    let u0 = um + reach * v0;
+    let u1 = um + reach * v1;
     // The integral of 1 - |q|^2, in metres, as a share of what the sphere's middle
     // holds (4/3 its radius).
-    let along = (1.0 - qc) * (u1 - u0) - qb * (u1 * u1 - u0 * u0) - qa * (u1 * u1 * u1 - u0 * u0 * u0) / 3.0;
+    let along = h2 * reach * ((v1 - v0) - (v1 * v1 * v1 - v0 * v0 * v0) / 3.0);
     let r = 0.5 * min(i.scale.x, min(i.scale.y, i.scale.z));
     let thick = along * len / (1.333 * r);
     let t = g.cam_pos.w;
