@@ -111,10 +111,10 @@ all back to use.
   each level), Broad Strokes and Fine Fingers (seek by department, by series),
   Long Toss, Homing Toss (a book you toss that lands in front of its own shelf,
   near its slot, slips into it), Lodestone Grasp (long reach).
-- **Filing**: Deeper Arms (6 → 96 books), Swift Slippers, Tidy Arms
-  (self-sorting armful, nearest home first), Series Bundle (file a whole series
-  at once), Shelving Aura (books drift home as you pass in front of their
-  shelves).
+- **Filing**: Deeper Arms (6 → 96 books, 192 in the Great Library), Swift
+  Slippers, Tidy Arms (self-sorting armful, nearest home first), Series Bundle
+  (file a whole series at once), Shelving Aura (books drift home as you pass in
+  front of their shelves).
 - **Familiars**: folded-paper birds that ride with you until you post them. A
   shelver (a crane) files the books lying near its post whose shelves are close
   by; a courier (a swift) carries books lying near its post to a shelver that can

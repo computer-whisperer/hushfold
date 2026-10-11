@@ -500,8 +500,9 @@ I–II (harder, tighter throws), Homing Toss I–II (a tossed book landing in fr
 of its own shelf within 2 / 3.5 m of its slot, along the floor, with nothing in
 the way of the slot's front, slips into it;
 `Game::aim_toss` sets pitch and charge to land on a point, for the bot and
-tests), Lodestone Grasp (long reach). Filing: Deeper Arms I–IV,
-Swift Slippers I–II, Tidy Arms (stack sorted by slot, active = nearest target),
+tests), Lodestone Grasp (long reach). Filing: Deeper Arms I–V
+(6, 12, 24, 48, 96, 192 books; V in the Great Library only), Swift Slippers I–II,
+Tidy Arms (stack sorted by slot, active = nearest target),
 Series Bundle (place whole series at once), Shelving Aura I–III (books float to
 nearby slots on their own, from in front of their cases). Familiars: shelvers and couriers, bought one at a time,
 and Familiar Wings I–II (faster, carry more, reach further). Spells, cast with the
@@ -615,8 +616,8 @@ trip; and it buys the cheapest skill it can afford, or favours one tech path
 (`HUSHFOLD_PATH`). Costs are fitted to the purchase schedules in `tuning/`
 (`tuning/retune.py`). Between slots it charges the straight line (no less than the
 difference of their walks from where filing began): right once the aura files
-through a case, optimistic before it. The late-game engine is Deeper Arms IV ×
-Shelving Aura, so the aura's books-per-second rate is the main dial. History:
+through a case, optimistic before it. The late-game engine is Deeper Arms IV (V in
+the Great Library) × Shelving Aura, so the aura's books-per-second rate is the main dial. History:
 - 0.1.0 (aura 6/15/40 books/s, 11 m at III): ~1.0 h, the whole East Wing in ~16 min.
 - 0.1.1: ~1.4 h, the East Wing the last ~30 min, last upgrade affordable at ~86% shelved.
 - Loose piles: ~1.5 h, the East Wing still the last ~30 min, last upgrade at ~92%.
@@ -664,6 +665,12 @@ Shelving Aura, so the aura's books-per-second rate is the main dial. History:
   rooms' own heaps went ~14k, so the engine skills come later (Deeper Arms IV 4.6
   → 5.6 h, Shelving Aura III 5.4 → 6.8 h) and each room after it opens 1–1.75 h
   later (the Hearth Library 6.0 → 7.8 h). Costs not refit for it.
+- 13b8150 → dc017fa (the 0.2.2 fixes, the celebrations): the Great Library 13.11 →
+  13.23 h, the purchases parting from the run before by two books at ~67 min (not
+  traced). Within one build the bot repeats itself exactly.
+- Deeper Arms V (192 books, 9,000 ✦, the Great Library only, between Shelver III
+  and Sift III): bought at 8.2 h with ~59k shelved, Sift III ~28 min later than
+  without it; the Great Library 13.23 → 12.64 h. Other costs not refit.
 
 ## Rendering
 Instances of the box, or of a mesh fitted to it (`gfx/mesh.rs`; an instance's

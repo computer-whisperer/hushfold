@@ -331,7 +331,7 @@ pub fn upg_costs(layout: Layout, u: Upg) -> &'static [u64] {
         Layout::Great => match u {
             Upg::Signposts => &[11],
             Upg::Glow => &[20, 300, 980],
-            Upg::Arms => &[38, 120, 520, 5100],
+            Upg::Arms => &[38, 120, 520, 5100, 9000],
             Upg::Sift => &[72, 1000, 9800, 11006],
             Upg::Slippers => &[82, 9801],
             Upg::Glimpse => &[150, 1900],
@@ -895,7 +895,7 @@ impl Game {
     }
 
     pub fn capacity(&self) -> usize {
-        [6, 12, 24, 48, 96][self.level(Upg::Arms) as usize]
+        [6, 12, 24, 48, 96, 192][self.level(Upg::Arms) as usize]
     }
 
     /// The places book `b` takes in the arms: a folio's `FOLIO`, else one.
@@ -3894,6 +3894,22 @@ mod tests {
         assert!(g.seek.is_none());
         g.set_in_use(Upg::Fine, 1, &mut audio);
         assert_eq!(g.groups(), vec![Group::Category, Group::Series]);
+    }
+
+    /// Each level of Deeper Arms carries twice the books of the one before, to the
+    /// last a library offers: 96 in the Hall, 192 in the Great Library.
+    #[test]
+    fn deeper_arms_doubles_to_its_last_level() {
+        for (layout, most) in [(Layout::Hall, 96), (Layout::Great, 192)] {
+            let mut g = Game::new(layout);
+            let mut was = g.capacity();
+            for l in 1..=upg_costs(layout, Upg::Arms).len() as u32 {
+                g.upg[upg_index(Upg::Arms)] = l;
+                assert_eq!(g.capacity(), was * 2);
+                was = g.capacity();
+            }
+            assert_eq!(was, most, "{}", layout.name());
+        }
     }
 
     /// A Great Library save from before the upper floors were relaid (generation 4)
