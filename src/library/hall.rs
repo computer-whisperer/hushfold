@@ -113,8 +113,9 @@ pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
         counts: vec![0],
         need: 0.4,
     });
-    // What waits for a wing (the walls at their ends wake as well: `wall_map`,
-    // `clock`) and the whole Hall to be put in order.
+    // What waits for a category, a wing (the walls at their ends wake as well:
+    // `wall_map`, `clock`) and the whole Hall to be put in order.
+    lib.crests();
     for wing in 0..2 {
         lib.runner(wing);
     }
@@ -1995,10 +1996,64 @@ impl Library {
     }
 }
 
-/// What the Hall does when a wing, or the whole of it, is put in order (`celebrate`):
-/// the West Wing ends at a map and the East at a clock, and the reading room between
-/// them is the night sky.
+/// What the Hall does when a category, a wing or the whole of it is put in order
+/// (`celebrate`): the West Wing ends at a map and the East at a clock, and the reading
+/// room between them is the night sky.
 impl Library {
+    /// When a category is in order, a gilt crescent (the library's emblem) on a turned
+    /// finial rises out of the cornice at either end of its run, on its side: over the
+    /// stiles there, which hide it until then.
+    fn crests(&mut self) {
+        let knop = self.turned(
+            &[
+                (0.0, 0.0),
+                (0.045, 0.0),
+                (0.045, 0.012),
+                (0.032, 0.024),
+                (0.04, 0.05),
+                (0.028, 0.075),
+                (0.011, 0.09),
+                (0.011, 0.15),
+                (0.0, 0.15),
+            ],
+            16,
+        );
+        let ball = self.shape(Mesh::sphere(12)).sized(Vec3::splat(0.045));
+        let moon = self.shape(Mesh::prism(&crescent(0.085, 0.068, 0.04, 14), 0.012));
+        let gilt = rgba(GILT, 1.0);
+        for cat in 0..self.catalog.categories.len() {
+            let faces: Vec<usize> = self.faces_of(cat).collect();
+            let (Some(&first), Some(&last)) = (faces.first(), faces.last()) else {
+                continue;
+            };
+            let fin = Finish::Category(cat);
+            for (f, end) in [(first, -1.0f32), (last, 1.0)] {
+                let face = &self.faces[f];
+                // Over the end stile's middle, just behind the face, on the crown.
+                let along = face.right * (end * (UNIT_W * 0.5 - 0.05));
+                let foot = face.center + along - face.normal * 0.03 + Vec3::Y * (UNIT_H + 0.13);
+                let horns_up = face.rot() * Quat::from_rotation_z(FRAC_PI_2);
+                let parts = [
+                    knop.at(foot, Quat::IDENTITY, kind::METAL, gilt),
+                    ball.inst(foot + Vec3::Y * 0.165, Quat::IDENTITY, kind::METAL, gilt),
+                    moon.at(foot + Vec3::Y * 0.27, horns_up, kind::METAL, gilt),
+                ];
+                let rises = Change::Arrives {
+                    from: Vec3::Y * -0.32,
+                    grow: 0.5,
+                };
+                self.waiting(foot, Awaits::new(fin, rises).after(1.5).over(2.2), parts);
+                self.sparks(Sparks {
+                    delay: 2.6,
+                    lasts: Some(0.5),
+                    rate: 40.0,
+                    spread: Vec3::splat(0.06),
+                    ..Sparks::burst(fin, foot + Vec3::Y * 0.3)
+                });
+            }
+        }
+    }
+
     /// A runner down wing `wing`'s middle aisle once it is in order, from the reading
     /// room's rug to the wall at its end: rugs like that one settling one after another
     /// outward, each with a breath of gold as it lands. Flat on the floor, under any
@@ -2372,6 +2427,19 @@ impl Library {
             ..Sparks::motes(fin, ch + Vec3::Y * 0.3, Vec3::new(2.8, 0.7, 2.8))
         });
     }
+}
+
+/// A crescent's outline: a disc `r` round, less one `cut` round whose middle is `off`
+/// along +x, so its horns point that way; `n` steps along each edge.
+fn crescent(r: f32, cut: f32, off: f32, n: usize) -> Vec<Vec2> {
+    // Where the edges meet, as angles about each disc's middle.
+    let x = (r * r - cut * cut + off * off) / (2.0 * off);
+    let h = libm::sqrtf(r * r - x * x);
+    let (a, b) = (libm::atan2f(h, x), libm::atan2f(h, x - off));
+    let round = |c: Vec2, radius: f32, t: f32| c + Vec2::new(libm::cosf(t), libm::sinf(t)) * radius;
+    let outer = (0..n).map(|k| round(Vec2::ZERO, r, a + (TAU - 2.0 * a) * k as f32 / n as f32));
+    let inner = (0..n).map(|k| round(Vec2::X * off, cut, -b - (TAU - 2.0 * b) * k as f32 / n as f32));
+    outer.chain(inner).collect()
 }
 
 /// A star's outline: a point `tips[k]` out for each of `tips`, going round from +x,
