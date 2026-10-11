@@ -1,6 +1,7 @@
 //! Where books are drawn from: books lying still (in piles or on shelves) and the
 //! ghosts of empty slots are kept in chunks of space, each rebuilt and re-uploaded
-//! only when something in it changes. Books on the move are drawn per frame.
+//! only when something in it changes. Books on the move are drawn per frame, as are a
+//! bookcase side's while it ripples, finished (`game::cases`, which holds them out).
 
 use crate::game::BookState;
 use crate::gfx::Inst;
@@ -121,9 +122,10 @@ impl Scene {
         d.state != state
     }
 
-    /// Redraw the ghost of book `b`'s slot.
-    pub fn ghost_changed(&mut self, slot: Vec3) {
-        let c = self.chunk_at(slot);
+    /// Rebuild the chunk holding `p`: a slot whose ghost changed, or a shelved book
+    /// held out of its chunk or put back.
+    pub fn redraw_at(&mut self, p: Vec3) {
+        let c = self.chunk_at(p);
         self.chunks[c as usize].rebuild = true;
     }
 
@@ -152,7 +154,7 @@ impl Scene {
             return;
         }
         for (_, slot) in [self.active, active].into_iter().flatten() {
-            self.ghost_changed(slot);
+            self.redraw_at(slot);
         }
         self.active = active;
     }

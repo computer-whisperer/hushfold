@@ -676,6 +676,17 @@ impl Library {
         self.moving(m, brass.at(foot, rot, kind::METAL, rgba(BRASS, 1.0)));
     }
 
+    /// The label holder on shelf `row` of face `f`, as its case has it (`case_boxes`) but
+    /// a hair larger each way, so that drawn over the case's own, in another glow, it
+    /// hides it.
+    pub fn label_cover(&self, f: usize, row: usize) -> Inst {
+        let face = &self.faces[f];
+        let ((y0, y1), (o0, o1)) = label_holder(row);
+        let at = face.center + Vec3::Y * ((y0 + y1) * 0.5) + face.normal * ((o0 + o1) * 0.5);
+        let size = Vec3::new(LABEL_W, y1 - y0, o1 - o0) + Vec3::splat(0.0006);
+        Inst::new(at, face.rot(), size, kind::EMISSIVE, LABEL_GLOW, 0)
+    }
+
     /// Whether a ladder may hang on a face whose plane is at `at` (floor level): well
     /// away from the doorways, where couriers set books down, and the stairs, and no
     /// more than two to a room.

@@ -1,6 +1,7 @@
 //! Game state: player, books in motion, upgrades, progression, save/load (familiars
 //! in `familiar`, cheats in `cheats`).
 
+mod cases;
 mod celebrate;
 mod cheats;
 mod familiar;
@@ -10,6 +11,7 @@ mod pacing;
 mod rooms;
 mod sound;
 
+use cases::Cases;
 use celebrate::{Filled, Finished, LONG_AGO};
 pub use cheats::Cheat;
 use familiar::Familiar;
@@ -647,6 +649,8 @@ pub struct Game {
     started: Vec<Option<f64>>,
     /// When each part of the library was finished (`celebrate`).
     finished: Finished,
+    /// Each bookcase side's books, for its ripple when finished (`cases`).
+    cases: Cases,
     /// The first folio taken this session has been explained.
     told_folio: bool,
     /// Just outside the Arcanum's doorway, where couriers leave its books while its
@@ -802,6 +806,7 @@ impl Game {
             poses: Vec::new(),
             started: vec![None; lib.stopped.len()],
             finished: Finished::new(&lib),
+            cases: Cases::new(&lib),
             told_folio: false,
             threshold,
             wary: Default::default(),
@@ -1883,6 +1888,7 @@ impl Game {
         self.pos[bi] = self.lib.books[bi].slot_pos;
         self.rot[bi] = self.lib.books[bi].slot_rot;
         let filled = self.count_shelved(b, self.clock);
+        self.cases.came_home(&self.lib, b);
         self.lumens += 1;
         self.earned += 1;
         self.dirty_save = true;
@@ -2250,6 +2256,9 @@ impl Game {
             let [tr, tg, tb] = mood.light;
             push(list, p, r, [c[0] * tr, c[1] * tg, c[2] * tb], i);
         };
+        for (p, r, c, i) in self.case_lights() {
+            push(&mut list, p, r, c, i);
+        }
         let t = self.time;
         let room = MAX_LIGHTS - list.len();
         // A light riding a mover is out while the mover is not there, and dimmed as it is.
@@ -2380,7 +2389,8 @@ impl Game {
 
         let in_flight: std::collections::HashSet<u32> = self.flights.iter().map(|f| f.book).collect();
         let mut scene = std::mem::take(&mut self.scene);
-        // Books lying still are drawn from their chunks; books on the move each frame.
+        // Books lying still are drawn from their chunks; books on the move each frame, as
+        // are a rippling bookcase side's (`cases`).
         for b in 0..self.lib.books.len() {
             let (st, bu) = (self.state[b], b as u32);
             let still = match st {
@@ -2389,7 +2399,7 @@ impl Game {
                 _ => None,
             };
             if scene.place(bu, st, self.loose.version(bu), still) {
-                scene.ghost_changed(self.lib.books[b].slot_pos);
+                scene.redraw_at(self.lib.books[b].slot_pos);
             }
             let moving = match st {
                 BookState::Loose => still.is_none(),
@@ -2420,6 +2430,7 @@ impl Game {
         if scene_gates_changed(&mut self.scene_gates, self.lib.world.gates_open()) {
             scene.redraw_all();
         }
+        self.ripples(&mut scene);
         for c in 0..scene.chunks.len() {
             if scene.chunks[c].rebuild {
                 self.rebuild_chunk(&mut scene, c);
@@ -2600,8 +2611,11 @@ impl Game {
             ));
         }
 
-        // Things that move, posed, if they are in view and not lost in the fog.
+        // Bookcase sides just finished, rippling, and the lit labels of finished ones.
         let planes = gfx::frustum(self.view_proj(aspect));
+        self.draw_cases(&planes, &mut dyn_insts);
+
+        // Things that move, posed, if they are in view and not lost in the fog.
         let eye = self.player.eye();
         if self.poses.len() != self.lib.movers.len() {
             let (finished, clock) = (&self.finished, self.clock);
@@ -2653,14 +2667,17 @@ impl Game {
         self.held_insts = held_insts;
     }
 
-    /// Rebuild chunk `c`'s instances: its books lying still, and the ghosts of its
-    /// empty slots in open departments.
+    /// Rebuild chunk `c`'s instances: its books lying still (but those of a bookcase side
+    /// rippling, drawn by `cases`), and the ghosts of its empty slots in open departments.
     fn rebuild_chunk(&self, scene: &mut Scene, c: usize) {
         let mut opaque = std::mem::take(&mut scene.chunks[c].opaque);
         let mut ghosts = std::mem::take(&mut scene.chunks[c].trans);
         opaque.clear();
         ghosts.clear();
         for &b in scene.books(c) {
+            if self.cases.holds(&self.lib, b) {
+                continue;
+            }
             let (p, q) = match self.state[b as usize] {
                 BookState::Shelved => (self.lib.books[b as usize].slot_pos, self.lib.books[b as usize].slot_rot),
                 _ => self.loose.pose(b),
