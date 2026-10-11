@@ -4,6 +4,7 @@
 //! added to it is drawn only, or solid only where no pile could ever have lain.
 
 use super::*;
+use crate::audio::Sfx;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 pub const HALL_X: f32 = 24.0;
@@ -41,12 +42,29 @@ const COLUMN_TRIM: [f32; 3] = [0.3, 0.28, 0.25];
 const DRESSED: [f32; 3] = [0.45, 0.42, 0.38];
 const GILT: [f32; 3] = [0.78, 0.56, 0.2];
 const IRON: [f32; 3] = [0.07, 0.065, 0.06];
+/// Where the chandelier hangs over the middle of the reading room.
+const CHANDELIER: Vec3 = Vec3::new(0.0, 5.6, 0.0);
 /// The reading room's ceiling is painted as the night sky.
 const SKY: [f32; 3] = [0.05, 0.075, 0.2];
 /// The wings' ceilings, pale between dark timbers.
 const PLASTER: [f32; 3] = [0.3, 0.27, 0.22];
 const VELVET: [f32; 3] = [0.3, 0.035, 0.045];
 const CREAM: [f32; 3] = [0.8, 0.74, 0.58];
+/// The reading room's rug, and the runners laid down the wings to match it once they
+/// are in order: its half size, its red, and its border's navy (`kind::RUG`'s param).
+const RUG_HALF: Vec2 = Vec2::new(5.5, 4.0);
+const RUG_RED: [f32; 3] = [0.28, 0.035, 0.03];
+const RUG_BORDER: u32 = 22 | (30 << 8) | (70 << 16);
+
+/// When a wing is put in order: how long before its runner starts, its rugs, how long
+/// each takes to settle and how far apart they start; then the wall at its end wakes.
+const RUNNER_AFTER: f32 = 1.0;
+const RUNNER_RUGS: usize = 6;
+const RUG_SETTLES: f32 = 1.4;
+const RUG_STAGGER: f32 = 0.5;
+const WING_WAKES: f32 = RUNNER_AFTER + (RUNNER_RUGS - 1) as f32 * RUG_STAGGER + RUG_SETTLES;
+/// When the whole Hall is: how long its finale waits, for the last wing's moment.
+const FINALE: f32 = WING_WAKES + 3.0;
 
 pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
     lib.world.levels.push(Level {
@@ -95,6 +113,13 @@ pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
         counts: vec![0],
         need: 0.4,
     });
+    // What waits for a category, a wing (the walls at their ends wake as well:
+    // `wall_map`, `clock`) and the whole Hall to be put in order.
+    lib.crests();
+    for wing in 0..2 {
+        lib.runner(wing);
+    }
+    lib.finale();
     // Moonbeams through the north windows.
     let beam_dir = Vec3::new(0.0, -0.62, 1.0).normalize();
     for x in WINDOWS_X {
@@ -1079,6 +1104,7 @@ impl Library {
         }
         let knob = self.shape(Mesh::sphere(16)).sized(Vec3::splat(0.07));
         self.decor(knob.inst(hook, Quat::IDENTITY, kind::METAL, gilt));
+        self.map_wakes(m, Vec2::new(rose.x, rose.y), y);
     }
 
     /// A great clock face on a walnut board, at ten to midnight as the library opens.
@@ -1115,6 +1141,7 @@ impl Library {
             (ink, gilt),
             false,
         );
+        self.moon_dial(m, y + board.y * 0.5);
     }
 
     /// Panelling round the walls below a rail: a skirting, the panels with stiles
@@ -1267,14 +1294,13 @@ impl Library {
 
     fn build_center(&mut self) {
         // Rug.
-        let second = [22u32, 30, 70];
         let mut rug = Inst::aabox(
             Vec3::new(0.0, 0.012, 0.0),
-            Vec3::new(11.0, 0.024, 8.0),
+            Vec3::new(RUG_HALF.x * 2.0, 0.024, RUG_HALF.y * 2.0),
             kind::RUG,
-            [0.28, 0.035, 0.03],
+            RUG_RED,
         );
-        rug.param = second[0] | (second[1] << 8) | (second[2] << 16);
+        rug.param = RUG_BORDER;
         self.rug(rug);
 
         // Reading tables with chairs and candles, and a green-shaded lamp on each.
@@ -1284,7 +1310,7 @@ impl Library {
         }
 
         // Chandelier, from the boss where the middle rib crosses the middle beam.
-        self.chandelier(Vec3::new(0.0, 5.6, 0.0), BEAM_Y - 0.07);
+        self.chandelier(CHANDELIER, BEAM_Y - 0.07);
 
         // Fireplace on the south wall.
         let fz = HALL_Z;
@@ -1533,13 +1559,30 @@ impl Library {
         let moon = Vec3::new(0.0, y + 0.25, 0.065);
         self.disc(m, moon, (0.26, 0.01), kind::METAL, gilt);
         self.disc(m, moon + Vec3::new(0.11, 0.07, 0.005), (0.23, 0.01), kind::PLAIN, field);
+        // Once the whole Hall is in order the emblem kindles, after the stars have
+        // gathered: each gilt piece gets a glowing one just before it, growing from its
+        // middle (the crescent's, as the gilt one's, cut by the field's disc before it).
+        let glow = [1.0, 0.7, 0.3, 0.9];
+        let mut kindles = vec![self.disc_inst(m, moon + Vec3::Z * 0.0065, (0.26, 0.002), kind::CRYSTAL, glow)];
         for s in [-1.0f32, 1.0] {
             let page = Vec3::new(s * 0.25, y - 0.3, 0.068);
             self.mounted(m, page, Vec3::new(0.46, 0.3, 0.01), s * 0.18, kind::METAL, gilt);
+            let lit = page + Vec3::Z * 0.0065;
+            kindles.push(m.boxed(lit, Vec3::new(0.46, 0.3, 0.002), s * 0.18, kind::CRYSTAL, glow));
         }
         for (sx, sy) in [(-0.5f32, 0.35f32), (0.5, 0.45), (-0.4, 0.05), (0.45, 0.0)] {
             let star = Vec3::new(sx, y + sy, 0.065);
             self.mounted(m, star, Vec3::new(0.07, 0.07, 0.01), FRAC_PI_4, kind::METAL, gilt);
+            let lit = star + Vec3::Z * 0.0065;
+            kindles.push(m.boxed(lit, Vec3::new(0.07, 0.07, 0.002), FRAC_PI_4, kind::CRYSTAL, glow));
+        }
+        for (k, i) in kindles.into_iter().enumerate() {
+            let grows = Change::Arrives {
+                from: Vec3::ZERO,
+                grow: 0.0,
+            };
+            let a = Awaits::new(Finish::Library, grows).after(FINALE + 5.0 + k as f32 * 0.25);
+            self.waiting(Vec3::from(i.pos), a.over(2.0), [i]);
         }
         // A rug before the hearth.
         let mut rug = Inst::aabox(
@@ -1951,6 +1994,465 @@ impl Library {
         }
         !spots.iter().any(|q| q.distance(p) < r * 2.0 + 1.1)
     }
+}
+
+/// What the Hall does when a category, a wing or the whole of it is put in order
+/// (`celebrate`): the West Wing ends at a map and the East at a clock, and the reading
+/// room between them is the night sky.
+impl Library {
+    /// When a category is in order, a gilt crescent (the library's emblem) on a turned
+    /// finial rises out of the cornice at either end of its run, on its side: over the
+    /// stiles there, which hide it until then.
+    fn crests(&mut self) {
+        let knop = self.turned(
+            &[
+                (0.0, 0.0),
+                (0.045, 0.0),
+                (0.045, 0.012),
+                (0.032, 0.024),
+                (0.04, 0.05),
+                (0.028, 0.075),
+                (0.011, 0.09),
+                (0.011, 0.15),
+                (0.0, 0.15),
+            ],
+            16,
+        );
+        let ball = self.shape(Mesh::sphere(12)).sized(Vec3::splat(0.045));
+        let moon = self.shape(Mesh::prism(&crescent(0.085, 0.068, 0.04, 14), 0.012));
+        let gilt = rgba(GILT, 1.0);
+        for cat in 0..self.catalog.categories.len() {
+            let faces: Vec<usize> = self.faces_of(cat).collect();
+            let (Some(&first), Some(&last)) = (faces.first(), faces.last()) else {
+                continue;
+            };
+            let fin = Finish::Category(cat);
+            for (f, end) in [(first, -1.0f32), (last, 1.0)] {
+                let face = &self.faces[f];
+                // Over the end stile's middle, just behind the face, on the crown.
+                let along = face.right * (end * (UNIT_W * 0.5 - 0.05));
+                let foot = face.center + along - face.normal * 0.03 + Vec3::Y * (UNIT_H + 0.13);
+                let horns_up = face.rot() * Quat::from_rotation_z(FRAC_PI_2);
+                let parts = [
+                    knop.at(foot, Quat::IDENTITY, kind::METAL, gilt),
+                    ball.inst(foot + Vec3::Y * 0.165, Quat::IDENTITY, kind::METAL, gilt),
+                    moon.at(foot + Vec3::Y * 0.27, horns_up, kind::METAL, gilt),
+                ];
+                let rises = Change::Arrives {
+                    from: Vec3::Y * -0.32,
+                    grow: 0.5,
+                };
+                self.waiting(foot, Awaits::new(fin, rises).after(1.5).over(2.2), parts);
+                self.sparks(Sparks {
+                    delay: 2.6,
+                    lasts: Some(0.5),
+                    rate: 40.0,
+                    spread: Vec3::splat(0.06),
+                    ..Sparks::burst(fin, foot + Vec3::Y * 0.3)
+                });
+            }
+        }
+    }
+
+    /// A runner down wing `wing`'s middle aisle once it is in order, from the reading
+    /// room's rug to the wall at its end: rugs like that one settling one after another
+    /// outward, each with a breath of gold as it lands. Flat on the floor, under any
+    /// books lying there.
+    fn runner(&mut self, wing: usize) {
+        let fin = Finish::Room(wing);
+        let s = if wing == 0 { -1.0f32 } else { 1.0 };
+        // From just off the rug's edge to the skirting.
+        let (near, far) = (RUG_HALF.x + 0.02, HALL_X - 0.1);
+        let (len, wide, thick) = ((far - near) / RUNNER_RUGS as f32, 2.0, 0.003);
+        for k in 0..RUNNER_RUGS {
+            let at = Vec3::new(s * (near + len * (k as f32 + 0.5)), thick * 0.5, 0.0);
+            let delay = RUNNER_AFTER + k as f32 * RUG_STAGGER;
+            // Each floats down from the reading room's side, turning a little as it
+            // settles.
+            let falls = Change::Arrives {
+                from: Vec3::new(-s * 0.6, 0.5, 0.0),
+                grow: 0.4,
+            };
+            let twist = if k % 2 == 0 { 0.1 } else { -0.08 };
+            let settles = Change::Shifts {
+                by: Vec3::ZERO,
+                turn: Quat::from_rotation_y(twist),
+                scale: 1.0,
+            };
+            let m = self.mover(at, Motion::Still, 0.0, None);
+            self.awaiting(m, Awaits::new(fin, falls).after(delay).over(RUG_SETTLES));
+            let m = self.mover(at, Motion::Still, 0.0, Some(m));
+            self.awaiting(m, Awaits::new(fin, settles).after(delay).over(RUG_SETTLES));
+            let (size, lie) = (Vec3::new(len, thick, wide), Quat::from_rotation_y(-twist));
+            let rug = Inst::new(at, lie, size, kind::RUG, rgba(RUG_RED, 1.0), RUG_BORDER);
+            self.moving(m, rug);
+            self.sparks(Sparks {
+                delay: delay + RUG_SETTLES * 0.8,
+                lasts: Some(0.35),
+                spread: Vec3::new(len * 0.5, 0.0, wide * 0.5),
+                rate: 50.0,
+                vel: Vec3::Y * 0.3,
+                jitter: Vec3::new(0.25, 0.15, 0.25),
+                life: 1.3,
+                size: Vec3::splat(0.014),
+                ..Sparks::burst(fin, at + Vec3::Y * 0.02)
+            });
+        }
+    }
+
+    /// When the West Wing is in order the map at its end wakes, once its runner is
+    /// down: the compass rose kindles, turning into place as it grows, and a model ship
+    /// rises out of the sea and sails across it from then on, resting at either end
+    /// and turning about there. `rose` is the rose's middle on the map and `y` the
+    /// map's (`m`'s offsets).
+    fn map_wakes(&mut self, m: Mount, rose: Vec2, y: f32) {
+        let fin = Finish::Room(0);
+        let gold = [1.0, 0.72, 0.32, 0.75];
+        let centre = m.at(Vec3::new(rose.x, rose.y, 0.0645));
+        self.cue(Cue {
+            finish: fin,
+            delay: WING_WAKES,
+            sound: Sfx::Chime,
+            at: centre,
+            volume: 0.8,
+        });
+        self.sparks(Sparks {
+            delay: WING_WAKES,
+            ..Sparks::burst(fin, centre + m.n * 0.1)
+        });
+        // Laid turned back an eighth, before the gilt rose.
+        let turn = FRAC_PI_4;
+        let grows = Change::Arrives {
+            from: Vec3::ZERO,
+            grow: 0.1,
+        };
+        let turns = Change::Shifts {
+            by: Vec3::ZERO,
+            turn: Quat::from_axis_angle(m.n, turn),
+            scale: 1.0,
+        };
+        let g = self.mover(centre, Motion::Still, 0.0, None);
+        self.awaiting(g, Awaits::new(fin, grows).after(WING_WAKES).over(2.0));
+        let g = self.mover(centre, Motion::Still, 0.0, Some(g));
+        self.awaiting(g, Awaits::new(fin, turns).after(WING_WAKES).over(2.6));
+        let star = self.shape(Mesh::prism(&star_outline(&[0.36, 0.24].repeat(4), 0.05), 0.003));
+        self.moving(g, star.inst(centre, m.rot(0.01 - turn), kind::CRYSTAL, gold));
+        let ring = self.arc_inst(
+            centre - m.n * 0.001,
+            (m.right(), Vec3::Y),
+            (0.27, 0.018, 0.003),
+            (0.0, TAU, 48),
+            (kind::CRYSTAL, gold),
+        );
+        self.moving(g, ring);
+
+        // The ship sails out along the open water between the lands and back, off the
+        // map by more than its half length, so its bow clears the map as it turns. It
+        // rests 40 s at either end, where it turns about (each half turn of the tick
+        // timed into a rest); it is laid down heading home, the tick having turned it
+        // about as it sets out. It pitches a little as it goes.
+        let (from, to) = (-1.35f32, 1.35f32);
+        let start = m.at(Vec3::new(from, y - 0.1, 0.33));
+        let period = 160.0;
+        let slide = Motion::Slide {
+            travel: m.right() * (to - from),
+            period,
+        };
+        let about = Motion::Tick {
+            axis: Vec3::Y,
+            steps: 2,
+            period,
+        };
+        let pitch = Motion::Swing {
+            axis: m.n,
+            amp: 0.05,
+            period: 5.5,
+        };
+        let rises = Change::Arrives {
+            from: -m.n * 0.27,
+            grow: 0.0,
+        };
+        let ship = self.mover(start, slide, 0.0, None);
+        let ship = self.mover(start, about, period * 3.0 / 16.0, Some(ship));
+        let ship = self.mover(start, Motion::Still, 0.0, Some(ship));
+        self.awaiting(ship, Awaits::new(fin, rises).after(WING_WAKES + 0.6).over(2.4));
+        let ship = self.mover(start, pitch, 0.0, Some(ship));
+        for part in self.model_ship(start, -m.right()) {
+            self.moving(ship, part);
+        }
+    }
+
+    /// A model ship about `c` heading `fwd` (level): a gilt hull, two masts with cream
+    /// sails set fore and aft, and a red pennant streaming from the main.
+    fn model_ship(&mut self, c: Vec3, fwd: Vec3) -> Vec<Inst> {
+        // Laid out along x (the bow), up y and across z, at 1.4 times these sizes.
+        let k = 1.4;
+        let rot = Quat::from_mat3(&Mat3::from_cols(fwd, Vec3::Y, fwd.cross(Vec3::Y)));
+        let at = |x: f32, y: f32| c + rot * (Vec3::new(x, y, 0.0) * k);
+        let hull = [
+            (-0.15, 0.04),
+            (-0.14, 0.0),
+            (-0.11, -0.03),
+            (-0.05, -0.045),
+            (0.06, -0.045),
+            (0.12, -0.02),
+            (0.16, 0.02),
+            (0.2, 0.05),
+            (0.13, 0.03),
+            (-0.09, 0.03),
+            (-0.1, 0.06),
+            (-0.155, 0.06),
+        ]
+        .map(|(x, y)| Vec2::new(x, y) * k);
+        let hull = self.shape(Mesh::prism(&hull, 0.075 * k));
+        let mut parts = vec![hull.at(c, rot, kind::METAL, rgba(GILT, 1.0))];
+        for (x, top) in [(0.0, 0.29), (0.1, 0.22)] {
+            let mast = self.pole_inst(at(x, 0.02), at(x, top), 0.01 * k, kind::WOOD, rgba(DARK_WOOD, 1.0));
+            parts.push(mast);
+        }
+        let set = rot * Quat::from_rotation_y(0.2);
+        for (x, y, w, h) in [
+            (0.0, 0.13, 0.15, 0.11),
+            (0.0, 0.235, 0.11, 0.07),
+            (0.1, 0.12, 0.1, 0.09),
+        ] {
+            let size = Vec3::new(w, h, 0.004) * k;
+            parts.push(Inst::new(at(x, y), set, size, kind::PAPER, [0.92, 0.86, 0.72, 0.25], 0));
+        }
+        let pennant = [Vec2::new(0.0, 0.0), Vec2::new(0.0, 0.025), Vec2::new(-0.07, 0.0125)].map(|p| p * k);
+        let pennant = self.shape(Mesh::prism(&pennant, 0.003));
+        parts.push(pennant.at(at(0.0, 0.29), rot, kind::CLOTH, rgba([0.5, 0.06, 0.06], 1.0)));
+        parts
+    }
+
+    /// When the East Wing is in order a moon dial rises from behind the clock at its
+    /// end, once its runner is down: a lunette of night sky strewn with gilt stars and
+    /// two moons, turning slowly from then on (a moon rising at the left as the other
+    /// sets at the right), a pale light about it. `top` is the top of the clock's board,
+    /// which hides it until then and its lower half after.
+    fn moon_dial(&mut self, m: Mount, top: f32) {
+        let fin = Finish::Room(1);
+        let r = 0.96;
+        let centre = m.at(Vec3::new(0.0, top, 0.045));
+        self.cue(Cue {
+            finish: fin,
+            delay: WING_WAKES,
+            sound: Sfx::Chime,
+            at: centre,
+            volume: 0.8,
+        });
+        self.sparks(Sparks {
+            delay: WING_WAKES + 2.2,
+            rgba: [0.8, 0.9, 1.3, 2.2],
+            spread: Vec3::splat(0.5),
+            ..Sparks::burst(fin, centre + Vec3::Y * 0.5 + m.n * 0.15)
+        });
+        // All of it within the board's thickness, so that inside it, it is hidden.
+        let rises = Change::Arrives {
+            from: Vec3::Y * -(r + 0.1),
+            grow: 1.0,
+        };
+        let dial = self.mover(centre, Motion::Still, 0.0, None);
+        self.awaiting(dial, Awaits::new(fin, rises).after(WING_WAKES).over(3.0));
+        let frame = self.arc_inst(
+            centre,
+            (m.right(), Vec3::Y),
+            (r + 0.03, 0.08, 0.05),
+            (0.0, PI, 24),
+            (kind::METAL, rgba(GILT, 1.0)),
+        );
+        self.moving(dial, frame);
+        self.light_riding(
+            dial,
+            m.at(Vec3::new(0.0, top + 0.4, 0.8)),
+            5.0,
+            [0.62, 0.72, 1.0],
+            0.5,
+            LightKind::Static,
+        );
+        let spin = Motion::Spin {
+            axis: m.n,
+            rate: -TAU / 240.0,
+        };
+        let turns = self.mover(centre, spin, 0.0, Some(dial));
+        self.awaiting(
+            turns,
+            Awaits::new(fin, Change::Kindles { dim: 1.0 })
+                .after(WING_WAKES + 2.5)
+                .over(6.0)
+                .still(),
+        );
+        let sky = self.disc_inst(m, Vec3::new(0.0, top, 0.04), (r, 0.01), kind::PLAIN, rgba(SKY, 1.0));
+        self.moving(turns, sky);
+        // Gilt stars about the sky, clear of the moons, and the moons (glowing a little)
+        // in gilt rims at its top and bottom: each kind one piece.
+        let moon_at = [Vec2::new(0.0, 0.62), Vec2::new(0.0, -0.62)];
+        let (mut stars, mut moons, mut rims) = (Mesh::default(), Mesh::default(), Mesh::default());
+        let point = Mesh::prism(&star_outline(&[1.0; 4], 0.3), 1.0);
+        let mut rng = StdRng::seed_from_u64(0x3007);
+        while stars.idx.len() < 18 * point.idx.len() {
+            let p = Vec2::new(rng.gen_range(-0.85..0.85), rng.gen_range(-0.85..0.85));
+            if p.length() > 0.85 || moon_at.iter().any(|&q| q.distance(p) < 0.26) {
+                continue;
+            }
+            let s = rng.gen_range(0.035..0.07);
+            let spin = Quat::from_rotation_z(rng.gen_range(-0.3..0.3));
+            stars.add(&point, p.extend(0.0), spin, Vec3::new(s, s, 0.004));
+        }
+        let face = Quat::from_rotation_x(FRAC_PI_2);
+        for q in moon_at {
+            moons.add(&Mesh::cylinder(32), q.extend(0.0), face, Vec3::new(0.32, 0.006, 0.32));
+            rims.add(
+                &Mesh::ring(&circle(0.18, 32), &circle(0.155, 32), 0.01),
+                q.extend(0.0),
+                Quat::IDENTITY,
+                Vec3::ONE,
+            );
+        }
+        let on_sky = |z: f32| m.at(Vec3::new(0.0, top, z));
+        for (mesh, z, kind, color) in [
+            (stars, 0.0465, kind::METAL, rgba(GILT, 1.0)),
+            (moons, 0.0475, kind::PAPER, [1.0, 0.88, 0.66, 0.3]),
+            (rims, 0.049, kind::METAL, rgba(GILT, 1.0)),
+        ] {
+            let shape = self.shape(mesh);
+            self.moving(turns, shape.at(on_sky(z), m.rot(0.0), kind, color));
+        }
+    }
+
+    /// When the whole Hall is in order, after the last wing's moment: stars come down
+    /// from the reading room's painted sky to circle its chandelier, gold sifting down
+    /// after them, and the rings they make turn slowly from then on, a starlight about
+    /// them and motes drifting there. (The emblem over the hearth kindles too:
+    /// `hearth_dressing`.)
+    fn finale(&mut self) {
+        let fin = Finish::Library;
+        let ch = CHANDELIER;
+        self.cue(Cue {
+            finish: fin,
+            delay: FINALE,
+            sound: Sfx::Veil,
+            at: ch,
+            volume: 0.8,
+        });
+        let star = self.shape({
+            let flat = Mesh::prism(&star_outline(&[0.15, 0.075].repeat(4), 0.027), 0.014);
+            let mut star = flat.clone();
+            star.add(&flat, Vec3::ZERO, Quat::from_rotation_y(FRAC_PI_2), Vec3::ONE);
+            star
+        });
+        // Two rings, as an armillary's: twelve stars about the hoop turning one way, and
+        // seven smaller about the crown turning slower the other, once all have come.
+        // Each comes from a coffer of its own, and bobs in its own time.
+        let gathered = FINALE + 4.3;
+        let turns = Awaits::new(fin, Change::Kindles { dim: 1.0 })
+            .after(gathered)
+            .over(8.0)
+            .still();
+        for (count, r, up, period, size, (first, apart), sky_r) in [
+            (12, 2.3, 0.3, 200.0, 1.0, (0.2, 0.15), (2.6, 2.2)),
+            (7, 1.25, 1.2, -300.0, 0.75, (0.4, 0.25), (1.0, 1.2)),
+        ] {
+            let spin = Motion::Spin {
+                axis: Vec3::Y,
+                rate: TAU / period,
+            };
+            let ring = self.mover(ch, spin, 0.0, None);
+            self.awaiting(ring, turns);
+            for k in 0..count {
+                let a = (k as f32 + 0.25) / count as f32 * TAU;
+                let out = Vec3::new(libm::cosf(a), 0.0, libm::sinf(a));
+                let rest = ch + out * r + Vec3::Y * (up + 0.12 * libm::sinf(3.0 * a));
+                let h = (k as f32 * 0.618).fract();
+                let sky = out * (sky_r.0 + sky_r.1 * h) + Vec3::Y * (HALL_H - 0.05);
+                let comes = Change::Arrives {
+                    from: sky - rest,
+                    grow: 0.3,
+                };
+                let bob = Motion::Bob {
+                    amp: 0.06,
+                    period: 6.0 + 3.0 * h,
+                    rock: 0.3,
+                };
+                let m = self.mover(rest, bob, 9.0 * h, Some(ring));
+                let after = FINALE + first + k as f32 * apart;
+                self.awaiting(m, Awaits::new(fin, comes).after(after).over(2.4));
+                let (turn, light) = (Quat::from_rotation_y(a), [0.75, 0.85, 1.0, 3.5]);
+                let i = star.scaled(size).inst(rest, turn, kind::CRYSTAL, light);
+                self.moving(m, i);
+            }
+        }
+        let light = self.mover(ch, Motion::Still, 0.0, None);
+        self.awaiting(
+            light,
+            Awaits::new(fin, Change::Kindles { dim: 0.0 })
+                .after(FINALE + 1.0)
+                .over(6.0),
+        );
+        self.light_riding(
+            light,
+            ch + Vec3::Y * 0.8,
+            11.0,
+            [0.62, 0.72, 1.0],
+            0.9,
+            LightKind::Static,
+        );
+        // Gold sifting down from the painted sky as they come, fading as it falls; a
+        // burst from the chandelier when they have gathered, and motes about it after.
+        self.sparks(Sparks {
+            delay: FINALE + 0.5,
+            lasts: Some(6.0),
+            spread: Vec3::new(8.0, 0.2, 8.0),
+            rate: 60.0,
+            vel: Vec3::Y * -0.45,
+            jitter: Vec3::splat(0.08),
+            lift: -0.05,
+            drag: 0.1,
+            wander: 0.15,
+            life: 6.0,
+            rgba: [1.3, 1.0, 0.55, 2.2],
+            size: Vec3::splat(0.024),
+            ..Sparks::burst(fin, Vec3::new(0.0, HALL_H - 0.4, 0.0))
+        });
+        self.sparks(Sparks {
+            delay: gathered,
+            lasts: Some(1.5),
+            rate: 80.0,
+            spread: Vec3::new(1.2, 0.2, 1.2),
+            ..Sparks::burst(fin, ch + Vec3::Y * 0.3)
+        });
+        self.sparks(Sparks {
+            delay: gathered,
+            rgba: [0.85, 0.9, 1.0, 1.5],
+            ..Sparks::motes(fin, ch + Vec3::Y * 0.3, Vec3::new(2.8, 0.7, 2.8))
+        });
+    }
+}
+
+/// A crescent's outline: a disc `r` round, less one `cut` round whose middle is `off`
+/// along +x, so its horns point that way; `n` steps along each edge.
+fn crescent(r: f32, cut: f32, off: f32, n: usize) -> Vec<Vec2> {
+    // Where the edges meet, as angles about each disc's middle.
+    let x = (r * r - cut * cut + off * off) / (2.0 * off);
+    let h = libm::sqrtf(r * r - x * x);
+    let (a, b) = (libm::atan2f(h, x), libm::atan2f(h, x - off));
+    let round = |c: Vec2, radius: f32, t: f32| c + Vec2::new(libm::cosf(t), libm::sinf(t)) * radius;
+    let outer = (0..n).map(|k| round(Vec2::ZERO, r, a + (TAU - 2.0 * a) * k as f32 / n as f32));
+    let inner = (0..n).map(|k| round(Vec2::X * off, cut, -b - (TAU - 2.0 * b) * k as f32 / n as f32));
+    outer.chain(inner).collect()
+}
+
+/// A star's outline: a point `tips[k]` out for each of `tips`, going round from +x,
+/// and `inner` between them.
+fn star_outline(tips: &[f32], inner: f32) -> Vec<Vec2> {
+    let n = tips.len() * 2;
+    (0..n)
+        .map(|k| {
+            let r = if k % 2 == 0 { tips[k / 2] } else { inner };
+            let a = k as f32 / n as f32 * TAU;
+            Vec2::new(libm::cosf(a), libm::sinf(a)) * r
+        })
+        .collect()
 }
 
 /// The fire on the hearth, `c` under its middle: logs on a bed of embers, flames
