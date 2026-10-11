@@ -182,10 +182,6 @@ impl Sparks {
             ..Sparks::burst(finish, at)
         }
     }
-
-    pub fn after(self, delay: f32) -> Sparks {
-        Sparks { delay, ..self }
-    }
 }
 
 /// A sound that waits for `finish`: `sound` from `at`, `delay` seconds after it, at

@@ -36,7 +36,6 @@ pub enum Motion {
     /// library ladder along its rail.
     Slide { travel: Vec3, period: f32 },
     /// Not moving of itself: a piece that only waits (`celebrate`).
-    #[allow(dead_code)] // TEMP (round 7), as `celebrate`
     Still,
 }
 

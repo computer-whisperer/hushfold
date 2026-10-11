@@ -4,8 +4,6 @@
 //! each piece is declared once, as `decor` (drawn only), `solid` (drawn and in the
 //! way) or drawn parts with one `collide` box standing for them.
 
-// TEMP (round 7): the rooms' celebrations, being built, use what the kit lays out.
-#[allow(dead_code)]
 pub mod celebrate;
 mod great;
 mod hall;
@@ -22,7 +20,6 @@ use crate::gfx::mesh::{self, Mesh, Shape, circle};
 use crate::gfx::{Inst, kind};
 use crate::text::{self, Glyph, Lettering, Style};
 use crate::world::{Gate, Level, NOSING, SLAB, Slab, Stairs, Stops, World, ray_box};
-#[allow(unused_imports)] // TEMP (round 7), as `celebrate`
 pub use celebrate::{Awaits, Change, Cue, Finish, Sparks};
 use glam::{Mat3, Quat, Vec2, Vec3};
 use motion::{Motion, Mover};
