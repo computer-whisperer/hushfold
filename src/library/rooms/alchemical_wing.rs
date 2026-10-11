@@ -3,8 +3,14 @@
 //! crowded with glassware and, beyond them, a brick athanor with its fire alight and
 //! copper pipes running from its flue over to the benches; a transmutation circle
 //! glows faintly in the floor before it.
+//!
+//! The room in order works the Great Work: embers fly from the athanor, the circle's
+//! violet draws in to its middle and rises to the red stone, which flares and is
+//! crowned in gold; then gold flows out across the floor in the circle's lines, and the
+//! brews on the benches kindle one after another down from the athanor.
 
 use super::*;
+use crate::audio::Sfx;
 use std::f32::consts::{FRAC_PI_2, PI};
 
 /// Clear width of an alcove, between the faces either side of it.
@@ -49,7 +55,7 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     shelves(lib, frame, rng, titles);
     walls(lib, frame);
     furnace(lib, frame);
-    let glass = Glassware::new(lib);
+    let glass = Glassware::new(lib, frame);
     for s in [-1.0f32, 1.0] {
         bench(lib, frame, s, &glass);
     }
@@ -80,7 +86,8 @@ fn rounded(pts: &[Vec3], r: f32) -> Vec<Vec3> {
 const GLASS: [f32; 4] = [0.8, 0.9, 1.0, 0.08];
 
 /// The room's glassware, each a vessel of clear glass and what it holds, made with its
-/// foot on the axis and a unit across: `scaled` to its width.
+/// foot on the axis and a unit across: `scaled` to its width. What it holds glows
+/// brighter once the room is in order.
 struct Glassware {
     round: [Shape; 2],
     cone: [Shape; 2],
@@ -89,10 +96,13 @@ struct Glassware {
     retort: [Shape; 2],
     /// A cork ring for a round-bottomed vessel to stand in.
     cork: Shape,
+    room: Finish,
+    /// The room's outward direction (o is a point's distance along it).
+    out: Vec3,
 }
 
 impl Glassware {
-    fn new(lib: &mut Library) -> Glassware {
+    fn new(lib: &mut Library, frame: &RoomFrame) -> Glassware {
         let v = Vec2::new;
         // A bowl's curve from its foot round to `to` radians above the level of its
         // middle, `r` round about the height `y`.
@@ -184,15 +194,25 @@ impl Glassware {
             tube,
             retort,
             cork,
+            room: Finish::Room(frame.dept),
+            out: frame.out(),
         }
     }
 
     /// A vessel (`glass` and what it holds) standing on `foot`, `w` across, turned
-    /// `yaw`, holding `liquid` (a crystal's colour and glow).
+    /// `yaw`, holding `liquid` (a crystal's colour and glow). Once the room is in order
+    /// the liquid kindles brighter, the nearer the athanor the sooner.
     fn stand(&self, lib: &mut Library, [glass, fill]: [Shape; 2], foot: Vec3, yaw: f32, w: f32, liquid: [f32; 4]) {
         let turn = Quat::from_rotation_y(yaw);
         lib.translucent(glass.scaled(w).at(foot, turn, kind::CLEAR, GLASS));
-        lib.decor(fill.scaled(w).at(foot, turn, kind::CRYSTAL, liquid));
+        let bright = 1.0 + 2.0 * liquid[3];
+        let lit = [liquid[0], liquid[1], liquid[2], bright];
+        let down = (BENCH_O.1 - foot.dot(self.out)).max(0.0);
+        let kindles = Change::Kindles {
+            dim: liquid[3] / bright,
+        };
+        let wakes = Awaits::new(self.room, kindles).after(5.0 + 0.35 * down).over(1.2);
+        lib.waiting(foot, wakes, [fill.scaled(w).at(foot, turn, kind::CRYSTAL, lit)]);
     }
 
     /// A cork ring on `foot` for a round-bottomed vessel `w` across to stand in.
@@ -251,6 +271,7 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
         }
         for faces in alcoves {
             lib.add_category(rng, cat, &faces, titles);
+            reagents(lib, cat, &faces);
             cat += 1;
         }
     }
@@ -260,12 +281,129 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
             lib.wall_bookcase(frame.at(a, RoomFrame::O_NEAR, 0.0), out)
         })
         .collect();
-    lib.add_category(rng, cat, &left_to_right(near), titles);
+    let near = left_to_right(near);
+    lib.add_category(rng, cat, &near, titles);
+    reagents(lib, cat, &near);
     let far: Vec<_> = [-6.05f32, -3.35, 3.35, 6.05]
         .iter()
         .map(|&a| lib.wall_bookcase(frame.at(a, RoomFrame::O_FAR, 0.0), -out))
         .collect();
-    lib.add_category(rng, cat + 1, &left_to_right(far), titles);
+    let far = left_to_right(far);
+    lib.add_category(rng, cat + 1, &far, titles);
+    reagents(lib, cat + 1, &far);
+}
+
+/// Jars of reagents on the tops of category `cat`'s end cases (`faces` in reading
+/// order), three toward the outer end of each: dark glass until the category is filed
+/// whole, then kindling one after another, each in a colour of its own.
+fn reagents(lib: &mut Library, cat: usize, faces: &[(Vec3, Vec3)]) {
+    let fin = Finish::Category(cat);
+    let Jars { jars, lid } = Jars::new(lib);
+    let mut rng = StdRng::seed_from_u64(0x7e46_e475 ^ cat as u64);
+    let ends = [(faces[0], -1.0f32), (faces[faces.len() - 1], 1.0)];
+    for (e, ((centre, normal), outer)) in ends.into_iter().enumerate() {
+        let right = Vec3::Y.cross(normal);
+        for (j, along) in [1.05f32, 0.8, 0.56].into_iter().enumerate() {
+            let w = rng.gen_range(0.15..0.21f32);
+            let h = rng.gen_range(1.1..1.6f32) * w;
+            let k = rng.gen_range(0..jars.len());
+            let rgb = POTIONS[rng.gen_range(0..POTIONS.len())];
+            let turn = Quat::from_rotation_y(rng.gen_range(0.0..TAU));
+            let foot = centre + Vec3::Y * (UNIT_H + 0.13) - normal * 0.22 + right * (outer * along);
+            let glass = jars[k]
+                .sized(Vec3::new(w, h, w))
+                .at(foot, turn, kind::CRYSTAL, rgba(rgb, 2.0));
+            let delay = 0.6 + 0.3 * (e * 3 + j) as f32;
+            let lit = Awaits::new(fin, Change::Kindles { dim: 0.02 }).after(delay).over(1.0);
+            lib.waiting(foot, lit, [glass]);
+            lib.decor(Jars::lid(lid, k, foot, w, h, turn));
+            lib.sparks(Sparks {
+                delay: delay + 0.3,
+                lasts: Some(0.4),
+                rate: 25.0,
+                spread: Vec3::splat(0.03),
+                vel: Vec3::Y * 0.3,
+                jitter: Vec3::splat(0.12),
+                life: 1.4,
+                rgba: [rgb[0] * 1.6, rgb[1] * 1.6, rgb[2] * 1.6, 2.5],
+                size: Vec3::splat(0.012),
+                ..Sparks::burst(fin, foot + Vec3::Y * (h + 0.05))
+            });
+        }
+    }
+}
+
+/// Jars for the shelves: squat ones, tall ones and bottles (a unit across and high),
+/// and the lid or stopper for each.
+struct Jars {
+    jars: [Shape; 3],
+    lid: Shape,
+}
+
+impl Jars {
+    fn new(lib: &mut Library) -> Jars {
+        let jars = [
+            lib.turned(
+                &[
+                    (0.0, 0.0),
+                    (0.44, 0.0),
+                    (0.5, 0.06),
+                    (0.5, 0.86),
+                    (0.42, 0.96),
+                    (0.4, 1.0),
+                    (0.0, 1.0),
+                ],
+                20,
+            ),
+            lib.turned(
+                &[
+                    (0.0, 0.0),
+                    (0.46, 0.0),
+                    (0.5, 0.05),
+                    (0.48, 0.7),
+                    (0.3, 0.85),
+                    (0.22, 0.9),
+                    (0.22, 1.0),
+                    (0.0, 1.0),
+                ],
+                20,
+            ),
+            lib.turned(
+                &[
+                    (0.0, 0.0),
+                    (0.42, 0.0),
+                    (0.5, 0.15),
+                    (0.5, 0.55),
+                    (0.38, 0.75),
+                    (0.3, 0.85),
+                    (0.33, 1.0),
+                    (0.0, 1.0),
+                ],
+                20,
+            ),
+        ];
+        let lid = lib.turned(
+            &[
+                (0.0, 0.0),
+                (0.5, 0.0),
+                (0.5, 0.5),
+                (0.3, 0.8),
+                (0.12, 0.85),
+                (0.1, 1.0),
+                (0.0, 1.0),
+            ],
+            16,
+        );
+        Jars { jars, lid }
+    }
+
+    /// The lid for jar `k`, `w` across and `h` high, standing on `foot`: as wide as its
+    /// mouth.
+    fn lid(lid: Shape, k: usize, foot: Vec3, w: f32, h: f32, turn: Quat) -> Inst {
+        let mouth = [0.88, 0.48, 0.66][k] * w;
+        let lid = lid.sized(Vec3::new(mouth, 0.04, mouth));
+        lid.at(foot + Vec3::Y * (h - 0.01), turn, kind::WOOD, [0.28, 0.16, 0.07, 1.0])
+    }
 }
 
 /// Panelling over the back of a single-sided case standing free at `a`, its back at
@@ -281,59 +419,7 @@ fn backboard(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         DARK_WOOD,
     ));
     let mut rng = StdRng::seed_from_u64(0xa1c4_e31a ^ (a * 10.0) as i64 as u64);
-    // Squat jars, tall ones and bottles, a lid or a stopper on each.
-    let jars = [
-        lib.turned(
-            &[
-                (0.0, 0.0),
-                (0.44, 0.0),
-                (0.5, 0.06),
-                (0.5, 0.86),
-                (0.42, 0.96),
-                (0.4, 1.0),
-                (0.0, 1.0),
-            ],
-            20,
-        ),
-        lib.turned(
-            &[
-                (0.0, 0.0),
-                (0.46, 0.0),
-                (0.5, 0.05),
-                (0.48, 0.7),
-                (0.3, 0.85),
-                (0.22, 0.9),
-                (0.22, 1.0),
-                (0.0, 1.0),
-            ],
-            20,
-        ),
-        lib.turned(
-            &[
-                (0.0, 0.0),
-                (0.42, 0.0),
-                (0.5, 0.15),
-                (0.5, 0.55),
-                (0.38, 0.75),
-                (0.3, 0.85),
-                (0.33, 1.0),
-                (0.0, 1.0),
-            ],
-            20,
-        ),
-    ];
-    let lid = lib.turned(
-        &[
-            (0.0, 0.0),
-            (0.5, 0.0),
-            (0.5, 0.5),
-            (0.3, 0.8),
-            (0.12, 0.85),
-            (0.1, 1.0),
-            (0.0, 1.0),
-        ],
-        16,
-    );
+    let Jars { jars, lid } = Jars::new(lib);
     for y in [0.95f32, 1.65, 2.35] {
         let board = (a - hw + 0.08, a + hw - 0.08);
         lib.decor(piece(
@@ -358,10 +444,7 @@ fn backboard(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             let jar = jars[k].sized(Vec3::new(w, h, w));
             let turn = Quat::from_rotation_y(rng.gen_range(0.0..TAU));
             lib.decor(jar.at(foot, turn, kind::CRYSTAL, [rgb[0], rgb[1], rgb[2], glow]));
-            // Its lid as wide as its mouth.
-            let mouth = [0.88, 0.48, 0.66][k] * w;
-            let lid = lid.sized(Vec3::new(mouth, 0.04, mouth));
-            lib.decor(lid.at(foot + Vec3::Y * (h - 0.01), turn, kind::WOOD, [0.28, 0.16, 0.07, 1.0]));
+            lib.decor(Jars::lid(lid, k, foot, w, h, turn));
             x += w + rng.gen_range(0.06..0.16);
         }
     }
@@ -567,6 +650,21 @@ fn furnace(lib: &mut Library, frame: &RoomFrame) {
         2.2,
         LightKind::Flicker,
     );
+    // When the room is in order, the fire stirs and embers fly up out of its mouth.
+    let mouth = frame.at(0.0, f + 0.1, 0.75);
+    lib.sparks(Sparks {
+        lasts: Some(2.0),
+        rate: 30.0,
+        spread: frame.size(0.3, 0.2, 0.05),
+        vel: Vec3::Y * 0.6 - frame.out() * 0.5,
+        jitter: Vec3::new(0.25, 0.2, 0.25),
+        lift: 0.5,
+        drag: 0.8,
+        life: 2.0,
+        rgba: [1.6, 0.55, 0.12, 3.0],
+        size: Vec3::splat(0.016),
+        ..Sparks::burst(Finish::Room(frame.dept), mouth)
+    });
     // The tower, its vents aglow front and back.
     lib.decor(piece(
         frame,
@@ -962,6 +1060,20 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
         [1.0, 0.6, 0.25, 2.0],
         0,
     ));
+    // The glow of its brews over it once they are kindled.
+    let glow = lib.mover(at(0.0, (o0 + o1) * 0.5, 0.35), Motion::Still, 0.0, None);
+    let kindles = Awaits::new(glass.room, Change::Kindles { dim: 0.0 })
+        .after(6.2)
+        .over(2.5);
+    lib.awaiting(glow, kindles);
+    lib.light_riding(
+        glow,
+        at(0.0, (o0 + o1) * 0.5, 0.35),
+        3.0,
+        [0.9, 0.85, 0.7],
+        0.6,
+        LightKind::Static,
+    );
     // Crates on the shelf below.
     for k in 0..4 {
         let o = o0 + 0.7 + k as f32 * 1.4;
@@ -1046,43 +1158,92 @@ fn pipes(lib: &mut Library, frame: &RoomFrame, glass: &Glassware) {
 /// A transmutation circle let into the floor before the athanor, its lines faintly
 /// alight: a circle, a square in it, a triangle in that, a circle in that; and over it,
 /// out of reach, a red stone turning slowly as it floats.
+///
+/// When the room is in order the violet draws in to the circle's middle and rises to
+/// the stone, which flares and is crowned with a ring of gold; then the circle's lines
+/// flow out again in gold, flush with the floor, and stay, motes rising from them.
 fn transmutation(lib: &mut Library, frame: &RoomFrame) {
+    let room = Finish::Room(frame.dept);
     let c = frame.at(0.0, CIRCLE_O, 0.006);
     let (u, v) = (frame.across(), frame.out());
-    let glow = [0.55, 0.35, 1.0, 1.4];
-    // The square's sides lie along the axes; each a little higher than the last, so
-    // they don't share a face where they cross.
-    let mut lift = 0.0;
-    let mut line = |lib: &mut Library, p: Vec3, q: Vec3| {
-        let rot = Quat::from_rotation_arc(Vec3::Y, (q - p).normalize());
-        let c = (p + q) * 0.5 + Vec3::Y * lift;
-        lib.decor(Inst::new(
-            c,
-            rot,
-            Vec3::new(0.03, p.distance(q), 0.03),
-            kind::EMISSIVE,
-            glow,
-            1,
-        ));
-        lift = (lift + 0.002) % 0.008;
-    };
     let r = 1.5;
     let pt = |r: f32, t: f32| c + (u * libm::cosf(t) + v * libm::sinf(t)) * r;
     let q = std::f32::consts::FRAC_PI_4;
     // The square's own circle, which the triangle stands in, and the triangle's.
     let (square, triangle) = (r * libm::sinf(q), r * libm::sinf(q) * 0.5);
+    let sides: Vec<(Vec3, Vec3)> = (0..4)
+        .map(|k| q + k as f32 * TAU / 4.0)
+        .map(|t| (pt(r, t), pt(r, t + TAU / 4.0)))
+        .chain(
+            (0..3)
+                .map(|k| -TAU / 4.0 + k as f32 * TAU / 3.0)
+                .map(|t| (pt(square, t), pt(square, t + TAU / 3.0))),
+        )
+        .collect();
+    let glow = [0.55, 0.35, 1.0, 1.4];
+    let mut violet = Vec::new();
     for radius in [r, triangle] {
         let ring = band(lib, c, (u, v), (radius, 0.03, 0.006), kind::EMISSIVE, glow);
-        lib.decor(Inst { param: 1, ..ring });
+        violet.push(Inst { param: 1, ..ring });
     }
-    for k in 0..4 {
-        let t = q + k as f32 * TAU / 4.0;
-        line(lib, pt(r, t), pt(r, t + TAU / 4.0));
+    // Each a little higher than the last, so they don't share a face where they cross.
+    for (k, &(p, q)) in sides.iter().enumerate() {
+        let rot = Quat::from_rotation_arc(Vec3::Y, (q - p).normalize());
+        let lift = Vec3::Y * (k % 4) as f32 * 0.002;
+        let size = Vec3::new(0.03, p.distance(q), 0.03);
+        violet.push(Inst::new((p + q) * 0.5 + lift, rot, size, kind::EMISSIVE, glow, 1));
     }
-    for k in 0..3 {
-        let t = -TAU / 4.0 + k as f32 * TAU / 3.0;
-        line(lib, pt(square, t), pt(square, t + TAU / 3.0));
+    let drawn_in = Change::Shifts {
+        by: Vec3::ZERO,
+        turn: Quat::IDENTITY,
+        scale: 0.0,
+    };
+    lib.waiting(c, Awaits::new(room, drawn_in).after(0.3).over(1.5), violet);
+    // Its light rising to the stone.
+    lib.sparks(Sparks {
+        delay: 1.2,
+        lasts: Some(3.0),
+        rate: 40.0,
+        spread: Vec3::new(0.12, 0.05, 0.12),
+        vel: Vec3::Y * 1.1,
+        jitter: Vec3::new(0.08, 0.15, 0.08),
+        lift: 0.05,
+        drag: 0.1,
+        life: 2.4,
+        rgba: [0.8, 0.4, 1.6, 4.0],
+        size: Vec3::splat(0.025),
+        ..Sparks::burst(room, c + Vec3::Y * 0.2)
+    });
+    // Then gold, flush with the floor: the circle rippling out from the middle, the
+    // square's sides and the triangle's drawn out from corner to corner, the inner circle.
+    let gold = [1.0, 0.68, 0.26, 1.5];
+    let flush = frame.at(0.0, CIRCLE_O, 0.00175);
+    for (radius, delay) in [(r, 4.0), (triangle, 7.0)] {
+        let ring = band(lib, flush, (u, v), (radius, 0.04, 0.0025), kind::EMISSIVE, gold);
+        lib.waiting(flush, Awaits::new(room, grows(0.0)).after(delay).over(1.4), [ring]);
     }
+    for (k, &(p, q)) in sides.iter().enumerate() {
+        let (p, q) = (p.with_y(flush.y), q.with_y(flush.y));
+        let d = (q - p).normalize();
+        let rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Y.cross(d), Vec3::Y, d));
+        let size = Vec3::new(0.04, 0.0025, p.distance(q) + 0.04);
+        let strip = Inst::new((p + q) * 0.5, rot, size, kind::EMISSIVE, gold, 0);
+        let delay = if k < 4 {
+            4.6 + 0.35 * k as f32
+        } else {
+            6.0 + 0.35 * (k - 4) as f32
+        };
+        lib.waiting(p, Awaits::new(room, grows(0.0)).after(delay).over(0.6), [strip]);
+    }
+    lib.sparks(Sparks {
+        delay: 7.0,
+        lasts: None,
+        rate: 2.0,
+        life: 7.0,
+        lift: 0.05,
+        rgba: [1.0, 0.75, 0.35, 1.8],
+        ..Sparks::motes(room, flush + Vec3::Y * 0.4, Vec3::new(1.1, 0.3, 1.1))
+    });
     let stone = frame.at(0.0, CIRCLE_O, 2.6);
     let float = Motion::Bob {
         amp: 0.06,
@@ -1090,7 +1251,12 @@ fn transmutation(lib: &mut Library, frame: &RoomFrame) {
         rock: 0.0,
     };
     let float = lib.mover(stone, float, 0.0, None);
-    lib.light_riding(float, stone, 3.5, [1.0, 0.3, 0.2], 0.45, LightKind::Static);
+    // The stone and its light flaring to twice what they were as the violet reaches it.
+    lib.awaiting(
+        float,
+        Awaits::new(room, Change::Kindles { dim: 0.5 }).after(3.0).over(2.0),
+    );
+    lib.light_riding(float, stone, 3.5, [1.0, 0.3, 0.2], 0.9, LightKind::Static);
     let spin = lib.mover(
         stone,
         Motion::Spin {
@@ -1109,8 +1275,48 @@ fn transmutation(lib: &mut Library, frame: &RoomFrame) {
             corner,
             Vec3::splat(0.13),
             kind::CRYSTAL,
-            [0.95, 0.12, 0.08, 1.6],
+            [0.95, 0.12, 0.08, 3.2],
             0,
         ),
     );
+    lib.cue(Cue {
+        finish: room,
+        delay: 3.0,
+        sound: Sfx::Purchase,
+        at: stone,
+        volume: 0.6,
+    });
+    // Its crown: a ring of gold coming round it, tipped and slowly wheeling, and a warm
+    // light from it over the circle.
+    let tip = Quat::from_rotation_x(0.35);
+    let halo = lib.mover(
+        stone,
+        Motion::Spin {
+            axis: Vec3::Y,
+            rate: -0.4,
+        },
+        0.0,
+        Some(float),
+    );
+    lib.awaiting(halo, Awaits::new(room, grows(0.0)).after(3.5).over(1.5));
+    let ring = band(
+        lib,
+        stone,
+        (tip * u, tip * v),
+        (0.2, 0.012, 0.006),
+        kind::EMISSIVE,
+        gold,
+    );
+    lib.moving(halo, ring);
+    let warmth = lib.mover(stone, Motion::Still, 0.0, Some(float));
+    lib.awaiting(
+        warmth,
+        Awaits::new(room, Change::Kindles { dim: 0.0 }).after(3.5).over(2.5),
+    );
+    lib.light_riding(warmth, stone, 5.0, [1.0, 0.75, 0.4], 0.8, LightKind::Static);
+}
+
+/// Coming in where it rests, growing from `grow` of its size about its pivot.
+fn grows(grow: f32) -> Change {
+    Change::Arrives { from: Vec3::ZERO, grow }
 }
