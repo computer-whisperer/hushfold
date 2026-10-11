@@ -119,7 +119,7 @@ pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
     for wing in 0..2 {
         lib.runner(wing);
     }
-    lib.finale();
+    lib.hall_finale();
     // Moonbeams through the north windows.
     let beam_dir = Vec3::new(0.0, -0.62, 1.0).normalize();
     for x in WINDOWS_X {
@@ -2325,7 +2325,7 @@ impl Library {
     /// after them, and the rings they make turn slowly from then on, a starlight about
     /// them and motes drifting there. (The emblem over the hearth kindles too:
     /// `hearth_dressing`.)
-    fn finale(&mut self) {
+    fn hall_finale(&mut self) {
         let fin = Finish::Library;
         let ch = CHANDELIER;
         self.cue(Cue {
