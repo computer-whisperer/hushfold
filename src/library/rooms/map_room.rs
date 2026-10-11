@@ -3,8 +3,16 @@
 //! under a little ship sailing the air; the books stand in alcoves off both side walls
 //! (racks of rolled maps on the backs of the first ones) and along the far and near
 //! walls, with maps hung over them.
+//!
+//! Once the room is finished the world is charted: lines of latitude and longitude
+//! rise out of the globe's seas and a warm light comes up over it, rhumb lines spread
+//! glowing across the chart floor from the compass rose and settle into brass, and the
+//! ship comes about, leaves the map table and sails round the globe from then on. A
+//! little globe rises on the cornice by each category's sign as the category is
+//! finished.
 
 use super::*;
+use crate::audio::Sfx;
 use crate::gfx::Vertex;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
@@ -24,15 +32,19 @@ const BACKS: [f32; 3] = [22.25, 25.95, 29.79];
 /// The globe and its compass rose, and the map table.
 const GLOBE: (f32, f32) = (0.0, 21.0);
 const TABLE: (f32, f32) = (0.0, 27.2);
+/// The great globe's radius.
+const GLOBE_R: f32 = 0.82;
 const BRASS_RGBA: [f32; 4] = [0.62, 0.45, 0.16, 1.0];
 const SEPIA: [f32; 3] = [0.22, 0.13, 0.06];
 
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     walls(lib, frame);
     shelves(lib, frame, rng, titles);
+    cornice_globes(lib, frame);
     rack(lib, frame);
     press(lib, frame);
     compass_rose(lib, frame);
+    portolan(lib, frame);
     globe(lib, frame);
     table(lib, frame);
     ship(lib, frame);
@@ -113,6 +125,67 @@ fn shelves(lib: &mut Library, f: &RoomFrame, rng: &mut StdRng, titles: &mut Hash
     ];
     for (cat, faces) in cats.into_iter().zip(order) {
         lib.add_category(rng, cat, &faces, titles);
+    }
+}
+
+/// A little globe on a turned brass stand, in its meridian, that rises on the cornice
+/// beside each category's sign once the category is finished, then kindles and turns
+/// (the sign hangs over the middle of the category's cases).
+fn cornice_globes(lib: &mut Library, f: &RoomFrame) {
+    let (r, tall) = (0.15, 0.2);
+    let stand = [
+        (0.0, 0.0),
+        (0.08, 0.0),
+        (0.08, 0.016),
+        (0.048, 0.04),
+        (0.024, 0.07),
+        (0.034, 0.13),
+        (0.016, 0.175),
+        (0.016, tall),
+        (0.0, tall),
+    ];
+    let stand = lib.shape(Mesh::lathe(&stand.map(Vec2::from), 24));
+    let meridian = lib.shape(Mesh::ring(&circle(r + 0.022, 48), &circle(r + 0.01, 48), 0.014));
+    let ball = lib.shape(Mesh::sphere(24));
+    let lands = lib.shape(lands_of_the_globe(GLOBE_R).0).scaled(r / GLOBE_R);
+    for cat in f.categories.clone() {
+        let faces: Vec<usize> = lib.faces_of(cat).collect();
+        let face = &lib.faces[faces[faces.len() / 2]];
+        let (turn, fin) = (face.rot(), Finish::Category(cat));
+        let base = face.center + face.right * 1.3 - face.normal * 0.22 + Vec3::Y * (UNIT_H + 0.13);
+        let c = base + Vec3::Y * (tall + r);
+        let tilt = turn * Quat::from_rotation_z(0.41);
+        let rises = Awaits::new(
+            fin,
+            Change::Arrives {
+                from: Vec3::ZERO,
+                grow: 0.0,
+            },
+        )
+        .after(0.6)
+        .over(1.6);
+        let stood = lib.waiting(
+            base,
+            rises,
+            [
+                stand.at(base, turn, kind::METAL, BRASS_RGBA),
+                meridian.inst(c, tilt * Quat::from_rotation_y(FRAC_PI_2), kind::METAL, BRASS_RGBA),
+            ],
+        );
+        let spin = Motion::Spin {
+            axis: tilt * Vec3::Y,
+            rate: TAU / 40.0,
+        };
+        let turning = lib.mover(c, spin, 0.0, Some(stood));
+        let kindles = Awaits::new(fin, Change::Kindles { dim: 0.3 }).after(2.0).over(2.5);
+        lib.awaiting(turning, kindles.still());
+        // Brighter than the great globe's, to be seen up there.
+        let sea = [0.02, 0.1, 0.2, 1.0];
+        lib.moving(
+            turning,
+            ball.sized(Vec3::splat(2.0 * r)).inst(c, tilt, kind::CRYSTAL, sea),
+        );
+        lib.moving(turning, lands.at(c, tilt, kind::CRYSTAL, [0.34, 0.31, 0.17, 0.3]));
     }
 }
 
@@ -546,6 +619,124 @@ fn compass_rose(lib: &mut Library, f: &RoomFrame) {
     lib.decor(dark.at(spot.at, spot.q, kind::METAL, [0.3, 0.2, 0.08, 1.0]));
 }
 
+/// The chart floor once the room is finished, laid out as a portolan chart: rhumb
+/// lines from the compass rose out to a ring of sixteen little roses, and from rose to
+/// rose across the ring. They spread out from under the globe glowing and settle into
+/// brass inlay (the glow sinking into the floor), and the little roses kindle, glints
+/// rising from each in turn round the ring. Flat on the floor, under 3 mm, so loose
+/// books lie over it.
+fn portolan(lib: &mut Library, f: &RoomFrame) {
+    const REACH: f32 = 5.0;
+    let fin = Finish::Room(f.dept);
+    let spot = Spot::new(f, GLOBE.0, GLOBE.1, 0.0);
+    let points: Vec<Vec2> = (0..16)
+        .map(|k| Vec2::from_angle(k as f32 / 16.0 * TAU) * REACH)
+        .collect();
+    // The lines, `h` thick from the floor up: out from the rose's ring, and from each
+    // point five on round the ring, which passes just outside the rose.
+    let web = |h: f32| {
+        let (mut m, cube) = (Mesh::default(), Mesh::cube());
+        let mut line = |p: Vec2, q: Vec2, w: f32| {
+            let (d, mid) = (q - p, (p + q) * 0.5);
+            let turn = Quat::from_rotation_y(-libm::atan2f(d.y, d.x));
+            m.add(
+                &cube,
+                Vec3::new(mid.x, h * 0.5, mid.y),
+                turn,
+                Vec3::new(d.length(), h, w),
+            );
+        };
+        for k in 0..16 {
+            line(points[k] * (2.8 / REACH), points[k], 0.024);
+            line(points[k], points[(k + 5) % 16], 0.018);
+        }
+        let ring = Mesh::ring(&circle(REACH + 0.02, 128), &circle(REACH - 0.02, 128), h);
+        m.add(&ring, Vec3::Y * (h * 0.5), Quat::from_rotation_x(FRAC_PI_2), Vec3::ONE);
+        m
+    };
+    let spreads = Awaits::new(
+        fin,
+        Change::Arrives {
+            from: Vec3::ZERO,
+            grow: 0.0,
+        },
+    )
+    .after(0.5)
+    .over(4.0);
+    let inlay = lib.shape(web(0.0018));
+    let brass = lib.waiting(spot.at, spreads, [inlay.at(spot.at, spot.q, kind::METAL, BRASS_RGBA)]);
+    // The little roses, riding the inlay as it spreads, kindling as it comes to rest.
+    let mut roses = Mesh::default();
+    for p in &points {
+        let star: Vec<Vec2> = (0..16)
+            .map(|k| {
+                let r = match k % 4 {
+                    0 => 0.3,
+                    2 => 0.19,
+                    _ => 0.06,
+                };
+                Vec2::from_angle(k as f32 / 16.0 * TAU) * r
+            })
+            .collect();
+        let flat = Quat::from_rotation_x(FRAC_PI_2);
+        roses.add(
+            &Mesh::prism(&star, 0.0026),
+            Vec3::new(p.x, 0.0013, p.y),
+            flat,
+            Vec3::ONE,
+        );
+    }
+    let roses = lib.shape(roses);
+    let kindle = lib.mover(spot.at, Motion::Still, 0.0, Some(brass));
+    lib.awaiting(
+        kindle,
+        Awaits::new(fin, Change::Kindles { dim: 0.12 }).after(4.0).over(2.0),
+    );
+    lib.moving(
+        kindle,
+        roses.at(spot.at, spot.q, kind::EMISSIVE, [1.0, 0.62, 0.24, 0.45]),
+    );
+    for (k, p) in points.iter().enumerate() {
+        let at = spot.at + spot.q * Vec3::new(p.x, 0.05, p.y);
+        lib.sparks(Sparks {
+            delay: 4.0 + k as f32 * 0.12,
+            lasts: Some(0.8),
+            rate: 25.0,
+            spread: Vec3::new(0.15, 0.02, 0.15),
+            vel: Vec3::Y * 0.6,
+            jitter: Vec3::new(0.3, 0.3, 0.3),
+            ..Sparks::burst(fin, at)
+        });
+    }
+    // The glow over the inlay: spreading with it, then sinking through the floor
+    // (and only then gone, unseen).
+    let gone = Change::Shifts {
+        by: Vec3::ZERO,
+        turn: Quat::IDENTITY,
+        scale: 0.0,
+    };
+    let vanish = lib.waiting(spot.at, Awaits::new(fin, gone).after(10.5).over(0.1), []);
+    let sinks = Change::Shifts {
+        by: Vec3::Y * -0.006,
+        turn: Quat::IDENTITY,
+        scale: 1.0,
+    };
+    let sink = lib.mover(spot.at, Motion::Still, 0.0, Some(vanish));
+    lib.awaiting(sink, Awaits::new(fin, sinks).after(6.5).over(3.5));
+    let glow = lib.shape(web(0.001));
+    let glowing = lib.mover(spot.at, Motion::Still, 0.0, Some(sink));
+    lib.awaiting(glowing, spreads);
+    lib.moving(
+        glowing,
+        glow.at(
+            spot.at + Vec3::Y * 0.0019,
+            spot.q,
+            kind::EMISSIVE,
+            [1.0, 0.64, 0.26, 1.3],
+        ),
+    );
+}
+
 /// The great globe on its stand over the compass rose, turning slowly on its tilted
 /// axis in the meridian ring: seas that glow faintly from within, lands and ice caps
 /// standing a little proud of them, a brass horizon on four curved legs.
@@ -584,7 +775,7 @@ fn globe(lib: &mut Library, f: &RoomFrame) {
     let column = lib.shape(Mesh::lathe(&column.map(Vec2::from), 32));
     lib.decor(column.at(spot.at + Vec3::Y * 0.18, spot.q, kind::WOOD, wood));
     let hc = 1.5;
-    let r = 0.82;
+    let r = GLOBE_R;
     // Legs from the foot out to the horizon, bowed outward at the knee.
     let leg: Vec<Vec3> = (0..=12)
         .map(|k| {
@@ -650,6 +841,62 @@ fn globe(lib: &mut Library, f: &RoomFrame) {
     lib.moving(m, lands.at(centre, tilt, kind::CRYSTAL, [0.34, 0.31, 0.17, 0.15]));
     let ice = lib.shape(ice);
     lib.moving(m, ice.at(centre, tilt, kind::CRYSTAL, [0.62, 0.66, 0.66, 0.2]));
+    // Once the room is finished its lines rise out of the seas (from inside the ball)
+    // and turn with it, a warm light comes up over it, and motes drift about it.
+    let fin = Finish::Room(f.dept);
+    let rise = Change::Arrives {
+        from: Vec3::ZERO,
+        grow: 0.95,
+    };
+    let lines = lib.mover(centre, Motion::Still, 0.0, Some(m));
+    lib.awaiting(lines, Awaits::new(fin, rise).after(1.0).over(3.5));
+    let graticule = lib.shape(graticule(r + 0.016, 0.007));
+    lib.moving(lines, graticule.at(centre, tilt, kind::EMISSIVE, [1.0, 0.6, 0.22, 0.6]));
+    let over = centre + Vec3::Y * 1.2;
+    let lamp = lib.waiting(
+        over,
+        Awaits::new(fin, Change::Kindles { dim: 0.0 }).after(1.5).over(4.0),
+        [],
+    );
+    lib.light_riding(lamp, over, 6.5, [1.0, 0.78, 0.5], 0.8, LightKind::Static);
+    lib.sparks(Sparks {
+        delay: 1.0,
+        lasts: Some(3.0),
+        rate: 45.0,
+        spread: Vec3::splat(0.75),
+        ..Sparks::burst(fin, centre)
+    });
+    lib.sparks(Sparks::motes(fin, centre + Vec3::Y * 0.4, Vec3::new(1.6, 1.0, 1.6)));
+    lib.cue(Cue {
+        finish: fin,
+        delay: 1.0,
+        sound: Sfx::Veil,
+        at: centre,
+        volume: 0.5,
+    });
+}
+
+/// The globe's lines of latitude and longitude on a ball of radius `r` about the
+/// origin, its axis up y: six great circles through the poles, the equator, the
+/// tropics and the polar circles, each a round wire `w` thick.
+fn graticule(r: f32, w: f32) -> Mesh {
+    let wire = |rad: f32| Mesh::torus(w / rad, 96, 6);
+    let mut m = Mesh::default();
+    let meridian = wire(r);
+    for k in 0..6 {
+        let turn = Quat::from_rotation_y(k as f32 / 6.0 * PI) * Quat::from_rotation_x(FRAC_PI_2);
+        m.add(&meridian, Vec3::ZERO, turn, Vec3::splat(r));
+    }
+    for lat in [0.0f32, 0.409, -0.409, 1.162, -1.162] {
+        let rad = r * libm::cosf(lat);
+        m.add(
+            &wire(rad),
+            Vec3::Y * (r * libm::sinf(lat)),
+            Quat::IDENTITY,
+            Vec3::splat(rad),
+        );
+    }
+    m
 }
 
 /// The globe's lands and its ice caps, on a ball of radius `r` about the origin with
@@ -951,7 +1198,8 @@ fn flat_stroke(lib: &mut Library, chart: &Spot, p: Vec2, q: Vec2, y: f32, ink: [
 /// A model ship sailing the air over the map table, heeled a little in a wind no one
 /// else feels, rising and falling and rocking as if on a slow swell, its pennant
 /// streaming: a round hull, two masts with their yards and bellied sails, a bowsprit
-/// and stays, and a lantern at the stern.
+/// and stays, and a lantern at the stern. Once the room is finished it sets out round
+/// the globe (`voyage`).
 fn ship(lib: &mut Library, f: &RoomFrame) {
     let s = Spot {
         at: f.at(TABLE.0 + 0.7, TABLE.1 - 0.1, 2.55),
@@ -967,7 +1215,8 @@ fn ship(lib: &mut Library, f: &RoomFrame) {
         period: 8.0,
         rock: 0.06,
     };
-    let m = lib.mover(s.at, swell, 0.0, None);
+    let voyage = voyage(lib, f, s.at, s.q * Vec3::X);
+    let m = lib.mover(s.at, swell, 0.0, Some(voyage));
     let (stern, bow) = (-0.42f32, 0.44f32);
     let deck = |x: f32| {
         let t = (x - stern) / (bow - stern) * 2.0 - 1.0;
@@ -1065,6 +1314,58 @@ fn ship(lib: &mut Library, f: &RoomFrame) {
             0,
         ),
     );
+}
+
+/// The ship's voyage once the room is finished: it comes about, sails off the map
+/// table to the globe, rising a little, and from then on sails round it, once a
+/// minute, well over everyone's heads. `at` is where it rests and `heading` its bow;
+/// returns the mover the ship rides.
+fn voyage(lib: &mut Library, f: &RoomFrame, at: Vec3, heading: Vec3) -> u32 {
+    let fin = Finish::Room(f.dept);
+    let (r, rise) = (1.75f32, 0.3f32);
+    let round = f.at(GLOBE.0, GLOBE.1, 0.0).with_y(at.y + rise);
+    // Its course runs past the globe `r` off, on whichever side is nearer its bow,
+    // and meets the circle it will sail where it touches it.
+    let to_globe = (round - at).with_y(0.0);
+    let d = to_globe.length();
+    let bow = heading.with_y(0.0).normalize();
+    let off = libm::asinf(r / d);
+    let course = [off, -off]
+        .map(|a| Quat::from_rotation_y(a) * (to_globe / d))
+        .into_iter()
+        .max_by(|p, q| p.dot(bow).total_cmp(&q.dot(bow)))
+        .expect("two ways round");
+    let meets = at + course * (d * d - r * r).sqrt() + Vec3::Y * rise;
+    let way = Vec3::Y.cross(meets - round).dot(course).signum();
+    let circling = Motion::Spin {
+        axis: Vec3::Y,
+        rate: way * TAU / 60.0,
+    };
+    let circles = lib.mover(round, circling, 0.0, None);
+    // Only its turning waits (a change that changes nothing), still until the ship
+    // has nearly come to the circle.
+    let starts = Awaits::new(fin, Change::Kindles { dim: 1.0 }).after(16.0).over(8.0);
+    lib.awaiting(circles, starts.still());
+    let shift = |by: Vec3, turn: Quat| Change::Shifts { by, turn, scale: 1.0 };
+    let sails = lib.mover(at, Motion::Still, 0.0, Some(circles));
+    lib.awaiting(
+        sails,
+        Awaits::new(fin, shift(meets - at, Quat::IDENTITY))
+            .after(6.0)
+            .over(12.0),
+    );
+    let comes_about = lib.mover(at, Motion::Still, 0.0, Some(sails));
+    let about = shift(Vec3::ZERO, Quat::from_rotation_arc(bow, course));
+    lib.awaiting(comes_about, Awaits::new(fin, about).after(2.0).over(4.0));
+    // The wind filling its sails as it sets off.
+    lib.cue(Cue {
+        finish: fin,
+        delay: 6.0,
+        sound: Sfx::Whoosh,
+        at,
+        volume: 0.6,
+    });
+    comes_about
 }
 
 /// The ship's hull from `stern` to `bow` along x, its deck at `deck(x)`: a round
