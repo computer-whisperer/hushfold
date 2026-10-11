@@ -2,8 +2,14 @@
 //! night sky: two ranges of cases cross the room, each split by a nave that runs from
 //! the door to a great brass telescope aimed out of a tall window in the far wall, and
 //! an orrery stands in the court between them. Cases line the walls round about.
+//!
+//! Each category filed whole traces a constellation over it in gold. The room in order
+//! wakes its sky: shooting stars, the zodiac's houses lit one by one, the orrery's sun
+//! brighter and its planets' paths drawn out round it, light along the meridian in the
+//! floor, and a new star in the window where the telescope looks.
 
 use super::*;
+use crate::audio::Sfx;
 use std::f32::consts::{FRAC_PI_2, PI};
 
 /// Half the width of the nave through the ranges.
@@ -21,6 +27,8 @@ const SCOPE_BRASS: [f32; 4] = [0.5, 0.33, 0.11, 1.0];
 const IRON: [f32; 4] = [0.08, 0.08, 0.09, 1.0];
 const NIGHT: [f32; 3] = [0.022, 0.03, 0.085];
 const PALE_STONE: [f32; 3] = [0.48, 0.45, 0.4];
+/// Gold light: the traced constellations, the zodiac's houses, the meridian.
+const GOLD_LIGHT: [f32; 4] = [1.0, 0.66, 0.28, 1.4];
 
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     shelves(lib, frame, rng, titles);
@@ -28,6 +36,14 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     sky(lib, frame);
     orrery(lib, frame);
     telescope(lib, frame);
+    // After the category's fanfare has begun, a swell with glints in it.
+    lib.cue(Cue {
+        finish: Finish::Room(frame.dept),
+        delay: 1.0,
+        sound: Sfx::Veil,
+        at: frame.at(0.0, COURT, 3.0),
+        volume: 0.7,
+    });
 }
 
 /// Shelve `cat` across `faces` (all facing one way), left to right as you face them.
@@ -299,74 +315,74 @@ fn sky(lib: &mut Library, frame: &RoomFrame) {
     );
     let gold = [0.7, 0.5, 0.2, 1.0];
     lib.moving(m, zodiac.at(centre, turn, kind::METAL, gold));
-    // Constellations in the room's frame (a, o), their stars' brightness, and which
-    // stars are joined.
-    type Figure = (&'static [(f32, f32, f32)], &'static [(usize, usize)]);
-    const PLOUGH: Figure = (
-        &[
-            (-3.0, 20.0, 1.0),
-            (-3.0, 21.0, 0.8),
-            (-1.7, 21.2, 0.7),
-            (-1.5, 20.2, 0.6),
-            (-0.4, 19.9, 0.8),
-            (0.6, 19.6, 0.9),
-            (1.7, 19.9, 0.8),
-        ],
-        &[(0, 1), (1, 2), (2, 3), (3, 0), (3, 4), (4, 5), (5, 6)],
-    );
-    const CASSIOPEIA: Figure = (
-        &[
-            (1.4, 26.6, 0.9),
-            (2.2, 25.9, 0.8),
-            (3.0, 26.5, 1.0),
-            (3.9, 25.8, 0.7),
-            (4.6, 26.6, 0.8),
-        ],
-        &[(0, 1), (1, 2), (2, 3), (3, 4)],
-    );
-    const HUNTER: Figure = (
-        &[
-            (-4.2, 27.4, 1.0),
-            (-2.2, 27.6, 0.8),
-            (-3.6, 26.2, 0.7),
-            (-3.25, 26.05, 0.7),
-            (-2.9, 25.9, 0.7),
-            (-4.4, 24.6, 0.8),
-            (-2.0, 24.8, 1.0),
-            (-3.2, 28.3, 0.5),
-        ],
-        &[(0, 2), (1, 4), (2, 3), (3, 4), (2, 5), (4, 6), (0, 7), (1, 7)],
-    );
-    const SWAN: Figure = (
-        &[
-            (3.2, 22.0, 1.0),
-            (3.2, 23.1, 0.7),
-            (3.2, 24.3, 0.6),
-            (2.0, 23.0, 0.6),
-            (4.4, 23.2, 0.6),
-        ],
-        &[(0, 1), (1, 2), (3, 1), (1, 4)],
-    );
-    const SISTERS: Figure = (
-        &[
-            (-5.0, 22.4, 0.6),
-            (-4.8, 22.2, 0.5),
-            (-4.9, 22.0, 0.6),
-            (-5.15, 22.15, 0.45),
-            (-4.65, 22.45, 0.45),
-            (-5.1, 22.6, 0.4),
-        ],
-        &[],
-    );
+    let room = Finish::Room(frame.dept);
+    // Once the room is in order its houses light one by one round the ring, a gem under
+    // each boss, and turn with it.
+    let gem = lib.shape(Mesh::sphere(16)).sized(Vec3::splat(0.1));
+    for k in 0..12 {
+        let t = (k as f32 + 0.5) / 12.0 * TAU;
+        let p = centre + (u * libm::cosf(t) + v * libm::sinf(t)) * 6.13 - Vec3::Y * 0.055;
+        let house = lib.mover(p, Motion::Still, 0.0, Some(m));
+        lib.awaiting(
+            house,
+            Awaits::new(room, grows(0.0)).after(1.0 + 0.45 * k as f32).over(0.8),
+        );
+        let warm = [GOLD_LIGHT[0], GOLD_LIGHT[1], GOLD_LIGHT[2], 2.5];
+        lib.moving(house, gem.inst(p, Quat::IDENTITY, kind::EMISSIVE, warm));
+    }
     let line = [0.5, 0.42, 0.25, 0.35];
-    for (stars, joins) in [PLOUGH, CASSIOPEIA, HUNTER, SWAN, SISTERS] {
+    for f in &FIGURES {
         let at = |s: &(f32, f32, f32)| frame.at(s.0, s.1, y - 0.01);
-        for &(i, j) in joins {
-            rod(lib, at(&stars[i]), at(&stars[j]), 0.012, 0.012, kind::EMISSIVE, line);
+        for &(i, j) in f.joins {
+            let (p, q) = (at(&f.stars[i]), at(&f.stars[j]));
+            rod(lib, p, q, 0.012, 0.012, kind::EMISSIVE, line);
         }
-        for s in stars {
+        for s in f.stars {
             star(lib, at(s), 0.03 + 0.03 * s.2, 2.5 + 4.5 * s.2);
         }
+        match f.by {
+            Some(c) => trace(lib, frame, f, Finish::Category(frame.categories.start + c), 0.8),
+            None => trace(lib, frame, f, room, 2.0),
+        }
+    }
+    // A shower of shooting stars across the sky when the room is in order, from either
+    // side and from the door's end; and after it, one now and then.
+    let meteor = |from: Vec3, toward: Vec3, spread: Vec3| Sparks {
+        at: from,
+        spread,
+        rate: 1.6,
+        vel: toward * 6.5,
+        jitter: toward.abs() * 1.5,
+        lift: 0.0,
+        drag: 0.3,
+        life: 1.5,
+        rgba: [0.85, 0.9, 1.0, 6.0],
+        size: (toward.abs() * 0.7).max(Vec3::splat(0.02)),
+        ..Sparks::burst(room, from)
+    };
+    let low = h - 0.18;
+    let athwart = frame.size(2.0, 0.05, 6.0);
+    for (from, toward, spread, delay) in [
+        (frame.at(-7.0, COURT, low), u, athwart, 1.5),
+        (frame.at(7.0, COURT, low), -u, athwart, 2.4),
+        (frame.at(0.0, 17.5, low), v, frame.size(6.0, 0.05, 1.5), 3.2),
+    ] {
+        lib.sparks(Sparks {
+            delay,
+            lasts: Some(6.0),
+            ..meteor(from, toward, spread)
+        });
+    }
+    for (from, toward, spread, rate) in [
+        (frame.at(-7.0, COURT, low), u, athwart, 0.05),
+        (frame.at(0.0, 17.5, low), v, frame.size(6.0, 0.05, 1.5), 0.04),
+    ] {
+        lib.sparks(Sparks {
+            delay: 9.0,
+            lasts: None,
+            rate,
+            ..meteor(from, toward, spread)
+        });
     }
     // The rest, strewn by a fixed hand.
     let mut rng = StdRng::seed_from_u64(0x5747_5bad);
@@ -376,6 +392,230 @@ fn sky(lib: &mut Library, frame: &RoomFrame) {
         let b: f32 = rng.gen_range(0.0..1.0f32).powi(3);
         star(lib, frame.at(a, o, y), 0.02 + 0.03 * b, 1.2 + 5.0 * b);
     }
+}
+
+/// A constellation on the painted sky: its stars in the room's frame (a, o) with their
+/// brightness, the stars joined (in the order they are traced), and which of the
+/// room's categories traces it in gold when filed whole, over where that category
+/// stands (`None`: the room itself).
+struct Figure {
+    stars: &'static [(f32, f32, f32)],
+    joins: &'static [(usize, usize)],
+    by: Option<usize>,
+}
+
+const FIGURES: [Figure; 10] = [
+    // The Crown, over the near range's door side.
+    Figure {
+        stars: &[
+            (3.6, 15.4, 0.55),
+            (3.8, 15.95, 0.6),
+            (4.25, 16.3, 0.7),
+            (4.75, 16.4, 1.0),
+            (5.2, 16.25, 0.65),
+            (5.5, 15.9, 0.55),
+            (5.6, 15.4, 0.5),
+        ],
+        joins: &[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6)],
+        by: Some(0),
+    },
+    // The Plough.
+    Figure {
+        stars: &[
+            (-3.0, 20.0, 1.0),
+            (-3.0, 21.0, 0.8),
+            (-1.7, 21.2, 0.7),
+            (-1.5, 20.2, 0.6),
+            (-0.4, 19.9, 0.8),
+            (0.6, 19.6, 0.9),
+            (1.7, 19.9, 0.8),
+        ],
+        joins: &[(6, 5), (5, 4), (4, 3), (3, 0), (0, 1), (1, 2), (2, 3)],
+        by: Some(1),
+    },
+    // Cassiopeia.
+    Figure {
+        stars: &[
+            (1.4, 26.6, 0.9),
+            (2.2, 25.9, 0.8),
+            (3.0, 26.5, 1.0),
+            (3.9, 25.8, 0.7),
+            (4.6, 26.6, 0.8),
+        ],
+        joins: &[(0, 1), (1, 2), (2, 3), (3, 4)],
+        by: Some(2),
+    },
+    // The Hunter.
+    Figure {
+        stars: &[
+            (-4.2, 27.4, 1.0),
+            (-2.2, 27.6, 0.8),
+            (-3.6, 26.2, 0.7),
+            (-3.25, 26.05, 0.7),
+            (-2.9, 25.9, 0.7),
+            (-4.4, 24.6, 0.8),
+            (-2.0, 24.8, 1.0),
+            (-3.2, 28.3, 0.5),
+        ],
+        joins: &[(7, 0), (7, 1), (0, 2), (1, 4), (2, 3), (3, 4), (2, 5), (4, 6)],
+        by: Some(3),
+    },
+    // The Eagle, over the far wall.
+    Figure {
+        stars: &[
+            (0.0, 30.65, 1.0),
+            (-0.4, 30.95, 0.6),
+            (0.4, 30.35, 0.55),
+            (-1.4, 30.2, 0.6),
+            (-2.5, 30.45, 0.5),
+            (1.5, 31.05, 0.6),
+            (2.6, 30.85, 0.5),
+        ],
+        joins: &[(1, 0), (0, 2), (0, 3), (3, 4), (0, 5), (5, 6)],
+        by: Some(4),
+    },
+    // The Lion, along the right wall: the sickle, then the body to its tail.
+    Figure {
+        stars: &[
+            (9.0, 21.0, 1.0),
+            (8.9, 21.8, 0.5),
+            (9.3, 22.6, 0.85),
+            (9.1, 23.4, 0.5),
+            (8.5, 23.75, 0.45),
+            (8.0, 23.25, 0.55),
+            (10.4, 23.3, 0.55),
+            (10.6, 24.5, 0.6),
+            (11.3, 25.9, 0.8),
+        ],
+        joins: &[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (2, 7), (7, 8), (8, 6), (6, 0)],
+        by: Some(5),
+    },
+    // The River, winding along the near wall.
+    Figure {
+        stars: &[
+            (-2.6, 15.2, 0.6),
+            (-3.8, 15.6, 0.5),
+            (-4.9, 15.3, 0.55),
+            (-6.0, 15.8, 0.5),
+            (-6.8, 16.6, 0.6),
+            (-7.9, 16.9, 0.5),
+            (-9.0, 16.5, 0.55),
+            (-10.2, 16.9, 0.5),
+            (-11.2, 17.7, 0.9),
+        ],
+        joins: &[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8)],
+        by: Some(6),
+    },
+    // The Scorpion, along the left wall: its claws, its heart and its tail.
+    Figure {
+        stars: &[
+            (-8.6, 19.5, 0.55),
+            (-9.3, 19.3, 0.6),
+            (-10.1, 19.6, 0.5),
+            (-9.6, 20.7, 1.0),
+            (-9.8, 21.7, 0.6),
+            (-10.1, 22.7, 0.55),
+            (-10.7, 23.7, 0.6),
+            (-11.2, 24.7, 0.6),
+            (-11.1, 25.7, 0.55),
+            (-10.4, 26.3, 0.6),
+            (-9.6, 26.05, 0.7),
+            (-9.35, 25.5, 0.45),
+        ],
+        joins: &[
+            (0, 1),
+            (2, 1),
+            (1, 3),
+            (3, 4),
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (7, 8),
+            (8, 9),
+            (9, 10),
+            (10, 11),
+        ],
+        by: Some(7),
+    },
+    // The Swan and the Sisters, in the court: the room's own.
+    Figure {
+        stars: &[
+            (3.2, 22.0, 1.0),
+            (3.2, 23.1, 0.7),
+            (3.2, 24.3, 0.6),
+            (2.0, 23.0, 0.6),
+            (4.4, 23.2, 0.6),
+        ],
+        joins: &[(0, 1), (1, 2), (3, 1), (1, 4)],
+        by: None,
+    },
+    Figure {
+        stars: &[
+            (-5.0, 22.4, 0.6),
+            (-4.8, 22.2, 0.5),
+            (-4.9, 22.0, 0.6),
+            (-5.15, 22.15, 0.45),
+            (-4.65, 22.45, 0.45),
+            (-5.1, 22.6, 0.4),
+        ],
+        joins: &[],
+        by: None,
+    },
+];
+
+/// Figure `f` traced in gold once `fin` is finished, from `start` seconds after: each
+/// line drawn out from its first star to its second in turn, a little under the
+/// painted one, and dust glinting from each star as the gold reaches it (from each in
+/// turn, for a figure with no lines). It stays traced.
+fn trace(lib: &mut Library, frame: &RoomFrame, f: &Figure, fin: Finish, start: f32) {
+    const STEP: f32 = 0.45;
+    let at = |s: (f32, f32, f32)| frame.at(s.0, s.1, RoomFrame::HEIGHT - 0.086);
+    let glint = |lib: &mut Library, p: Vec3, delay: f32| {
+        lib.sparks(Sparks {
+            delay,
+            lasts: Some(0.25),
+            rate: 40.0,
+            spread: Vec3::splat(0.03),
+            vel: Vec3::ZERO,
+            jitter: Vec3::splat(0.2),
+            lift: -0.15,
+            life: 1.2,
+            rgba: [1.0, 0.9, 0.65, 3.0],
+            size: Vec3::splat(0.014),
+            ..Sparks::burst(fin, p)
+        });
+    };
+    let mut reached = vec![false; f.stars.len()];
+    for (k, &(i, j)) in f.joins.iter().enumerate() {
+        let (p, q) = (at(f.stars[i]), at(f.stars[j]));
+        let delay = start + k as f32 * STEP;
+        let along = Quat::from_rotation_arc(Vec3::Y, (q - p).normalize());
+        let line = Inst::new(
+            (p + q) * 0.5,
+            along,
+            Vec3::new(0.018, p.distance(q), 0.018),
+            kind::EMISSIVE,
+            GOLD_LIGHT,
+            0,
+        );
+        lib.waiting(p, Awaits::new(fin, grows(0.0)).after(delay).over(STEP * 1.3), [line]);
+        for (s, when) in [(i, delay), (j, delay + STEP * 1.1)] {
+            if !reached[s] {
+                reached[s] = true;
+                glint(lib, at(f.stars[s]), when);
+            }
+        }
+    }
+    if f.joins.is_empty() {
+        for (k, &s) in f.stars.iter().enumerate() {
+            glint(lib, at(s), start + k as f32 * STEP * 0.5);
+        }
+    }
+}
+
+/// Coming in where it rests, growing from `grow` of its size about its pivot.
+fn grows(grow: f32) -> Change {
+    Change::Arrives { from: Vec3::ZERO, grow }
 }
 
 /// A point of light on the painted sky, twinkling.
@@ -454,6 +694,23 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
         rgba(gold, 1.0),
     );
     lib.decor(inlay);
+    // Once the room is in order, light comes out from under the drum round the ring and
+    // runs out along the line to the door and the window, let into the brass's top, and
+    // stays.
+    let room = Finish::Room(frame.dept);
+    let lit = [GOLD_LIGHT[0], GOLD_LIGHT[1], GOLD_LIGHT[2], 0.6];
+    let rim = base + up * 0.00825;
+    let ring = band(lib, rim, flat, (1.25, 0.02, 0.0025), kind::EMISSIVE, lit);
+    lib.waiting(rim, Awaits::new(room, grows(0.6)).over(1.2), [ring]);
+    for (o0, o1, from) in [
+        (RoomFrame::O_NEAR + 1.0, COURT - 1.25, COURT - 1.25),
+        (COURT + 1.25, RoomFrame::O_FAR - 0.3, COURT + 1.25),
+    ] {
+        let mut strip = piece(frame, (-0.015, 0.015), (o0, o1), (0.006, 0.0085), kind::EMISSIVE, gold);
+        strip.color = lit;
+        let pivot = frame.at(0.0, from, 0.00725);
+        lib.waiting(pivot, Awaits::new(room, grows(0.0)).after(0.6).over(2.5), [strip]);
+    }
     // A brass hoop round the top of the drum, and the column.
     let hoop = lib.shape(Mesh::torus(0.08, 64, 10)).scaled(0.62);
     lib.decor(hoop.at(base + up * 0.965, Quat::IDENTITY, kind::METAL, BRASS_BRIGHT));
@@ -475,12 +732,24 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
     lib.decor(column.at(base, Quat::IDENTITY, kind::METAL, BRASS_BRIGHT));
     let sun = base + up * 1.9;
     let ball = lib.shape(Mesh::sphere(32));
-    lib.decor(
-        ball.sized(Vec3::splat(0.24))
-            .inst(sun, Quat::IDENTITY, kind::CRYSTAL, [1.0, 0.72, 0.3, 1.4]),
-    );
+    // Burning brighter once the room is in order, its light with it.
+    let (glow, was) = (2.0, 1.4);
+    let flares = Awaits::new(room, Change::Kindles { dim: was / glow })
+        .after(0.3)
+        .over(3.0);
+    let blaze = ball
+        .sized(Vec3::splat(0.24))
+        .inst(sun, Quat::IDENTITY, kind::CRYSTAL, [1.0, 0.72, 0.3, glow]);
+    let burns = lib.waiting(sun, flares, [blaze]);
     // Its light a little above it, so it lights the court rather than flooding itself.
-    lib.light(sun + up * 0.7, 5.5, [1.0, 0.7, 0.35], 0.9, LightKind::Static);
+    lib.light_riding(
+        burns,
+        sun + up * 0.7,
+        5.5,
+        [1.0, 0.7, 0.35],
+        0.9 * glow / was,
+        LightKind::Static,
+    );
     // The sun's armillary ring, tipped to the ecliptic.
     let tilt = Quat::from_rotation_x(0.41);
     let ecliptic = lib.shape(Mesh::torus(0.06, 48, 8)).scaled(0.36);
@@ -496,6 +765,14 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
     ];
     let stick = lib.shape(Mesh::cylinder(12));
     let sleeve = lib.shape(Mesh::cylinder(24)).sized(Vec3::new(0.085, 0.035, 0.085));
+    // Each world's path, drawn out from the sun in faint gold once the room is in
+    // order, the nearest first.
+    for (k, &(_, r, h, s, _, _)) in planets.iter().enumerate() {
+        let c = base + up * (h + 0.14 + s * 0.5);
+        let path = band(lib, c, flat, (r, 0.008, 0.004), kind::EMISSIVE, [1.0, 0.82, 0.5, 0.45]);
+        let drawn = Awaits::new(room, grows(0.0)).after(0.6 + 0.45 * k as f32).over(1.8);
+        lib.waiting(c, drawn, [path]);
+    }
     for (k, &(t, r, h, s, rgb, years)) in planets.iter().enumerate() {
         let spin = Motion::Spin {
             axis: up,
@@ -663,4 +940,34 @@ fn telescope(lib: &mut Library, frame: &RoomFrame) {
             ),
         );
     }
+    // What it was looking for: once the room is in order, a new star in the window where
+    // it looks, coming out of the night and glinting there for good.
+    let room = Finish::Room(frame.dept);
+    let found = frame.at(-0.3, RoomFrame::O_FAR, 4.4) - frame.out() * 0.046;
+    let starlight = [1.0, 0.92, 0.75, 7.0];
+    let face = frame.turn();
+    let glints = [
+        Inst::new(found, face, Vec3::new(0.36, 0.012, 0.004), kind::EMISSIVE, starlight, 1),
+        Inst::new(found, face, Vec3::new(0.012, 0.36, 0.004), kind::EMISSIVE, starlight, 1),
+        Inst::new(
+            found - frame.out() * 0.002,
+            face * Quat::from_rotation_z(PI / 4.0),
+            Vec3::new(0.06, 0.06, 0.004),
+            kind::EMISSIVE,
+            starlight,
+            1,
+        ),
+    ];
+    lib.waiting(found, Awaits::new(room, grows(0.0)).after(5.5).over(2.5), glints);
+    lib.sparks(Sparks {
+        delay: 6.0,
+        lasts: Some(0.6),
+        rate: 30.0,
+        spread: Vec3::splat(0.04),
+        vel: Vec3::ZERO,
+        jitter: Vec3::splat(0.25),
+        lift: -0.1,
+        rgba: [0.85, 0.9, 1.0, 3.0],
+        ..Sparks::burst(room, found - frame.out() * 0.1)
+    });
 }
