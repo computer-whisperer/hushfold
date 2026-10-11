@@ -8,6 +8,7 @@
 
 use super::hearth_library::{FLAME, turned_leg};
 use super::*;
+use crate::audio::Sfx;
 use std::f32::consts::{FRAC_PI_2, PI};
 
 const BRASS_LIT: [f32; 3] = [0.72, 0.5, 0.2];
@@ -33,6 +34,12 @@ const PILLAR_W: f32 = UNIT_PITCH;
 const TURRET: f32 = 1.7;
 /// The cases' height to the top of their caps.
 const CASE_TOP: f32 = UNIT_H + 0.13;
+/// The room in order (seconds after): the great clock strikes, the floating clocks
+/// take their works back in turn, nearest the door first, and the clock in the floor
+/// spreads out and its hours kindle.
+const STRIKES: f32 = 0.3;
+const WORKS: (f32, f32) = (0.8, 0.4);
+const FLOOR_CLOCK: f32 = 2.0;
 
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     // The bays and the workshop are laid out round a door in the middle of the wall.
@@ -46,6 +53,125 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     great_clock(lib, frame);
     workshop(lib, frame);
     ceiling(lib, frame);
+    crests(lib, frame);
+    floor_clock(lib, frame);
+}
+
+/// The last mover made (`gear` makes one for a wheel that turns).
+fn last_mover(lib: &Library) -> u32 {
+    lib.movers.len() as u32 - 1
+}
+
+/// A wheel on the cornice at the right-hand end of each case side, clear of the sign
+/// over the middle case and sunk in the cornice to its hub, that rises out of it and
+/// starts turning when that side is filled.
+fn crests(lib: &mut Library, frame: &RoomFrame) {
+    let faces: Vec<(usize, Vec3, Vec3)> = (lib.faces.iter().enumerate())
+        .filter(|(_, f)| frame.categories.contains(&f.category))
+        .map(|(i, f)| (i, f.center, f.normal))
+        .collect();
+    for (i, c, n) in faces {
+        let at = c + Vec3::Y.cross(n) * 1.16 - n * 0.05 + Vec3::Y * (CASE_TOP + 0.06);
+        let w = wheel(0.13, 12, 0.025).turned(i as f32 * 2.4);
+        // Neighbours turning either way, as if geared together.
+        let w = Wheel {
+            rate: if i % 2 == 0 { w.rate } else { -w.rate },
+            ..w
+        };
+        gear(lib, w.at(at, n));
+        let rises = Change::Arrives {
+            from: Vec3::Y * -0.25,
+            grow: 0.5,
+        };
+        lib.awaiting(last_mover(lib), Awaits::new(Finish::Face(i), rises).over(1.6).still());
+    }
+}
+
+/// A clock face inlaid in the floor before the great clock, once the room is in order:
+/// it spreads out from its middle, its hours kindle round from twelve, and its hands
+/// keep the great clock's time. Brass and glass laid flat, no more than 3 mm thick.
+fn floor_clock(lib: &mut Library, frame: &RoomFrame) {
+    let fin = Finish::Room(frame.dept);
+    let (out, across) = (frame.out(), frame.across());
+    let (c, r) = (frame.at(0.0, 28.4, 0.0), 2.1);
+    let flat = c + Vec3::Y * 0.0015;
+    let brass = rgba(BRASS_LIT, 1.0);
+    let rings =
+        [(r, 0.07), (r * 0.72, 0.03)].map(|(rr, w)| band(lib, flat, (across, out), (rr, w, 0.003), kind::METAL, brass));
+    let disc = lib.shape(Mesh::cylinder(24));
+    let boss = disc
+        .sized(Vec3::new(0.24, 0.003, 0.24))
+        .inst(flat, Quat::IDENTITY, kind::METAL, brass);
+    let spreads = Change::Arrives {
+        from: Vec3::ZERO,
+        grow: 0.0,
+    };
+    let face = lib.waiting(
+        c,
+        Awaits::new(fin, spreads).after(FLOOR_CLOCK).over(3.0),
+        rings.into_iter().chain([boss]),
+    );
+    // The hours, glowing as the great clock's do, kindling round from twelve once the
+    // face has spread.
+    let lozenge = lib.shape(Mesh::prism(
+        &[
+            Vec2::new(-0.5, 0.0),
+            Vec2::new(0.0, -0.5),
+            Vec2::new(0.5, 0.0),
+            Vec2::new(0.0, 0.5),
+        ],
+        1.0,
+    ));
+    for h in 0..12 {
+        let th = h as f32 * TAU / 12.0;
+        let radial = out * libm::cosf(th) + across * libm::sinf(th);
+        let (len, w) = if h % 3 == 0 { (0.34, 0.12) } else { (0.2, 0.08) };
+        let at = flat + radial * (r * 0.86);
+        // Lying flat, its length along the radius.
+        let lay = Quat::from_mat3(&Mat3::from_cols(radial, Vec3::Y.cross(radial), Vec3::Y));
+        let mark = lozenge
+            .sized(Vec3::new(len, w, 0.003))
+            .inst(at, lay, kind::CRYSTAL, rgba(GLOW, 0.8));
+        let m = lib.mover(at, Motion::Still, 0.0, Some(face));
+        let kindles = Awaits::new(fin, Change::Kindles { dim: 0.1 })
+            .after(FLOOR_CLOCK + 2.2 + h as f32 * 0.15)
+            .over(0.8);
+        lib.awaiting(m, kindles);
+        lib.moving(m, mark);
+    }
+    // The hands, set as the great clock's are and turning as they do (clockwise seen
+    // from above, twelve toward the great clock); the minute hand over the hour hand.
+    let twelve = Quat::from_mat3(&Mat3::from_cols(out, Vec3::Y.cross(out), Vec3::Y));
+    for (turns, len, w, d, hours) in [
+        ((10.0 + 9.0 / 60.0) / 12.0, r * 0.48, 0.15, 0.0015, 12.0),
+        (9.0 / 60.0, r * 0.7, 0.095, 0.003, 1.0),
+    ] {
+        let hand = lib.shape(Mesh::prism(&spade(0.13, len, w), d));
+        let rest = Quat::from_rotation_y(-TAU * turns) * twelve;
+        let keeps = Motion::Spin {
+            axis: Vec3::Y,
+            rate: -TAU / (hours * 3600.0),
+        };
+        let m = lib.mover(c, keeps, 0.0, Some(face));
+        lib.moving(m, hand.at(c + Vec3::Y * (d * 0.5), rest, kind::METAL, brass));
+    }
+}
+
+/// A clock hand's outline along x from `from` (clear of the arbor's boss) to its tip at
+/// `len`, `w` wide at the shaft: a spade near the tip.
+fn spade(from: f32, len: f32, w: f32) -> Vec<Vec2> {
+    let v = Vec2::new;
+    vec![
+        v(from, -w * 0.5),
+        v(0.62 * len, -w * 0.35),
+        v(0.72 * len, -w * 1.3),
+        v(0.86 * len, -w * 0.4),
+        v(len, 0.0),
+        v(0.86 * len, w * 0.4),
+        v(0.72 * len, w * 1.3),
+        v(0.62 * len, w * 0.35),
+        v(from, w * 0.5),
+    ]
 }
 
 /// A bay's faces in reading order, as someone standing in it sees them: along the
@@ -551,8 +677,69 @@ pub(in crate::library) fn stopped_clock(lib: &mut Library, c: Vec3, n: Vec3, r: 
     lib.inscribe(key, KEY_LETTERS, c - Vec3::Y * (r * 0.42) + n * 0.011, n, r * 1.3);
     let face = c + n * 0.01;
     lib.clock_cap((face, n, r), rgba(BRASS_LIT, 1.0));
+    clock_works(lib, c, n, r, lib.stopped.len());
     let ink = [0.06, 0.06, 0.08, 1.0];
     Library::CLOCK_HANDS.map(|(len, w, z)| lib.clock_hand((face, n), 0.0, (r * len, r * w), z, ink))
+}
+
+/// What a floating clock (its dial at `c`, facing `n`, of radius `r`) takes back when
+/// the room is in order: a bell set down on its case and a pair of wheels coming in
+/// behind it and starting to turn, their teeth showing over its rim. The `k`th clock
+/// to start again (nearest the door first) a moment after the one before.
+fn clock_works(lib: &mut Library, c: Vec3, n: Vec3, r: f32, k: usize) {
+    let fin = Finish::Room(dept::CLOCKWORKS);
+    let at = WORKS.0 + WORKS.1 * k as f32;
+    let (up, side) = (Vec3::Y, Vec3::Y.cross(n));
+    let brass = rgba(BRASS_LIT, 1.0);
+    let top = c - n * 0.07 + up * (r * 1.15);
+    let stem = lib.pole_inst(top - up * 0.02, top + up * 0.09, 0.025, kind::METAL, brass);
+    let dome = lib.shape(Mesh::dome(24));
+    let bell = dome
+        .sized(Vec3::new(0.24, 0.12, 0.24))
+        .inst(top + up * 0.13, Quat::IDENTITY, kind::METAL, brass);
+    let ball = lib.shape(Mesh::sphere(12));
+    let knob = ball
+        .sized(Vec3::splat(0.045))
+        .inst(top + up * 0.2, Quat::IDENTITY, kind::METAL, brass);
+    let set_down = Change::Arrives {
+        from: up * 0.5,
+        grow: 0.4,
+    };
+    lib.waiting(top, Awaits::new(fin, set_down).after(at).over(1.2), [stem, bell, knob]);
+    lib.sparks(Sparks {
+        delay: at + 1.0,
+        lasts: Some(0.3),
+        rate: 40.0,
+        spread: Vec3::new(0.1, 0.02, 0.1),
+        vel: up * 0.5,
+        life: 1.2,
+        ..Sparks::burst(fin, top + up * 0.08)
+    });
+    let back = c - n * 0.17;
+    let comes_in = Change::Arrives {
+        from: -n * 0.4,
+        grow: 0.3,
+    };
+    let works = lib.waiting(
+        back,
+        Awaits::new(fin, comes_in).after(at).over(1.8),
+        std::iter::empty::<Inst>(),
+    );
+    // Both wheels start together, so their teeth stay together.
+    let starts = Awaits::new(fin, Change::Kindles { dim: 1.0 })
+        .after(at + 1.0)
+        .over(2.5)
+        .still();
+    let great = gear(
+        lib,
+        wheel(0.25, 14, 0.03)
+            .turned(k as f32 * 0.7)
+            .riding(works)
+            .at(back + up * 0.2 - side * 0.22, n),
+    );
+    lib.awaiting(last_mover(lib), starts);
+    gear(lib, great.mesh(side + up * 0.6, 0.0, wheel(0.0, 8, 0.03).old()));
+    lib.awaiting(last_mover(lib), starts);
 }
 
 /// A small wall clock (a dial on a short case with a pendulum under it), its dial's
@@ -604,11 +791,13 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
         lettering: Lettering::Ink,
         color: [0.06, 0.045, 0.035, 1.0],
     };
+    let fin = Finish::Room(frame.dept);
     for (h, figure) in NUMERALS.into_iter().enumerate() {
         let th = h as f32 * TAU / 12.0;
         let radial = side * libm::sinf(th) + Vec3::Y * libm::cosf(th);
+        let at = c + radial * (r * 0.7) + n * 0.03;
         let gem = Inst::new(
-            c + radial * (r * 0.7) + n * 0.03,
+            at,
             on_plane(side + Vec3::Y, n),
             Vec3::new(0.1, 0.1, 0.02),
             kind::CRYSTAL,
@@ -617,7 +806,28 @@ fn great_clock(lib: &mut Library, frame: &RoomFrame) {
         );
         lib.decor(gem);
         lib.inscribe(figure, figures, c + radial * (r * 0.53) + n * 0.01, n, 0.4);
+        // The room in order: the hours glint round from twelve, as if it struck.
+        lib.sparks(Sparks {
+            delay: STRIKES + h as f32 * 0.2,
+            lasts: Some(0.4),
+            rate: 60.0,
+            spread: Vec3::splat(0.06),
+            vel: radial * 0.6 + n * 0.25,
+            jitter: Vec3::splat(0.15),
+            lift: 0.1,
+            drag: 1.0,
+            life: 2.2,
+            size: Vec3::splat(0.03),
+            ..Sparks::burst(fin, at + n * 0.04)
+        });
     }
+    lib.cue(Cue {
+        finish: fin,
+        delay: STRIKES,
+        sound: Sfx::Chime,
+        at: c,
+        volume: 0.8,
+    });
     // The pendulum's case: a plinth, posts, a back panel and a crown under the dial.
     let d = wall - 0.28;
     lib.decor(piece(frame, (-0.85, 0.85), (d, wall), (0.0, 0.35), kind::WOOD, WALNUT));

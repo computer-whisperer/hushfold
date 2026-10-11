@@ -9,6 +9,7 @@
 
 use super::hearth_library::{candle, turned_leg};
 use super::*;
+use crate::audio::Sfx;
 use std::f32::consts::FRAC_PI_2;
 
 /// Where the two rows of cases stand (outward), and where the aisle between their
@@ -25,6 +26,13 @@ const EBONY: [f32; 4] = [0.04, 0.035, 0.03, 1.0];
 const GLOW: [f32; 3] = [1.0, 0.82, 0.45];
 /// Sheet music, on the stands and desks.
 const SHEET: [f32; 4] = [0.88, 0.82, 0.66, 1.0];
+/// The room in order (seconds after): a run of glints down the harp's strings and the
+/// chimes, the organ's case lighting from within, notes rising from it to circle under
+/// the chandelier, and staves written along the floor either side of the carpet.
+const GLISSANDO: f32 = 0.2;
+const ORGAN_LIGHTS: f32 = 1.0;
+const NOTES_RISE: f32 = 2.0;
+const STAVES: f32 = 1.6;
 
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     debug_assert!(frame.door.abs() < 1.0, "the Music Room wants its door in the middle");
@@ -39,6 +47,8 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     chimes(lib, frame, -6.6, 16.2);
     double_bass(lib, frame, 8.2, 16.1);
     ceiling(lib, frame);
+    notes_ring(lib, frame);
+    staves(lib, frame);
 }
 
 /// A rotation turning y onto `dir` and z as near to `side` as it can.
@@ -71,8 +81,9 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
             }
             let mut faces = left_to_right(far);
             faces.extend(left_to_right(near));
-            lib.add_category(rng, cats.next().unwrap(), &faces, titles);
-            pew_end(lib, frame, s, o);
+            let cat = cats.next().unwrap();
+            lib.add_category(rng, cat, &faces, titles);
+            pew_end(lib, frame, s, o, cat);
         }
     }
     for s in [-1.0f32, 1.0] {
@@ -95,8 +106,9 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
     }
 }
 
-/// A panel on a row's end toward the aisle, a gilt lyre on it.
-fn pew_end(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) {
+/// A panel on a row's end toward the aisle, a gilt lyre on it, strung with light once
+/// the row's category `cat` is all home.
+fn pew_end(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32, cat: usize) {
     // The case's side faces the aisle AISLE + 0.05 from the middle.
     let (a0, a1) = (s * (AISLE + 0.02), s * (AISLE + 0.045));
     lib.decor(piece(
@@ -118,9 +130,29 @@ fn pew_end(lib: &mut Library, frame: &RoomFrame, s: f32, o: f32) {
         line(lib, (m * 0.2, 1.75), (m * 0.13, 2.08), 0.03);
     }
     line(lib, (-0.17, 2.0), (0.17, 2.0), 0.025);
+    // Each string drawn up from its foot in light, one after another, as if plucked.
+    let fin = Finish::Category(cat);
+    let lit = |u: f32, v: f32| frame.at(s * (AISLE + 0.006), o + u, v);
     for k in 0..4 {
         let u = -0.075 + k as f32 * 0.05;
         line(lib, (u, 1.47), (u, 1.99), 0.006);
+        let (foot, top) = (lit(u, 1.47), lit(u, 1.99));
+        let string = lib.pole_inst(foot, top, 0.008, kind::CRYSTAL, rgba(GLOW, 1.6));
+        let drawn = Change::Arrives {
+            from: Vec3::ZERO,
+            grow: 0.0,
+        };
+        let after = 0.3 + k as f32 * 0.18;
+        lib.waiting(foot, Awaits::new(fin, drawn).after(after).over(0.7), [string]);
+        lib.sparks(Sparks {
+            delay: after + 0.3,
+            lasts: Some(0.3),
+            rate: 30.0,
+            spread: Vec3::new(0.01, 0.2, 0.01),
+            vel: Vec3::Y * 0.3,
+            life: 1.2,
+            ..Sparks::burst(fin, (foot + top) * 0.5)
+        });
     }
 }
 
@@ -539,6 +571,34 @@ fn organ(lib: &mut Library, frame: &RoomFrame) {
             rgba(GILT, 1.0),
         )
     });
+    // The room in order: a warm light wells up behind the pipes from the keyboards and
+    // fills the case behind the shades, glowing through their fretwork from then on.
+    let behind = lib.shape(Mesh::prism(&edge, 0.01));
+    let glow = behind.at(
+        frame.at(0.0, wall - 0.045, 0.0),
+        frame.turn(),
+        kind::EMISSIVE,
+        [1.0, 0.58, 0.24, 0.4],
+    );
+    let wells_up = Change::Arrives {
+        from: Vec3::Y * -2.4,
+        grow: 0.0,
+    };
+    let lit = lib.waiting(
+        frame.at(0.0, wall - 0.045, 3.75),
+        Awaits::new(Finish::Room(frame.dept), wells_up)
+            .after(ORGAN_LIGHTS)
+            .over(3.0),
+        [glow],
+    );
+    lib.light_riding(
+        lit,
+        frame.at(0.0, wall - 1.4, 3.3),
+        5.5,
+        [1.0, 0.62, 0.3],
+        0.7,
+        LightKind::Static,
+    );
     // The keyboards: a shelf with white keys and their black ones, a second above
     // and behind it; stops either side; the music desk.
     for (k, (o0, y)) in [(wall - 0.62, 0.78), (wall - 0.46, 0.92)].into_iter().enumerate() {
@@ -748,12 +808,24 @@ fn harp(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         // far above the middle line, for the box's depth there).
         0.1 + 1.42 * f + 2.38 * (0.09 - 0.054 * f) - 0.02
     };
+    let fin = Finish::Room(frame.dept);
     for k in 0..11 {
         let u = 0.1 + k as f32 * 0.055;
         let (bottom, top) = (board(u), neck(u) - 0.035);
         if top - bottom > 0.05 {
             let i = lib.pole_inst(p(u, bottom), p(u, top), 0.007, kind::CRYSTAL, rgba(GLOW, 0.9));
             lib.decor(i);
+            // The room in order: a hand drawn across the strings, longest to shortest.
+            lib.sparks(Sparks {
+                delay: GLISSANDO + k as f32 * 0.09,
+                lasts: Some(0.25),
+                rate: 50.0,
+                spread: Vec3::new(0.01, (top - bottom) * 0.4, 0.01),
+                vel: Vec3::Y * 0.25,
+                jitter: Vec3::splat(0.2),
+                life: 1.5,
+                ..Sparks::burst(fin, p(u, (bottom + top) * 0.5))
+            });
         }
     }
     guard(lib, frame, (a - 0.22, a + 0.22), (o - 0.1, o + 0.8), 1.9);
@@ -765,19 +837,6 @@ fn harp(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         period: 23.0,
     };
     let drift = lib.mover(p(0.35, 2.4), wander, 0.0, None);
-    let head = lib.shape(Mesh::sphere(16));
-    let flag = lib.shape(Mesh::sweep(
-        &[
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(0.025, -0.02, 0.0),
-            Vec3::new(0.05, -0.05, 0.0),
-            Vec3::new(0.055, -0.09, 0.0),
-            Vec3::new(0.045, -0.12, 0.0),
-        ],
-        &[0.008, 0.005],
-        &circle(1.0, 6),
-        true,
-    ));
     let n = across * if a < 0.0 { 1.0 } else { -1.0 };
     let face = Quat::from_mat3(&Mat3::from_cols(out, Vec3::Y, out.cross(Vec3::Y)));
     let notes = [
@@ -794,20 +853,166 @@ fn harp(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             rock: 0.12,
         };
         let m = lib.mover(c, bob, phase, Some(drift));
-        let glow = rgba(GLOW, 1.6);
-        lib.moving(
-            m,
-            head.sized(Vec3::new(0.085, 0.06, 0.03))
-                .inst(c, face * Quat::from_rotation_z(0.35), kind::CRYSTAL, glow),
-        );
-        let stem = (c + out * 0.038 + Vec3::Y * 0.01, c + out * 0.038 + Vec3::Y * 0.21);
-        let i = lib.pole_inst(stem.0, stem.1, 0.01, kind::CRYSTAL, glow);
-        lib.moving(m, i);
-        if k % 2 == 1 {
-            lib.moving(m, flag.at(stem.1, face, kind::CRYSTAL, glow));
+        for part in note(lib, c, face, 1.0, k % 2 == 1) {
+            lib.moving(m, part);
         }
     }
     lib.light(p(0.4, 2.2), 3.0, GLOW, 0.4, LightKind::Static);
+}
+
+/// A note in light, its head at `c` in the plane `face` turns x (its right) and y (up)
+/// into, `k` times the harp's notes' size, a flag on its stem if `flag`.
+fn note(lib: &mut Library, c: Vec3, face: Quat, k: f32, flag: bool) -> Vec<Inst> {
+    let glow = rgba(GLOW, 1.6);
+    let (right, up) = (face * Vec3::X, face * Vec3::Y);
+    let head = lib.shape(Mesh::sphere(16));
+    let mut parts = vec![head.sized(Vec3::new(0.085, 0.06, 0.03) * k).inst(
+        c,
+        face * Quat::from_rotation_z(0.35),
+        kind::CRYSTAL,
+        glow,
+    )];
+    let stem = (c + (right * 0.038 + up * 0.01) * k, c + (right * 0.038 + up * 0.21) * k);
+    parts.push(lib.pole_inst(stem.0, stem.1, 0.01 * k, kind::CRYSTAL, glow));
+    if flag {
+        let flag = lib.shape(Mesh::sweep(
+            &[
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(0.025, -0.02, 0.0),
+                Vec3::new(0.05, -0.05, 0.0),
+                Vec3::new(0.055, -0.09, 0.0),
+                Vec3::new(0.045, -0.12, 0.0),
+            ],
+            &[0.008, 0.005],
+            &circle(1.0, 6),
+            true,
+        ));
+        parts.push(flag.scaled(k).at(stem.1, face, kind::CRYSTAL, glow));
+    }
+    parts
+}
+
+/// Notes rising from the organ once the room is in order, each flying to its place in
+/// a ring under the chandelier, where they bob in their own time and the ring turns
+/// slowly from then on.
+fn notes_ring(lib: &mut Library, frame: &RoomFrame) {
+    let fin = Finish::Room(frame.dept);
+    let (out, across) = (frame.out(), frame.across());
+    // Under the chandelier's hoops (see `ceiling`), wider than they are.
+    let centre = frame.at(0.0, 24.0, 3.45);
+    let turns = Motion::Spin {
+        axis: Vec3::Y,
+        rate: TAU / 60.0,
+    };
+    let ring = lib.mover(centre, turns, 0.0, None);
+    let starts = Awaits::new(fin, Change::Kindles { dim: 1.0 })
+        .after(NOTES_RISE + 4.5)
+        .over(6.0)
+        .still();
+    lib.awaiting(ring, starts);
+    let count = 8;
+    for i in 0..count {
+        let th = i as f32 * TAU / count as f32 + 0.2;
+        let d = across * libm::cosf(th) + out * libm::sinf(th);
+        let c = centre + d * 1.6 + Vec3::Y * (0.12 * libm::sinf(i as f32 * 2.1));
+        // Facing out of the ring, so each is seen whole from below and around it.
+        let face = Quat::from_mat3(&Mat3::from_cols(Vec3::Y.cross(d), Vec3::Y, d));
+        let bob = Motion::Bob {
+            amp: 0.05,
+            period: 5.5 + i as f32 * 0.45,
+            rock: 0.1,
+        };
+        let m = lib.mover(c, bob, i as f32 * 1.3, Some(ring));
+        // Out of the organ over its pipes, one after another.
+        let from = frame.at((i as f32 - 3.5) * 0.3, RoomFrame::O_FAR - 0.5, 4.3) - c;
+        let flies = Change::Arrives { from, grow: 0.15 };
+        lib.awaiting(m, Awaits::new(fin, flies).after(NOTES_RISE + i as f32 * 0.35).over(2.6));
+        for part in note(lib, c, face, 1.5, i % 2 == 1) {
+            lib.moving(m, part);
+        }
+    }
+}
+
+/// Staves written along the floor either side of the carpet once the room is in order:
+/// their lines drawn out from the door toward the organ, and the bars and notes of a
+/// waltz coming as the lines reach them. Gilt and glowing glass laid flat, no more than
+/// 3 mm thick.
+fn staves(lib: &mut Library, frame: &RoomFrame) {
+    let fin = Finish::Room(frame.dept);
+    let (o0, len, secs) = (17.6, 12.0, 3.2);
+    let appears = Change::Arrives {
+        from: Vec3::ZERO,
+        grow: 0.0,
+    };
+    // When the lines, drawn out eased, reach `o`.
+    let reaches = |o: f32| {
+        let f = ((o - o0) / len).clamp(0.0, 1.0);
+        STAVES + secs * (0.5 - libm::sinf(libm::asinf(1.0 - 2.0 * f) / 3.0))
+    };
+    // Steps up the stave from its bottom line, three to a bar.
+    let tunes: [[u8; 12]; 2] = [
+        [2, 4, 6, 5, 4, 2, 3, 5, 7, 6, 4, 4],
+        [4, 6, 8, 7, 6, 4, 5, 3, 1, 2, 3, 4],
+    ];
+    let head = lib.shape(Mesh::sphere(16));
+    for (s, tune) in [-1.0f32, 1.0].into_iter().zip(tunes) {
+        // Where across the room a step up the stave lies: its bottom line nearest the
+        // carpet.
+        let pitch = |step: f32| s * (1.55 + step * 0.045);
+        let span = |a: f32, b: f32| (a.min(b), a.max(b));
+        for line in 0..5 {
+            let a = pitch(line as f32 * 2.0);
+            let i = piece(
+                frame,
+                (a - 0.006, a + 0.006),
+                (o0, o0 + len),
+                (0.0, 0.002),
+                kind::METAL,
+                GILT,
+            );
+            let drawn = Awaits::new(fin, appears).after(STAVES).over(secs);
+            lib.waiting(frame.at(a, o0, 0.0), drawn, [i]);
+        }
+        for bar in 0..=4 {
+            let o = o0 + bar as f32 * len / 4.0;
+            let i = piece(
+                frame,
+                span(pitch(0.0), pitch(8.0)),
+                (o - 0.008, o + 0.008),
+                (0.0, 0.003),
+                kind::METAL,
+                GILT,
+            );
+            let at = frame.at(pitch(4.0), o, 0.0);
+            lib.waiting(at, Awaits::new(fin, appears).after(reaches(o)).over(0.4), [i]);
+        }
+        for (j, &step) in tune.iter().enumerate() {
+            let o = o0 + (j / 3) as f32 * len / 4.0 + 0.6 + (j % 3) as f32 * 0.9;
+            let a = pitch(step as f32);
+            let at = frame.at(a, o, 0.0015);
+            let tilt = frame.turn() * Quat::from_rotation_y(0.35 * s);
+            let ink = rgba(GLOW, 0.65);
+            let dot = head
+                .sized(Vec3::new(0.085, 0.003, 0.12))
+                .inst(at, tilt, kind::CRYSTAL, ink);
+            // Stems up the stave on the right of low notes, down it on the left of high
+            // ones, as they are written.
+            let (side, reach) = if step < 4 { (0.05, 0.27) } else { (-0.05, -0.27) };
+            let stem = Inst {
+                color: ink,
+                ..piece(
+                    frame,
+                    span(a, a + s * reach),
+                    (o + side - 0.006, o + side + 0.006),
+                    (0.0, 0.0025),
+                    kind::CRYSTAL,
+                    GLOW,
+                )
+            };
+            let note = Awaits::new(fin, appears).after(reaches(o)).over(0.5);
+            lib.waiting(at, note, [dot, stem]);
+        }
+    }
 }
 
 /// A harpsichord with its keyboard toward the door at `o`: its case running out to
@@ -1072,10 +1277,29 @@ fn chimes(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         WALNUT,
     ));
     let tube = lib.shape(Mesh::cylinder(12));
+    let fin = Finish::Room(frame.dept);
+    lib.cue(Cue {
+        finish: fin,
+        delay: GLISSANDO + 0.5,
+        sound: Sfx::Chime,
+        at: frame.at(a, o, 1.5),
+        volume: 0.8,
+    });
     for k in 0..8 {
         let x = a - w + 0.2 + k as f32 * 0.228;
         let len = 1.45 - k as f32 * 0.1;
         let hang = frame.at(x, o, top);
+        // The room in order: a beater run down the tubes after the harp.
+        lib.sparks(Sparks {
+            delay: GLISSANDO + 0.5 + k as f32 * 0.1,
+            lasts: Some(0.25),
+            rate: 50.0,
+            spread: Vec3::new(0.03, len * 0.3, 0.03),
+            vel: Vec3::Y * 0.3,
+            jitter: Vec3::splat(0.25),
+            life: 1.5,
+            ..Sparks::burst(fin, hang - Vec3::Y * (0.05 + len * 0.6))
+        });
         // Slower than a pendulum that long, and only a little way.
         let period = 1.6 * TAU * libm::sqrtf((0.05 + len * 0.66) / 9.81);
         let stir = Motion::Swing {
