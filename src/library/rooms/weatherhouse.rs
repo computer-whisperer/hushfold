@@ -115,11 +115,17 @@ fn pennants(lib: &mut Library, frame: &RoomFrame) {
     // Flying downwind at rest (as the vane points into the wind), drooping a little.
     let lay =
         Quat::from_mat3(&Mat3::from_cols(downwind, Vec3::Y, downwind.cross(Vec3::Y))) * Quat::from_rotation_z(-0.12);
-    for cat in frame.categories.clone() {
-        let faces: Vec<usize> = lib.faces_of(cat).collect();
-        let face = &lib.faces[faces[faces.len() / 2]];
-        // At the end of the middle case's cornice, past its sign.
-        let foot = face.center + face.right * 1.2 + face.normal * 0.07 + Vec3::Y * (UNIT_H + 0.13);
+    let signs: Vec<(usize, Vec3, Vec3)> = (lib.labels.iter())
+        .filter_map(|l| match l.kind {
+            LabelKind::Category(c) if frame.categories.contains(&c) => Some((c, l.pos, l.normal)),
+            _ => None,
+        })
+        .collect();
+    for (cat, at, normal) in signs {
+        // On the cornice past the sign's end (a sign 2 m wide, its face 6 cm before the
+        // cases'), a little before their faces.
+        let p = at + Vec3::Y.cross(normal) * 1.2 + normal * 0.01;
+        let foot = Vec3::new(p.x, frame.y + UNIT_H + 0.13, p.z);
         let top = foot + Vec3::Y * 0.85;
         lib.pole(foot, top, 0.018, kind::METAL, gilt);
         lib.decor(

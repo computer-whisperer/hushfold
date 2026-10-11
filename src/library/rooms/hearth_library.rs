@@ -270,17 +270,30 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
     }
 }
 
-/// On each case side's cornice, at its end past where a sign would hang, a candle in a
-/// brass stick, unlit until that side is filled; then its wick catches and it burns on,
-/// so the room lights up case by case as it is put in order.
+/// On each case side's cornice, at an end clear of the signs, a candle in a brass
+/// stick, unlit until that side is filled; then its wick catches and it burns on, so
+/// the room lights up case by case as it is put in order.
 fn case_candles(lib: &mut Library, frame: &RoomFrame) {
     let stick = candlestick(lib).sized(Vec3::new(0.08, 0.11, 0.08));
     let wax = wax(lib);
     let brass = rgba(BRASS, 1.0);
+    // The room's signs, each 2 m wide: over a case, or between two where a category
+    // stands in parts apart.
+    let signs: Vec<(Vec3, Vec3)> = (lib.labels.iter())
+        .filter(|l| matches!(l.kind, LabelKind::Category(c) if frame.categories.contains(&c)))
+        .map(|l| (l.pos, l.normal))
+        .collect();
+    let clear = |p: Vec3| {
+        (signs.iter()).all(|&(at, n)| (p - at).dot(Vec3::Y.cross(n)).abs() > 1.1 || (p - at).dot(n).abs() > 0.2)
+    };
     for cat in frame.categories.clone() {
         for f in lib.faces_of(cat).collect::<Vec<_>>() {
             let face = &lib.faces[f];
-            let foot = face.center + face.right * 1.15 + Vec3::Y * (UNIT_H + 0.13);
+            let foot = [1.15, -1.15]
+                .map(|e| face.center + face.right * e + Vec3::Y * (UNIT_H + 0.13))
+                .into_iter()
+                .find(|&p| clear(p))
+                .expect("a sign covers only one end of a case");
             lib.decor(stick.at(foot, Quat::IDENTITY, kind::METAL, brass));
             let (base, tall) = (foot + Vec3::Y * 0.11, 0.22);
             lib.decor(
@@ -927,7 +940,7 @@ fn sleeping_cat(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, facing: f3
             m,
             ear.sized(Vec3::new(0.035, 0.05, 0.022) * 1.15).inst(
                 head + look * (Vec3::new(-0.01, 0.055, s * 0.035) * 1.15),
-                look * Quat::from_rotation_x(-s * 0.3),
+                look * Quat::from_rotation_x(s * 0.3),
                 kind::CLOTH,
                 fur,
             ),
@@ -1561,6 +1574,45 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
                     0,
                 ),
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No case side's candle stands in a category's sign, wherever the sign hangs: over
+    /// a case, or between two where a category stands in parts apart.
+    #[test]
+    fn case_candles_clear_the_signs() {
+        let lib = Library::generate(Layout::Great, crate::game::SEED);
+        let hearth = |c: usize| lib.dept_of(c) == dept::HEARTH_LIBRARY;
+        let wicks: Vec<Vec3> = (lib.movers.iter())
+            .filter(|m| match m.awaits {
+                Some(Awaits {
+                    finish: Finish::Face(f),
+                    ..
+                }) => hearth(lib.faces[f].category),
+                _ => false,
+            })
+            .map(|m| m.pivot)
+            .collect();
+        assert_eq!(wicks.len(), 40, "a candle on every side");
+        for l in &lib.labels {
+            let LabelKind::Category(c) = l.kind else { continue };
+            if !hearth(c) {
+                continue;
+            }
+            for &w in &wicks {
+                let d = w - l.pos;
+                let along = d.dot(Vec3::Y.cross(l.normal)).abs();
+                assert!(
+                    along > 1.06 || d.dot(l.normal).abs() > 0.2,
+                    "a candle at {w} in {}'s sign",
+                    l.text
+                );
+            }
         }
     }
 }
