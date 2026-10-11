@@ -15,7 +15,7 @@
 //! through a hole in that level's floor, and falls through holes to the level below.
 
 use crate::library::Library;
-use crate::world::{SLAB, Stairs, Stops, World};
+use crate::world::{Gate, SLAB, Stairs, Stops, World};
 use glam::{Mat3, Quat, Vec2, Vec3};
 
 /// Heightfield resolution.
@@ -178,6 +178,12 @@ struct Grid {
     gates: Vec<(usize, Vec3, Vec3)>,
 }
 
+/// A closed gate as books meet it: up to its level's ceiling, so none is thrown over
+/// the veil into the room it closes (the stone over a doorway stops only sight).
+fn veil(world: &World, g: &Gate) -> (Vec3, Vec3) {
+    (g.min, Vec3::new(g.max.x, world.levels[g.level].roof, g.max.z))
+}
+
 fn xz(v: Vec3) -> Vec2 {
     Vec2::new(v.x, v.z)
 }
@@ -220,7 +226,10 @@ impl Grid {
             solids: merge_solids(solids, lv.y),
             gates: (world.closed_gates())
                 .filter(|(_, g)| g.level == l)
-                .map(|(i, g)| (i, g.min, g.max))
+                .map(|(i, g)| {
+                    let (mn, mx) = veil(world, g);
+                    (i, mn, mx)
+                })
                 .collect(),
         };
         g.base = (0..tw * th).map(|t| g.build_base(t)).collect();
@@ -557,7 +566,12 @@ impl Loose {
             frozen: vec![false; n],
             wind: None,
             grids: (0..lib.world.levels.len()).map(|l| Grid::new(&lib.world, l)).collect(),
-            gate_boxes: lib.world.gates().iter().map(|g| (g.level, g.min, g.max)).collect(),
+            gate_boxes: (lib.world.gates().iter())
+                .map(|g| {
+                    let (mn, mx) = veil(&lib.world, g);
+                    (g.level, mn, mx)
+                })
+                .collect(),
             flying: Vec::new(),
             easing: Vec::new(),
             eased: vec![false; n],
@@ -2228,7 +2242,7 @@ mod tests {
 
     /// No book stays on top of tall furniture anywhere in the Great Library: dropped
     /// over every tall piece, at its corners, the middles of its sides and its middle,
-    /// and along every closed veil, each comes off. (Some lay at the ends of a top hemmed in by neighbours a lip
+    /// each comes off. (Some lay at the ends of a top hemmed in by neighbours a lip
     /// higher, as the Clockworks' pillars are by their cases.)
     #[test]
     fn books_come_off_every_tall_top() {
@@ -2265,22 +2279,35 @@ mod tests {
             }
         }
         assert!(tops > 300, "only {tops} tall tops");
-        // And over each closed veil, which no way off goes over.
-        for i in 0..loose.gate_boxes.len() {
-            loose.set_gate(i, true);
-        }
-        for &(_, mn, mx) in &loose.gate_boxes.clone() {
+    }
+
+    /// A closed veil stops books thrown over it, up to the ceiling (they flew over it,
+    /// through the stone above the doorway, into the room it closes); open, the same
+    /// throws land in the room.
+    #[test]
+    fn a_closed_veil_stops_a_book_thrown_over_it() {
+        let lib = Library::generate(crate::library::Layout::Great, crate::game::SEED);
+        let mut loose = Loose::new(&lib);
+        // The ground floor's east veil, across the doorway at x = 14.
+        let (_, mn, mx) = loose.gate_boxes[0];
+        assert!(mx.x - mn.x < mx.z - mn.z && mn.x > 13.0);
+        let books: Vec<u32> = (0..lib.books.len() as u32)
+            .filter(|&b| loose.is_resting(b) && loose.level[b as usize] == 0)
+            .take(10)
+            .collect();
+        for open in [false, true] {
+            loose.set_gate(0, !open);
             loose.take(&books);
             for (i, &b) in books.iter().enumerate() {
-                let f = (i as f32 + 0.5) / books.len() as f32;
-                let at = Vec3::new(mn.x + (mx.x - mn.x) * f, mx.y + 0.3, mn.z + (mx.z - mn.z) * f);
-                loose.throw(b, at, Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY, Vec3::ZERO, 0.0);
+                let z = mn.z + 0.5 + (mx.z - mn.z - 1.0) * i as f32 / 9.0;
+                let from = Vec3::new(mn.x - 3.0, 1.6, z);
+                loose.throw(b, from, Vec3::new(4.0, 7.5, 0.0), Quat::IDENTITY, Vec3::ZERO, 0.0);
             }
-            fly(&mut loose, lib.books.len(), 4.0);
+            fly(&mut loose, lib.books.len(), 6.0);
             for &b in &books {
-                let r = loose.rest[b as usize];
-                assert!(loose.is_resting(b), "book {b} still in the air over a veil {mn}..{mx}");
-                assert!(!loose.out_of_reach(b), "book {b} stayed on a veil {mn}..{mx} at {r:?}");
+                let x = loose.rest[b as usize].c.x;
+                assert!(loose.is_resting(b));
+                assert_eq!(x > mx.x, open, "veil open {open}: book {b} came down at x {x}");
             }
         }
     }

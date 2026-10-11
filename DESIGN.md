@@ -418,8 +418,16 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
   cover), rebuilds the heightfield there and re-drops the lot, each after the
   books below it. A book whose whole underside still fits keeps its exact pose.
 - Thrown books fly with gravity and spin, bounce off walls, ceilings, furniture
-  and closed gates; furniture taller than 0.9 m sheds books off its top (tables
-  hold them). They land on the heightfield and skid a little, never through a
+  and closed gates (up to the ceiling: the stone over a doorway stops only sight,
+  and books thrown over a veil used to land in the room it closed); furniture
+  taller than 0.9 m sheds books off its top (tables hold them), and none lies on
+  one. A book coming down on such a top goes on off it the way it was going if
+  that way comes down to floor within 4 m (a throw over a case that falls short
+  goes on over), else by the shortest of eight ways, floor before a drop,
+  over neighbouring tops and up the lips between them; dropped, it slides off at
+  1.5 m/s and falls beside the piece. (Books used to lie at the ends of a
+  Clockworks pillar, hemmed in by cases a centimetre taller, out of any aim from
+  the floor.) They land on the heightfield and skid a little, never through a
   wall, case or gate. A flight rises into the level above through a hole in its
   floor and falls through holes to the level below; a book that slides off an
   edge falls too. A book that ends a flight step inside a solid comes out by the
@@ -432,7 +440,10 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
   Library's south room's west wall), pushing out of one pushed into the other,
   and it gave up inside the wall, on its top, inside the ceiling (one in seven of
   a test's throws there). It now lies at the nearest place clear of both
-  that isn't through a wall (a solid up to the ceiling, or a closed gate).
+  that isn't through a wall (a solid up to the ceiling, or a closed gate). The
+  pushing could also come back to where it began and be taken for settled,
+  leaving the book on a top; a place is now taken only clear of every such
+  piece, from the middle of a broad top the nearest past the way off it.
 - No book lies through the ceiling (the floor above's underside, or through a hole
   in it the next one up). Couriers set every load down within 0.4 m of their
   room's drop spot, and the heaps there grew into spires through the ceiling,
@@ -614,7 +625,7 @@ Library the second room at a quarter of the Observatory, each after it at half o
 the rooms opened before it (the first veil lifted at half too, at ~1.6 h by the
 pacing bot, too late to show the library early), but for the Chronicle Hall, which
 opens with the Map Room. A closed gate is
-a solid to walking, throwing, gathering, aiming and routes; gate states follow
+a solid to walking, throwing (up to the ceiling), gathering, aiming and routes; gate states follow
 from what is shelved, so saves don't store them.
 
 Pacing is tuned with the pacing bot (`game/pacing.rs`; `cargo test --release
