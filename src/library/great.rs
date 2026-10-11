@@ -5,6 +5,7 @@
 use super::kit::RAIL_T;
 use super::rooms;
 use super::*;
+use crate::audio::Sfx;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 const STOREYS: usize = 3;
@@ -368,8 +369,9 @@ impl Library {
 
     /// The atrium's walls with their doors (each in a stone frame with its
     /// department's sign), the galleries' fronts, railings and lamps, the beams under
-    /// its ceilings, the well's piers and its floating lanterns, and the reading floor
-    /// at the bottom of the well.
+    /// its ceilings, the well's piers and its floating lanterns, the reading floor at
+    /// the bottom of the well, and what waits in it for the rooms, the storeys and the
+    /// whole library to be put in order.
     fn build_atrium(&mut self, newels: &mut Vec<Vec3>) {
         for l in 0..STOREYS {
             let y = floor_y(l);
@@ -380,6 +382,7 @@ impl Library {
                 let h = WALL_T * 0.5;
                 let d = door_a(l, si);
                 self.portal(l, side, d, l * 4 + si);
+                self.door_garland(side, d, y, l * 4 + si);
                 self.doorway(side.at3(d, ATRIUM, y), side.across, DOOR_HALF, DOOR_H, WALL_T, ROOM_H);
                 self.dress_wall(l, si);
                 self.ceiling_beams(l, si);
@@ -436,6 +439,10 @@ impl Library {
             self.pier(Vec3::new(sx * WELL, 0.0, sz * WELL), roof, &floors, ROOM_H);
         }
         self.floating_lanterns();
+        for l in 0..STOREYS {
+            self.festoons(l);
+        }
+        self.finale();
         // The reading floor at the bottom of the well.
         let mut rug = Inst::aabox(
             Vec3::new(0.0, 0.012, 0.0),
@@ -698,8 +705,7 @@ impl Library {
         let side = SIDES[si];
         let y = floor_y(level);
         let d = door_a(level, si);
-        let first = self.catalog.departments[level * 4 + si].categories.start;
-        let colour = catalog::category_color(&self.catalog.categories[first]);
+        let colour = self.dept_colour(level * 4 + si);
         let piers: Vec<f32> = pilasters(d).collect();
         for &p in &piers {
             self.atrium_pilaster(side, p, y);
@@ -1087,8 +1093,7 @@ impl Library {
     /// department's colour at each end of the sign.
     fn portal(&mut self, level: usize, side: Side, d: f32, dept: usize) {
         let y = floor_y(level);
-        let first = self.catalog.departments[dept].categories.start;
-        let dcol = catalog::category_color(&self.catalog.categories[first]);
+        let dcol = self.dept_colour(dept);
         let out = side.out3();
         let rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Y.cross(-out), Vec3::Y, -out));
         let sign = side.at3(d, FACE - 0.175, y + 4.42);
@@ -1234,11 +1239,12 @@ impl Library {
     fn skylight(&mut self) {
         let lantern = WELL + 0.2;
         let inner = WELL - 0.45;
-        for side in SIDES {
+        for (si, side) in SIDES.into_iter().enumerate() {
             let a = (-lantern, inner);
             self.part(side, a, (inner, lantern), (SKY - 0.5, SKY), kind::WOOD, WALNUT);
-            for c in [-5.6f32, 0.0, 5.6] {
-                self.rose_window(side, c, SKY - 1.3);
+            // One for each room off this side, left to right up the storeys.
+            for (l, c) in [-5.6f32, 0.0, 5.6].into_iter().enumerate() {
+                self.rose_window(side, c, SKY - 1.3, l * 4 + si);
             }
         }
         let roof = floor_y(STOREYS - 1) + ROOM_H;
@@ -1324,8 +1330,10 @@ impl Library {
     }
 
     /// A round window of moonlit glass in the lantern wall on `side`, centred at `c`
-    /// across and `y` up: a moulded ring of stone, and tracery spokes to a boss.
-    fn rose_window(&mut self, side: Side, c: f32, y: f32) {
+    /// across and `y` up: a moulded ring of stone, and tracery spokes to a boss. Once
+    /// department `dept`'s room is finished, stained glass spreads over it from the boss,
+    /// its colour and gold in turn between the spokes.
+    fn rose_window(&mut self, side: Side, c: f32, y: f32, dept: usize) {
         let (ri, ro) = (0.6, 0.74);
         let at = side.at3(c, WELL, y);
         let stone = rgba(DRESSED, 1.0);
@@ -1366,23 +1374,56 @@ impl Library {
         let glass = self.shape(Mesh::prism(&circle(ri + 0.02, 48), 0.01));
         let at = side.at3(c, WELL - 0.007, y);
         self.decor(glass.at(at, wall_rot(side), kind::GLASS, [0.32, 0.42, 0.85, 1.1]));
+        // The stained glass, just inside the moonlit, under the spokes: a sector
+        // between each two, its colour and gold in turn.
+        let (mut coloured, mut gold) = (Mesh::default(), Mesh::default());
+        for j in 0..8 {
+            let mut sector = vec![Vec2::ZERO];
+            sector.extend(arc(ri + 0.02, (j as f32 * FRAC_PI_4, (j + 1) as f32 * FRAC_PI_4), 8));
+            let to = if j % 2 == 0 { &mut coloured } else { &mut gold };
+            to.add(&Mesh::prism(&sector, 0.004), Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+        }
+        let (coloured, gold) = (self.shape(coloured), self.shape(gold));
+        let at = side.at3(c, WELL - 0.016, y);
+        let rot = wall_rot(side);
+        let colour = rgba(self.dept_colour(dept), 1.3);
+        self.waiting(
+            at,
+            Awaits::new(Finish::Room(dept), GROWS).after(2.0).over(4.0),
+            [
+                coloured.at(at, rot, kind::GLASS, colour),
+                gold.at(at, rot, kind::GLASS, [1.0, 0.74, 0.36, 1.2]),
+            ],
+        );
     }
 
     /// Lanterns floating in the air of the well with nothing holding them up, each
-    /// bobbing in its own time, two of them lighting the galleries round them: a globe
-    /// of clear glass in a gilt cage with a flame floating in it, a domed cap with a
-    /// ring, and a turned drop under it.
+    /// bobbing in its own time, two of them lighting the galleries round them.
     fn floating_lanterns(&mut self) {
-        const SPOTS: [(f32, f32, f32); 6] = [
-            (0.4, 5.0, 10.6),
-            (1.45, 4.4, 13.9),
-            (2.5, 5.3, 11.5),
-            (3.55, 4.6, 15.2),
-            (4.6, 5.1, 12.3),
-            (5.65, 4.3, 14.6),
-        ];
-        // Made about the lantern's middle, y up. The glass is whole but for its mouth,
-        // under the cap, so the flame shows from below.
+        let (metal, glass) = self.lantern();
+        for (k, &(t, r, y)) in FLOATING.iter().enumerate() {
+            let c = Vec3::new(libm::cosf(t) * r, y, libm::sinf(t) * r);
+            let rot = Quat::from_rotation_y(t * 2.3 + k as f32);
+            let bob = Motion::Bob {
+                amp: 0.07 + 0.02 * (k % 3) as f32,
+                period: 6.5 + 0.9 * k as f32,
+                rock: 0.04,
+            };
+            let m = self.mover(c, bob, k as f32 * 2.1, None);
+            for part in lantern_parts(metal, glass, c, rot) {
+                self.moving(m, part);
+            }
+            if k % 3 == 0 {
+                self.light_riding(m, c, 7.0, [1.0, 0.7, 0.4], 0.9, LightKind::Static);
+            }
+        }
+    }
+
+    /// A floating lantern, made about its middle (y up): a globe of clear glass in a
+    /// gilt cage with a flame floating in it, a domed cap with a ring, and a turned drop
+    /// under it. The gilt as one piece, and the glass, whole but for its mouth under the
+    /// cap, so the flame shows from below.
+    fn lantern(&mut self) -> (Shape, Shape) {
         let globe = [
             (0.0, -0.2),
             (0.07, -0.19),
@@ -1412,16 +1453,21 @@ impl Library {
             (0.035, 0.33),
             (0.0, 0.35),
         ];
-        let glass = self.shape(Mesh::lathe(&globe, 32));
-        let drop = self.shape(Mesh::lathe(&drop, 16));
-        let cap = self.shape(Mesh::lathe(&cap, 24));
-        // A ring at the top, 9 cm across (the torus is made 2.25 across).
-        let ring = self.shape(Mesh::torus(0.25, 16, 6)).scaled(0.04);
+        let mut metal = Mesh::default();
+        metal.add(&Mesh::lathe(&drop, 16), Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+        metal.add(&Mesh::lathe(&cap, 24), Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+        // A ring at the top, 9 cm across (the torus is made 2.25 across), standing up.
+        let ring = Mesh::torus(0.25, 16, 6);
+        metal.add(
+            &ring,
+            Vec3::Y * 0.39,
+            Quat::from_rotation_x(FRAC_PI_2),
+            Vec3::splat(0.04),
+        );
         // The cage: a collar round the foot of the glass, and four ribs from it up the
         // glass to the cap, just outside it.
-        let mut cage = Mesh::default();
         let collar = Vec3::splat(0.17 / 2.25);
-        cage.add(&Mesh::torus(0.25, 24, 6), Vec3::Y * -0.19, Quat::IDENTITY, collar);
+        metal.add(&Mesh::torus(0.25, 24, 6), Vec3::Y * -0.19, Quat::IDENTITY, collar);
         let rod = circle(1.0, 8);
         for q in 0..4 {
             let a = q as f32 * FRAC_PI_2;
@@ -1429,34 +1475,610 @@ impl Library {
             let path: Vec<Vec3> = (globe[1..].iter())
                 .map(|&(r, y)| dir * (r + 0.006) + Vec3::Y * y)
                 .collect();
-            cage.add(
+            metal.add(
                 &Mesh::sweep(&path, &[0.007], &rod, true),
                 Vec3::ZERO,
                 Quat::IDENTITY,
                 Vec3::ONE,
             );
         }
-        let cage = self.shape(cage);
+        (self.shape(metal), self.shape(Mesh::lathe(&globe, 32)))
+    }
+}
+
+/// Where the well's floating lanterns hang: (bearing, how far out, height).
+const FLOATING: [(f32, f32, f32); 6] = [
+    (0.4, 5.0, 10.6),
+    (1.45, 4.4, 13.9),
+    (2.5, 5.3, 11.5),
+    (3.55, 4.6, 15.2),
+    (4.6, 5.1, 12.3),
+    (5.65, 4.3, 14.6),
+];
+
+/// A floating lantern's parts (`Library::lantern`) about its middle `c`, turned `rot`.
+fn lantern_parts(metal: Shape, glass: Shape, c: Vec3, rot: Quat) -> [Inst; 3] {
+    [
+        metal.at(c, rot, kind::METAL, rgba(GILT, 1.0)),
+        flame(c - Vec3::Y * 0.13, (0.07, 0.17), [1.0, 0.62, 0.26, 6.0]),
+        glass.at(c, rot, kind::CLEAR, [1.0, 0.86, 0.62, 0.1]),
+    ]
+}
+
+/// What the building does as the library is put in order (`celebrate`): a garland
+/// over each finished room's door and its rose window coloured; festoons and lamps
+/// round the well at each finished storey; and when it is all done, the finale over the
+/// well.
+impl Library {
+    /// Department `dept`'s colour: its banners', its door's gems'.
+    fn dept_colour(&self, dept: usize) -> [f32; 3] {
+        let first = self.catalog.departments[dept].categories.start;
+        catalog::category_color(&self.catalog.categories[first])
+    }
+
+    /// Department `dept`'s room finished, seen from the atrium: a double swag of laurel
+    /// across its door's frame (on `side` of the storey at `y`, the door `d` across),
+    /// hung under the sign from bows of ribbon in its colour and dotted with blossoms of
+    /// it; it is drawn out from the middle, the ribbons drop in, glints rise and petals
+    /// fall. Its rose window is coloured as well (`rose_window`).
+    fn door_garland(&mut self, side: Side, d: f32, y: f32, dept: usize) {
+        let fin = Finish::Room(dept);
+        let colour = self.dept_colour(dept);
+        let rot = wall_rot(side);
+        // `x` across from the door's middle, `h` up from the floor, `z` off the wall.
+        let at = |x: f32, h: f32, z: f32| side.at3(d + x, FACE - z, y + h);
+        // Hung under the sign, clear of the gems and the doorway (3.6 m).
+        let (hang, z, w) = (4.12, 0.32, 2.32);
+        let (leaves, blossoms) = swag(w, 0.34, 0.18);
+        let (leaves, blossoms) = (self.shape(leaves), self.shape(blossoms));
+        for s in [-1.0f32, 1.0] {
+            let mid = at(s * w * 0.5, hang, z);
+            self.waiting(
+                at(0.0, hang, z),
+                Awaits::new(fin, GROWS).after(1.0).over(2.0),
+                [
+                    leaves.at(mid, rot, kind::LEAF, rgba(LAUREL, 1.0)),
+                    blossoms.at(mid, rot, kind::CRYSTAL, rgba(colour, 1.4)),
+                ],
+            );
+        }
+        let ribbons = self.shape(ribbons(w));
+        let drops = Change::Arrives {
+            from: Vec3::Y * 0.25,
+            grow: 0.3,
+        };
+        let knot = at(0.0, hang, z + 0.06);
+        self.waiting(
+            knot,
+            Awaits::new(fin, drops).after(2.2).over(1.5),
+            [ribbons.at(knot, rot, kind::CLOTH, rgba(colour, 1.0))],
+        );
+        self.sparks(Sparks {
+            delay: 1.0,
+            ..Sparks::burst(fin, at(0.0, hang - 0.3, z + 0.1))
+        });
+        self.sparks(Sparks {
+            kind: kind::LEAF,
+            rgba: rgba(colour, 1.0),
+            size: Vec3::new(0.04, 0.003, 0.03),
+            spread: side.across3().abs() * 2.0 + Vec3::new(0.15, 0.1, 0.15),
+            vel: Vec3::Y * -0.2,
+            jitter: Vec3::splat(0.15),
+            lift: -0.25,
+            drag: 0.6,
+            wander: 0.6,
+            life: 5.0,
+            rate: 12.0,
+            lasts: Some(3.0),
+            delay: 1.5,
+            ..Sparks::burst(fin, at(0.0, hang - 0.2, z + 0.2))
+        });
+    }
+
+    /// Storey `l` finished: festoons of leaves round the well at the top of the storey
+    /// (on the gallery front over it, or the crown under the lantern), hung from its
+    /// cornice, with blossoms in the colour of the room off each side and a lamp under
+    /// each point they hang from. They run once round the well, each swag drawn out
+    /// from where it hangs and each lamp lighting with a glint as they reach it, while
+    /// petals in each room's colour fall down the well; a chime.
+    fn festoons(&mut self, l: usize) {
+        let fin = Finish::Storey(l);
+        let y = if l + 1 < STOREYS {
+            floor_y(l + 1)
+        } else {
+            floor_y(STOREYS - 1) + ROOM_H + SLAB
+        };
+        let (metal, globe) = self.hung_lamp();
         let gilt = rgba(GILT, 1.0);
-        for (k, &(t, r, y)) in SPOTS.iter().enumerate() {
-            let c = Vec3::new(libm::cosf(t) * r, y, libm::sinf(t) * r);
-            let rot = Quat::from_rotation_y(t * 2.3 + k as f32);
+        for (si, side) in SIDES.iter().copied().enumerate() {
+            let colour = self.dept_colour(l * 4 + si);
+            let (rot, across, out) = (wall_rot(side), side.across3().abs(), side.out3());
+            // `a` along the front, `h` from the floor over it, `z` out from the
+            // cornice's face.
+            let at = |a: f32, h: f32, z: f32| side.at3(a, WELL - 0.28 - z, y + h);
+            // When the festoons reach `a` going round: north, east, south, west, each
+            // left to right as seen from the well.
+            let when = |a: f32| 0.5 + (si as f32 + (a + WELL) / (2.0 * WELL)) * ROUND / 4.0;
+            // Along the front, as `gallery_front` lays it: in two over a stairwell.
+            let stairwell = STAIRWAYS.iter().any(|f| f.side == si && f.level == l);
+            let spans: &[Span] = if stairwell {
+                &[(-WELL, -STAIR_HALF_RUN), (STAIR_HALF_RUN, WELL)]
+            } else {
+                &[(-WELL, WELL)]
+            };
+            for &(a0, a1) in spans {
+                // Hung from the corners (clear of the piers' capitals), the consoles and
+                // the middle, or a little in from an end over a stairwell.
+                let first = if a0 <= -WELL { -WELL + 0.62 } else { a0 + 0.15 };
+                let last = if a1 >= WELL { WELL - 0.62 } else { a1 - 0.15 };
+                let mut points = vec![first];
+                points.extend(
+                    [-4.5f32, 0.0, 4.5]
+                        .into_iter()
+                        .filter(|&p| p > first + 1.0 && p < last - 1.0),
+                );
+                points.push(last);
+                for pair in points.windows(2) {
+                    let (p, q) = (pair[0], pair[1]);
+                    let sag = 0.12 + 0.16 * (q - p);
+                    let (leaves, blossoms) = swag(q - p, sag, 0.3);
+                    let (leaves, blossoms) = (self.shape(leaves), self.shape(blossoms));
+                    let mid = at((p + q) * 0.5, -0.1, 0.1);
+                    self.waiting(
+                        at(p, -0.1, 0.1),
+                        Awaits::new(fin, GROWS).after(when(p)).over(1.6),
+                        [
+                            leaves.at(mid, rot, kind::LEAF, rgba(LAUREL, 1.0)),
+                            blossoms.at(mid, rot, kind::CRYSTAL, rgba(colour, 1.2)),
+                        ],
+                    );
+                    // Glints along it as it is drawn out.
+                    self.sparks(Sparks {
+                        spread: across * (q - p) * 0.4 + Vec3::splat(0.1),
+                        rate: 8.0 * (q - p),
+                        lasts: Some(1.4),
+                        life: 1.8,
+                        delay: when(p) + 0.2,
+                        ..Sparks::burst(fin, at((p + q) * 0.5, -0.1 - sag * 0.6, 0.2))
+                    });
+                }
+                for &p in &points {
+                    let t = when(p);
+                    let rosette = at(p, -0.035, 0.0);
+                    let lamp = rosette + rot * LAMP;
+                    let m = self.waiting(
+                        rosette,
+                        Awaits::new(fin, GROWS).after(t).over(0.8),
+                        [
+                            metal.at(rosette, rot, kind::METAL, gilt),
+                            globe.at(lamp, rot, kind::CLEAR, [1.0, 0.88, 0.7, 0.1]),
+                        ],
+                    );
+                    let lit = self.mover(rosette, Motion::Still, 0.0, Some(m));
+                    let kindles = Change::Kindles { dim: 0.0 };
+                    self.awaiting(lit, Awaits::new(fin, kindles).after(t + 0.7).over(1.2));
+                    let (foot, size) = (lamp - Vec3::Y * 0.045 * LAMP_K, (0.03 * LAMP_K, 0.075 * LAMP_K));
+                    self.moving(lit, flame(foot, size, [1.0, 0.6, 0.26, 5.0]));
+                    // Two lights a storey, from the middle lamps of two sides facing.
+                    if p == 0.0 && (si + l).is_multiple_of(2) {
+                        self.light_riding(lit, lamp, 8.0, [1.0, 0.72, 0.42], 1.0, LightKind::Static);
+                    }
+                    self.sparks(Sparks {
+                        spread: Vec3::splat(0.06),
+                        rate: 40.0,
+                        lasts: Some(0.5),
+                        life: 1.2,
+                        delay: t + 0.7,
+                        ..Sparks::burst(fin, lamp)
+                    });
+                }
+            }
+            self.sparks(Sparks {
+                kind: kind::LEAF,
+                rgba: rgba(colour, 1.0),
+                size: Vec3::new(0.07, 0.005, 0.05),
+                spread: across * 7.5 + out.abs() * 0.25 + Vec3::Y * 0.3,
+                vel: Vec3::Y * -0.3 - out * 0.25,
+                jitter: Vec3::splat(0.2),
+                lift: -0.3,
+                drag: 0.5,
+                wander: 0.5,
+                life: 6.0,
+                rate: 20.0,
+                lasts: Some(ROUND * 0.5 + 3.0),
+                delay: when(-WELL),
+                ..Sparks::burst(fin, at(0.0, -0.7, 0.4))
+            });
+        }
+        self.cue(Cue {
+            finish: fin,
+            delay: 0.3,
+            sound: Sfx::Chime,
+            at: Vec3::new(0.0, y - 2.0, 0.0),
+            volume: 0.8,
+        });
+    }
+
+    /// A lamp hung from a gilt rosette on a wall facing +z, made about the rosette's
+    /// middle: the rosette, a bracket out and down, the lamp's hood, its collar and a
+    /// drop under it, all gilt; and its globe of clear glass, about its middle at
+    /// `LAMP`. Drawn `LAMP_K` times the size its parts are given at.
+    fn hung_lamp(&mut self) -> (Shape, Shape) {
+        let (k, one) = (LAMP_K, Vec3::splat(LAMP_K));
+        let mut metal = Mesh::default();
+        let rosette = [
+            (0.0, 0.0),
+            (0.075, 0.0),
+            (0.08, 0.01),
+            (0.065, 0.02),
+            (0.045, 0.022),
+            (0.03, 0.035),
+            (0.0, 0.04),
+        ];
+        let out = Quat::from_rotation_x(FRAC_PI_2);
+        metal.add(&Mesh::lathe(&rosette, 16), Vec3::ZERO, out, one);
+        let (bend, top) = (Vec3::Z * LAMP.z, LAMP + Vec3::Y * 0.09 * k);
+        for rod in [
+            Mesh::rod(Vec3::Z * 0.03, bend, 0.016 * k, 8),
+            Mesh::rod(bend, top, 0.012 * k, 8),
+        ] {
+            metal.add(&rod, Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+        }
+        metal.add(&Mesh::sphere(10), bend, Quat::IDENTITY, Vec3::splat(0.03 * k));
+        let hood = [
+            (0.0, 0.0),
+            (0.06, 0.0),
+            (0.064, 0.01),
+            (0.045, 0.028),
+            (0.018, 0.038),
+            (0.0, 0.04),
+        ];
+        metal.add(&Mesh::lathe(&hood, 16), LAMP + Vec3::Y * 0.072 * k, Quat::IDENTITY, one);
+        let collar = Vec3::splat(0.075 / 2.25 * k);
+        metal.add(
+            &Mesh::torus(0.25, 16, 6),
+            LAMP - Vec3::Y * 0.085 * k,
+            Quat::IDENTITY,
+            collar,
+        );
+        let drop = [
+            (0.0, -0.17),
+            (0.012, -0.155),
+            (0.02, -0.125),
+            (0.022, -0.1),
+            (0.0, -0.088),
+        ];
+        metal.add(&Mesh::lathe(&drop, 10), LAMP, Quat::IDENTITY, one);
+        let globe = [
+            (0.0, -0.088),
+            (0.032, -0.084),
+            (0.062, -0.066),
+            (0.08, -0.035),
+            (0.084, 0.0),
+            (0.078, 0.035),
+            (0.052, 0.068),
+        ];
+        (self.shape(metal), self.shape(Mesh::lathe(&globe, 24)).scaled(k))
+    }
+
+    /// The whole library in order: the finale, over the well where it shows from every
+    /// storey, a few seconds after the last book (`FINALE`), so the last room and storey
+    /// have theirs first. The library's emblem spreads over the reading floor and
+    /// kindles, a fountain of glints rises up the well and lanterns rise after it one by
+    /// one to fill it; then a glory of stained glass and gold opens round the skylight's
+    /// boss, ray by ray, a ray in each department's colour, and glints fall from it.
+    /// Motes of light drift in the well from then on.
+    fn finale(&mut self) {
+        let fin = Finish::Library;
+        self.emblem();
+        self.sparks(Sparks {
+            spread: Vec3::new(1.0, 0.3, 1.0),
+            vel: Vec3::Y * 3.2,
+            jitter: Vec3::new(0.5, 0.8, 0.5),
+            lift: 0.3,
+            drag: 0.15,
+            wander: 0.4,
+            life: 5.5,
+            rate: 50.0,
+            lasts: Some(14.0),
+            size: Vec3::splat(0.025),
+            delay: FINALE,
+            ..Sparks::burst(fin, Vec3::Y * 1.2)
+        });
+        self.cue(Cue {
+            finish: fin,
+            delay: FINALE,
+            sound: Sfx::Veil,
+            at: Vec3::Y * 3.0,
+            volume: 1.0,
+        });
+        self.rising_lanterns();
+        self.glory();
+        self.sparks(Sparks {
+            rate: 8.0,
+            life: 10.0,
+            size: Vec3::splat(0.016),
+            delay: FINALE + 10.0,
+            ..Sparks::motes(fin, Vec3::Y * 9.5, Vec3::new(6.0, 7.0, 6.0))
+        });
+    }
+
+    /// The library's emblem inlaid in the reading floor under the well, on the rug and
+    /// no thicker than a floor's inlay may be: a crescent moon over an open book in a
+    /// gilt ring, rays round it, and a stone in each department's colour at its bearing
+    /// (as the glory's rays are). It spreads from the middle and then kindles.
+    fn emblem(&mut self) {
+        let fin = Finish::Library;
+        // On the rug (`build_atrium`), no piece of it laid over another.
+        let at = Vec3::Y * (0.024 + INLAY * 0.5);
+        let flat = Quat::from_rotation_x(-FRAC_PI_2);
+        let mut gilt = Mesh::ring(&circle(2.15, 96), &circle(2.0, 96), INLAY);
+        let ray = [(2.25, -0.09), (3.15, 0.0), (2.25, 0.09)].map(Vec2::from);
+        for k in 0..12 {
+            let turn = Quat::from_rotation_z((k as f32 + 0.5) / 12.0 * TAU);
+            gilt.add(&Mesh::prism(&ray, INLAY), Vec3::ZERO, turn, Vec3::ONE);
+        }
+        // The book's spine between its pages.
+        let spine = [(-0.025, -0.48), (0.025, -0.48), (0.025, -1.32), (-0.025, -1.32)].map(Vec2::from);
+        gilt.add(&Mesh::prism(&spine, INLAY), Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+        let moon = crescent(Vec2::new(0.0, 0.62), 0.78, Vec2::new(0.3, 0.8), 0.66);
+        let moon = Mesh::prism(&moon, INLAY);
+        let mut pages = Mesh::default();
+        for s in [-1.0f32, 1.0] {
+            let page = [(0.05, -0.5), (0.95, -0.4), (0.95, -1.2), (0.05, -1.3)].map(|(x, y)| Vec2::new(s * x, y));
+            pages.add(&Mesh::prism(&page, INLAY), Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+        }
+        let gilt = self.shape(gilt);
+        let m = self.waiting(
+            at,
+            Awaits::new(fin, GROWS).after(FINALE).over(3.0),
+            [gilt.at(at, flat, kind::METAL, rgba(GILT, 1.0))],
+        );
+        let lit = self.mover(at, Motion::Still, 0.0, Some(m));
+        let kindles = Change::Kindles { dim: 0.1 };
+        self.awaiting(lit, Awaits::new(fin, kindles).after(FINALE + 1.5).over(3.0));
+        let (moon, pages) = (self.shape(moon), self.shape(pages));
+        self.moving(lit, moon.at(at, flat, kind::EMISSIVE, [1.0, 0.86, 0.6, 1.1]));
+        self.moving(lit, pages.at(at, flat, kind::PAPER, [1.0, 0.9, 0.7, 0.35]));
+        let stone = [(0.0, 0.0), (0.16, 0.0), (0.12, 1.0), (0.0, 1.0)];
+        let stone = self.shape(Mesh::lathe(&stone, 8)).sized(Vec3::new(0.32, INLAY, 0.32));
+        for dept in 0..STOREYS * 4 {
+            let p = at + bearing(dept) * 2.65 - Vec3::Y * INLAY * 0.5;
+            let colour = rgba(self.dept_colour(dept), 1.6);
+            self.moving(lit, stone.at(p, Quat::IDENTITY, kind::CRYSTAL, colour));
+        }
+    }
+
+    /// Lanterns rising one by one from over the reading floor, up the well to hang
+    /// among those there (`FLOATING`), the highest first, bobbing as those do; three
+    /// light the storeys round them.
+    fn rising_lanterns(&mut self) {
+        let fin = Finish::Library;
+        let (metal, glass) = self.lantern();
+        let floating: Vec<Vec3> = (FLOATING.iter())
+            .map(|&(t, r, y)| Vec3::new(libm::cosf(t) * r, y, libm::sinf(t) * r))
+            .collect();
+        // Spread through the well by a golden-angle spiral, clear of the lanterns there,
+        // of each other and of the chandelier and its chain.
+        let mut spots: Vec<Vec3> = Vec::new();
+        for k in 0..400 {
+            if spots.len() == RISING {
+                break;
+            }
+            let k = k as f32;
+            let (t, r) = (k * 2.399_963, 2.6 + 4.4 * (k * 0.618_034).fract());
+            let y = 3.0 + 14.0 * (k * 0.414_214 + 0.2).fract();
+            let p = Vec3::new(libm::cosf(t) * r, y, libm::sinf(t) * r);
+            let chandelier = Vec2::new(p.x, p.z).length() < 2.2 && p.y > 7.0;
+            if !chandelier && floating.iter().chain(&spots).all(|q| q.distance(p) > 2.0) {
+                spots.push(p);
+            }
+        }
+        spots.sort_by(|a, b| b.y.total_cmp(&a.y));
+        let lit = [0, spots.len() / 2, spots.len() - 1];
+        for (k, &c) in spots.iter().enumerate() {
+            let rot = Quat::from_rotation_y(k as f32 * 1.7);
             let bob = Motion::Bob {
-                amp: 0.07 + 0.02 * (k % 3) as f32,
-                period: 6.5 + 0.9 * k as f32,
+                amp: 0.06 + 0.02 * (k % 3) as f32,
+                period: 6.0 + 0.7 * (k % 7) as f32,
                 rock: 0.04,
             };
-            let m = self.mover(c, bob, k as f32 * 2.1, None);
-            for part in [drop, cap, cage] {
-                self.moving(m, part.at(c, rot, kind::METAL, gilt));
+            // From over the middle of the floor, above anyone's head.
+            let rises = Change::Arrives {
+                from: Vec3::new(c.x * 0.3, 2.6, c.z * 0.3) - c,
+                grow: 0.6,
+            };
+            let when = FINALE + 1.0 + k as f32 * 0.7;
+            let m = self.mover(c, bob, k as f32 * 1.3, None);
+            self.awaiting(m, Awaits::new(fin, rises).after(when).over(3.0 + (c.y - 2.6) * 0.45));
+            for part in lantern_parts(metal, glass, c, rot) {
+                self.moving(m, part);
             }
-            let upright = rot * Quat::from_rotation_x(FRAC_PI_2);
-            self.moving(m, ring.inst(c + Vec3::Y * 0.39, upright, kind::METAL, gilt));
-            self.moving(m, flame(c - Vec3::Y * 0.13, (0.07, 0.17), [1.0, 0.62, 0.26, 6.0]));
-            self.moving(m, glass.at(c, rot, kind::CLEAR, [1.0, 0.86, 0.62, 0.1]));
-            if k % 3 == 0 {
-                self.light_riding(m, c, 7.0, [1.0, 0.7, 0.4], 0.9, LightKind::Static);
+            if lit.contains(&k) {
+                self.light_riding(m, c, 7.0, [1.0, 0.7, 0.4], 0.8, LightKind::Static);
             }
         }
     }
+
+    /// The glory under the skylight: a gilt ring round the boss, and rays from it, one
+    /// of stained glass in each department's colour and one of gold between each two,
+    /// each drawn out from the ring in turn round it; a warm light over the well, the
+    /// fanfare, and glints falling from it.
+    fn glory(&mut self) {
+        let fin = Finish::Library;
+        let c = Vec3::Y * (SKY - 0.48);
+        let flat = Quat::from_rotation_x(-FRAC_PI_2);
+        let begin = FINALE + 8.0;
+        let ring = self.shape(Mesh::ring(&circle(1.15, 64), &circle(1.0, 64), 0.025));
+        self.waiting(
+            c,
+            Awaits::new(fin, GROWS).after(begin).over(1.5),
+            [ring.at(c, flat, kind::METAL, rgba(GILT, 1.0))],
+        );
+        let lancet = [(0.0, -0.17), (2.6, -0.1), (3.4, 0.0), (2.6, 0.1), (0.0, 0.17)].map(Vec2::from);
+        let lancet = self.shape(Mesh::prism(&lancet, 0.02));
+        let spike = [(0.0, -0.09), (1.5, 0.0), (0.0, 0.09)].map(Vec2::from);
+        let spike = self.shape(Mesh::prism(&spike, 0.02));
+        // Round from north, the coloured rays and the gold ones in turn.
+        let mut rays: Vec<(f32, Option<usize>)> = (0..STOREYS * 4).map(|d| (heading(bearing(d)), Some(d))).collect();
+        rays.extend((0..12).map(|k| (heading(bearing(k)) + PI / 12.0, None)));
+        rays.sort_by(|a, b| a.0.rem_euclid(TAU).total_cmp(&b.0.rem_euclid(TAU)));
+        for (k, &(h, dept)) in rays.iter().enumerate() {
+            let foot = c + Vec3::new(libm::sinf(h), 0.0, -libm::cosf(h)) * 1.2;
+            // Made along x and laid flat, then turned to its heading.
+            let rot = Quat::from_rotation_y(FRAC_PI_2 - h) * flat;
+            let part = match dept {
+                Some(d) => lancet.at(foot, rot, kind::GLASS, rgba(self.dept_colour(d), 1.6)),
+                None => spike.at(foot, rot, kind::EMISSIVE, [1.0, 0.72, 0.34, 1.3]),
+            };
+            let a = Awaits::new(fin, GROWS).after(begin + 0.6 + k as f32 * 0.2).over(2.0);
+            self.waiting(foot, a, [part]);
+        }
+        let warm = self.mover(c, Motion::Still, 0.0, None);
+        self.awaiting(
+            warm,
+            Awaits::new(fin, Change::Kindles { dim: 0.0 }).after(begin).over(4.0),
+        );
+        self.light_riding(warm, c - Vec3::Y * 1.2, 14.0, [1.0, 0.8, 0.55], 1.0, LightKind::Static);
+        self.cue(Cue {
+            finish: fin,
+            delay: begin,
+            sound: Sfx::Fanfare,
+            at: c - Vec3::Y * 2.0,
+            volume: 0.9,
+        });
+        self.sparks(Sparks {
+            spread: Vec3::new(3.5, 0.2, 3.5),
+            vel: Vec3::Y * -0.3,
+            jitter: Vec3::splat(0.2),
+            lift: -0.25,
+            drag: 0.3,
+            wander: 0.2,
+            life: 6.0,
+            rate: 50.0,
+            lasts: Some(6.0),
+            delay: begin + 1.0,
+            ..Sparks::burst(fin, c - Vec3::Y * 0.4)
+        });
+    }
+}
+
+/// Hidden until its part is finished, then growing from nothing about its pivot.
+const GROWS: Change = Change::Arrives {
+    from: Vec3::ZERO,
+    grow: 0.0,
+};
+/// How long a storey's festoons take to run once round the well.
+const ROUND: f32 = 6.0;
+/// When the finale begins after the last book.
+const FINALE: f32 = 4.0;
+/// How many lanterns rise for it.
+const RISING: usize = 24;
+/// How thick an inlay on a floor may be.
+const INLAY: f32 = 0.003;
+/// The festoons' leaves.
+const LAUREL: [f32; 3] = [0.2, 0.36, 0.12];
+/// Where a hung lamp's globe hangs from its rosette, and how much larger than its parts
+/// are given it is drawn (`Library::hung_lamp`).
+const LAMP: Vec3 = Vec3::new(0.0, -0.5, 0.3);
+const LAMP_K: f32 = 1.4;
+
+/// Department `dept`'s bearing from the middle of the well (level): toward its side,
+/// turned a twelfth of a turn either way for the storeys below and above the middle,
+/// so its rooms run left to right up the storeys as seen from the well.
+fn bearing(dept: usize) -> Vec3 {
+    let side = SIDES[dept % 4];
+    let turn = ((dept / 4) as f32 - 1.0) * PI / 6.0;
+    side.out3() * libm::cosf(turn) + side.across3() * libm::sinf(turn)
+}
+
+/// The heading of a level direction, clockwise from north (-z).
+fn heading(dir: Vec3) -> f32 {
+    libm::atan2f(dir.x, -dir.z)
+}
+
+/// A swag of leaves hung from two points `w` apart, sagging `sag` below them at its
+/// middle and fullest there, `thick` through: overlapping puffs of foliage along it,
+/// and blossoms dotted over its front. Made in xy (x along, y up, z toward the eye),
+/// its hanging points at (±w/2, 0). Its leaves' bounds are kept under five times as
+/// long as they are high, or the leaves' material reads them as a stem.
+fn swag(w: f32, sag: f32, thick: f32) -> (Mesh, Mesh) {
+    let (mut leaves, mut blossoms) = (Mesh::default(), Mesh::default());
+    let (puff, bud) = (Mesh::sphere(10), Mesh::sphere(8));
+    let n = (w / (thick * 0.4)).ceil() as usize;
+    for k in 0..=n {
+        let u = k as f32 / n as f32 * 2.0 - 1.0;
+        let full = 1.0 - u * u;
+        let at = Vec3::new(u * w * 0.5, -sag * full, 0.0);
+        let r = thick * (0.5 + 0.5 * full) * 0.5;
+        let slope = libm::atanf(4.0 * sag * u / w);
+        // Each puff a little its own, by its place along.
+        let h = ((k * 37 + 11) % 17) as f32 / 17.0;
+        let size = Vec3::new(r * 2.8, r * (1.9 + 0.4 * h), r * 1.8);
+        leaves.add(&puff, at, Quat::from_rotation_z(slope + (h - 0.5) * 0.6), size);
+        if k % 2 == 1 {
+            let off = Vec3::new(0.0, (h - 0.5) * r, r * 0.8);
+            blossoms.add(&bud, at + off, Quat::IDENTITY, Vec3::splat(r * 0.7));
+        }
+    }
+    (leaves, blossoms)
+}
+
+/// Bows of ribbon at the middle and the ends of a door's double swag (`w` from the
+/// middle to each end), tails hanging from the end ones; made in xy as `swag` is, about
+/// the middle bow's knot.
+fn ribbons(w: f32) -> Mesh {
+    let mut m = Mesh::default();
+    // A loop out to the right of its knot.
+    let lobe: Vec<Vec2> = (0..12)
+        .map(|k| {
+            let a = k as f32 / 12.0 * TAU;
+            Vec2::new(0.07 + 0.065 * libm::cosf(a), 0.035 * libm::sinf(a))
+        })
+        .collect();
+    let lobe = Mesh::prism(&lobe, 0.025);
+    let tail = [(-0.03, 0.0), (0.03, 0.0), (0.035, -0.5), (0.0, -0.46), (-0.035, -0.5)].map(Vec2::from);
+    let tail = Mesh::prism(&tail, 0.012);
+    for x in [-w, 0.0, w] {
+        let knot = Vec3::X * x;
+        for s in [-1.0f32, 1.0] {
+            // Each loop turned up a little.
+            let turn = if s > 0.0 { 0.35 } else { PI - 0.35 };
+            m.add(&lobe, knot, Quat::from_rotation_z(turn), Vec3::ONE);
+            if x != 0.0 {
+                m.add(&tail, knot - Vec3::Z * 0.01, Quat::from_rotation_z(s * 0.18), Vec3::ONE);
+            }
+        }
+        m.add(
+            &Mesh::sphere(10),
+            knot + Vec3::Z * 0.01,
+            Quat::IDENTITY,
+            Vec3::new(0.06, 0.055, 0.045),
+        );
+    }
+    m
+}
+
+/// A crescent: the disc of radius `r` about `c` with the disc of radius `ri` about `ci`
+/// taken out of it (the two circles must cross), as an outline.
+fn crescent(c: Vec2, r: f32, ci: Vec2, ri: f32) -> Vec<Vec2> {
+    // Where the circles cross, either side of the line between their middles.
+    let d = c.distance(ci);
+    let half = libm::acosf(((d * d + r * r - ri * ri) / (2.0 * d * r)).clamp(-1.0, 1.0));
+    let base = (ci - c).to_angle();
+    let n = 40;
+    // The outer edge the long way round, away from the inner disc, then the inner edge
+    // back, the way that lies inside the outer disc.
+    let mut out: Vec<Vec2> = (0..=n)
+        .map(|k| c + Vec2::from_angle(base + half + (TAU - 2.0 * half) * k as f32 / n as f32) * r)
+        .collect();
+    let (from, to) = ((out[n] - ci).to_angle(), (out[0] - ci).to_angle());
+    let ccw = (to - from).rem_euclid(TAU);
+    let span = if c.distance(ci + Vec2::from_angle(from + ccw * 0.5) * ri) < r {
+        ccw
+    } else {
+        ccw - TAU
+    };
+    out.extend((1..n).map(|k| ci + Vec2::from_angle(from + span * k as f32 / n as f32) * ri));
+    out
 }
