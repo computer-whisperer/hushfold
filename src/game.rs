@@ -526,6 +526,9 @@ pub struct Player {
     pub yaw: f32,
     pub pitch: f32,
     pub bob: f32,
+    /// Whether the eye rises and falls with `bob` (a setting); the footfalls keep
+    /// time with it either way.
+    pub head_bob: bool,
     /// Standing on a floor or stair (not in the air).
     pub grounded: bool,
     /// In a heap too deep to walk into (books fell round them), and not yet waded
@@ -535,7 +538,8 @@ pub struct Player {
 
 impl Player {
     pub fn eye(&self) -> Vec3 {
-        self.pos + Vec3::Y * (EYE + libm::sinf(self.bob * 2.0).abs() * 0.025)
+        let lift = if self.head_bob { 0.025 } else { 0.0 };
+        self.pos + Vec3::Y * (EYE + libm::sinf(self.bob * 2.0).abs() * lift)
     }
     pub fn forward(&self) -> Vec3 {
         Vec3::new(
@@ -784,6 +788,7 @@ impl Game {
                 yaw: lib.spawn.1,
                 pitch: -0.05,
                 bob: 0.0,
+                head_bob: true,
                 grounded: true,
                 in_heap: false,
             },
@@ -3676,6 +3681,7 @@ mod tests {
             yaw,
             pitch: 0.0,
             bob: 0.0,
+            head_bob: true,
             grounded: true,
             in_heap: false,
         };
@@ -3706,6 +3712,34 @@ mod tests {
             z += 0.25;
         }
         panic!("no knee-deep books in the Hall");
+    }
+
+    /// With head bob off the eye keeps its height while walking, and the walk still
+    /// counts the steps the footfalls keep time with; on, the eye rises with each.
+    #[test]
+    fn head_bob_can_be_turned_off() {
+        let mut g = Game::new(Layout::Hall);
+        let mut audio = crate::audio::Audio::silent();
+        let start = g.player.pos;
+        let walk = Input {
+            forward: 1.0,
+            ..Input::default()
+        };
+        for head_bob in [false, true] {
+            stand(&mut g, start, 0.0);
+            g.player.head_bob = head_bob;
+            let mut rise: f32 = 0.0;
+            for _ in 0..30 {
+                g.update(1.0 / 60.0, &walk, &mut audio, true);
+                rise = rise.max(g.player.eye().y - g.player.pos.y - EYE);
+            }
+            assert!(g.player.bob > PI / 2.0, "bob {}", g.player.bob);
+            if head_bob {
+                assert!(rise > 0.02, "the eye rose {rise}");
+            } else {
+                assert_eq!(rise, 0.0);
+            }
+        }
     }
 
     /// How far the player walks (or hurries) in a third of a second from where they

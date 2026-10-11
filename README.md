@@ -44,7 +44,7 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | F9 | cheats, for trying late-game situations: lumens, every skill, lifting veils, shelving the library to a fraction, going to any room |
 | F11 | fullscreen (remembered) |
 | F12 | screenshot to `~/Pictures` (`%USERPROFILE%\Pictures` on Windows); a note says where it went |
-| Esc | pause: which library, settings (look speed, invert, field of view, volumes), save-and-quit, and start over |
+| Esc | pause: which library, settings (look speed, invert, field of view, head bob, volumes), save-and-quit, and start over |
 
 Progress autosaves every 20 s and on pause or quit. Saves live in
 `$XDG_DATA_HOME/hushfold/` on Linux and `%APPDATA%\hushfold\` on Windows:

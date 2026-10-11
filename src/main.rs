@@ -134,6 +134,7 @@ impl Running {
     fn apply_settings(&mut self) {
         let s = self.hud.settings;
         self.game.fov = s.fov;
+        self.game.player.head_bob = s.head_bob;
         self.audio.configure(s.music, s.music_volume, s.effects_volume);
     }
 

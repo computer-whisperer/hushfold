@@ -11,6 +11,8 @@ pub struct Settings {
     pub invert_look: bool,
     /// Vertical field of view on wide windows, in degrees.
     pub fov: f32,
+    /// The eye rising and falling with each step while walking.
+    pub head_bob: bool,
     /// Toggled with M.
     pub music: bool,
     pub music_volume: f32,
@@ -27,6 +29,7 @@ impl Default for Settings {
             look_speed: 1.0,
             invert_look: false,
             fov: 70.0,
+            head_bob: true,
             music: true,
             music_volume: 0.8,
             effects_volume: 1.0,

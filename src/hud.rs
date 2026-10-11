@@ -816,6 +816,7 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
                                 .integer()
                                 .text("Field of view"),
                         );
+                        ui.checkbox(&mut st.head_bob, "Head bob while walking");
                         fn pct(v: &mut f32) -> egui::Slider<'_> {
                             egui::Slider::new(v, 0.0..=1.0).custom_formatter(|x, _| format!("{:.0}%", x * 100.0))
                         }
