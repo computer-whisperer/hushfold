@@ -344,15 +344,15 @@ fn tapestry(lib: &mut Library, f: &RoomFrame) {
         spread: Vec3::splat(0.12),
         ..Sparks::burst(fin, at.at + at.q * crown)
     });
-    let front = at.at + at.q * Vec3::new(0.0, ym, 0.9);
-    let lamp = lib.waiting(
+    // High and close, so it lights the cloth more than the open book under it.
+    let front = at.at + at.q * Vec3::new(0.0, y1 + 0.2, 0.6);
+    let lamp = lib.waiter(
         front,
         Awaits::new(fin, Change::Kindles { dim: 0.0 })
             .after(lit + 0.8)
             .over(4.0),
-        [],
     );
-    lib.light_riding(lamp, front, 5.0, [1.0, 0.72, 0.42], 1.3, LightKind::Static);
+    lib.light_riding(lamp, front, 3.5, [1.0, 0.72, 0.42], 1.0, LightKind::Static);
     let air = at.at + at.q * Vec3::new(0.0, ym, 0.4);
     lib.sparks(Sparks::motes(fin, air, f.size(w * 0.45, (y1 - y0) * 0.45, 0.25)));
     lib.cue(Cue {
