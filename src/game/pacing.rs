@@ -31,7 +31,8 @@
 //! value). Other tosses, and Echo (it knows where every book
 //! lies), are upside it doesn't count.
 //!
-//! Run with `cargo test --release pacing -- --ignored --nocapture`.
+//! Run with `cargo test --release pacing -- --ignored --nocapture`; with
+//! `HUSHFOLD_RESUME=1 XDG_DATA_HOME=<a copy's parent>` it plays on from a save.
 
 use super::*;
 use std::collections::HashMap;
@@ -736,9 +737,13 @@ fn wading_along(g: &Game, path: &[Vec3]) -> f32 {
     if len > 0.0 { time / len } else { 1.0 }
 }
 
-/// Play `layout` to the end (or 30 hours); returns hours.
+/// Play `layout` to the end (or 30 hours); returns hours. With `HUSHFOLD_RESUME` set,
+/// from its save (point `XDG_DATA_HOME` at a copy), which it never writes.
 pub(super) fn simulate(layout: Layout) -> f32 {
     let mut g = Game::new(layout);
+    if std::env::var_os("HUSHFOLD_RESUME").is_some() {
+        assert!(g.load(), "no save to resume at {}", g.save_path().display());
+    }
     g.persist = false;
     let pos = g.player.pos;
     let mut bot = Bot {
