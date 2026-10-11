@@ -5,12 +5,16 @@
 //! screens of cases by the door; reading chairs, a spinning wheel turning and a
 //! barrel about the room, herbs drying from the beams and stirring in the warm air.
 //! Candles float over the hearth, bobbing, and a pair of needles knits on its own by
-//! a chair.
+//! a chair. A candle stands unlit on each case side's cornice and lights when that
+//! side is filled; once the room is in order the fire leaps up and settles fuller, the
+//! kettle sings, and a cat comes to sleep in the chair by the knitting.
 //!
 //! The candles, flames and turned pieces the top floor's rooms share are made here.
 
 use super::*;
+use crate::audio::Sfx;
 use std::f32::consts::{FRAC_PI_2, PI};
+use std::iter;
 
 /// A wall case's depth from the wall to its face.
 const WALL_D: f32 = 0.04 + FACE_DEPTH;
@@ -41,6 +45,7 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
         "the Hearth Library wants its door in the middle"
     );
     shelves(lib, frame, rng, titles);
+    case_candles(lib, frame);
     walls(lib, frame);
     fireplace(lib, frame);
     let far = RoomFrame::O_FAR;
@@ -52,6 +57,7 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     rugs(lib, frame);
     // Reading corners either side of the inglenook.
     armchair(lib, frame, -8.3, 26.6, 1.0, GREEN_CLOTH);
+    sleeping_cat(lib, frame, -8.3, 26.6, 1.0);
     lamp_table(lib, frame, -8.3, 25.45);
     knitting(lib, frame, -7.35, 26.3);
     armchair(lib, frame, 8.3, 27.4, -1.0, GREEN_CLOTH);
@@ -112,13 +118,18 @@ fn bun_foot(lib: &mut Library) -> Shape {
 
 /// A candle standing at `p`, `h` tall: its wax and its flame, for laying down (`lay`)
 /// or for a mover to carry.
-pub(super) fn candle_parts(lib: &mut Library, p: Vec3, h: f32) -> [Inst; 2] {
-    let wax = lib.turned(&[(0.0, 0.0), (0.5, 0.0), (0.5, 0.95), (0.4, 1.0), (0.0, 0.97)], 12);
+fn candle_parts(lib: &mut Library, p: Vec3, h: f32) -> [Inst; 2] {
     [
-        wax.sized(Vec3::new(0.045, h, 0.045))
+        wax(lib)
+            .sized(Vec3::new(0.045, h, 0.045))
             .at(p, Quat::IDENTITY, kind::PLAIN, rgba(WAX, 1.0)),
         flame(p + Vec3::Y * (h + 0.004), (0.026, 0.06), FLAME),
     ]
+}
+
+/// A candle's wax 1 high and 1 across, to be sized.
+fn wax(lib: &mut Library) -> Shape {
+    lib.turned(&[(0.0, 0.0), (0.5, 0.0), (0.5, 0.95), (0.4, 1.0), (0.0, 0.97)], 12)
 }
 
 /// A candle standing at `p`, `h` tall, lit.
@@ -126,6 +137,25 @@ pub(super) fn candle(lib: &mut Library, p: Vec3, h: f32) {
     for i in candle_parts(lib, p, h) {
         lay(lib, i);
     }
+}
+
+/// A turned candlestick 1 high and 1 across at its foot, to be sized.
+fn candlestick(lib: &mut Library) -> Shape {
+    lib.turned(
+        &[
+            (0.0, 0.0),
+            (0.5, 0.0),
+            (0.5, 0.08),
+            (0.2, 0.18),
+            (0.14, 0.5),
+            (0.2, 0.74),
+            (0.16, 0.84),
+            (0.36, 0.92),
+            (0.36, 1.0),
+            (0.0, 1.0),
+        ],
+        16,
+    )
 }
 
 /// A candle in a hurricane glass on a brass foot, standing at `p`.
@@ -237,6 +267,59 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
         }
         let faces: Vec<_> = left_to_right(back).into_iter().chain(left_to_right(front)).collect();
         lib.add_category(rng, cat, &faces, titles);
+    }
+}
+
+/// On each case side's cornice, at an end clear of the signs, a candle in a brass
+/// stick, unlit until that side is filled; then its wick catches and it burns on, so
+/// the room lights up case by case as it is put in order.
+fn case_candles(lib: &mut Library, frame: &RoomFrame) {
+    let stick = candlestick(lib).sized(Vec3::new(0.08, 0.11, 0.08));
+    let wax = wax(lib);
+    let brass = rgba(BRASS, 1.0);
+    // The room's signs, each 2 m wide: over a case, or between two where a category
+    // stands in parts apart.
+    let signs: Vec<(Vec3, Vec3)> = (lib.labels.iter())
+        .filter(|l| matches!(l.kind, LabelKind::Category(c) if frame.categories.contains(&c)))
+        .map(|l| (l.pos, l.normal))
+        .collect();
+    let clear = |p: Vec3| {
+        (signs.iter()).all(|&(at, n)| (p - at).dot(Vec3::Y.cross(n)).abs() > 1.1 || (p - at).dot(n).abs() > 0.2)
+    };
+    for cat in frame.categories.clone() {
+        for f in lib.faces_of(cat).collect::<Vec<_>>() {
+            let face = &lib.faces[f];
+            let foot = [1.15, -1.15]
+                .map(|e| face.center + face.right * e + Vec3::Y * (UNIT_H + 0.13))
+                .into_iter()
+                .find(|&p| clear(p))
+                .expect("a sign covers only one end of a case");
+            lib.decor(stick.at(foot, Quat::IDENTITY, kind::METAL, brass));
+            let (base, tall) = (foot + Vec3::Y * 0.11, 0.22);
+            lib.decor(
+                wax.sized(Vec3::new(0.06, tall, 0.06))
+                    .at(base, Quat::IDENTITY, kind::PLAIN, rgba(WAX, 1.0)),
+            );
+            let wick = base + Vec3::Y * (tall + 0.004);
+            let catch = Change::Arrives {
+                from: Vec3::ZERO,
+                grow: 0.1,
+            };
+            let side = Finish::Face(f);
+            let lit = flame(wick, (0.046, 0.11), [FLAME[0], FLAME[1], FLAME[2], 6.0]);
+            lib.waiting(wick, Awaits::new(side, catch).after(0.4).over(0.8), [lit]);
+            lib.sparks(Sparks {
+                delay: 0.35,
+                lasts: Some(0.4),
+                spread: Vec3::splat(0.015),
+                rate: 40.0,
+                vel: Vec3::Y * 0.5,
+                jitter: Vec3::splat(0.3),
+                life: 0.9,
+                size: Vec3::splat(0.012),
+                ..Sparks::burst(side, wick)
+            });
+        }
     }
 }
 
@@ -437,7 +520,92 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::METAL,
         iron,
     );
-    kettle(lib, frame.at(-0.2, fire_o, 0.6), q * Quat::from_rotation_y(0.4));
+    let (kettle_at, kettle_turn) = (frame.at(-0.2, fire_o, 0.6), q * Quat::from_rotation_y(0.4));
+    kettle(lib, kettle_at, kettle_turn);
+    // Once the room is in order the fire leaps up, embers swirling up the flue, and
+    // sinks back, leaving it burning fuller than before and the room the warmer for it;
+    // the kettle over it begins to sing.
+    let fin = Finish::Room(frame.dept);
+    let logs = frame.at(0.0, fire_o, 0.12);
+    let tongue = |w: f32, tall: f32, glow: f32| {
+        Inst::new(
+            logs + Vec3::Y * (tall * 0.5),
+            q,
+            Vec3::new(w, tall, 0.36),
+            kind::FIRE,
+            [1.0, 0.5, 0.16, glow],
+            1,
+        )
+    };
+    let up = Change::Arrives {
+        from: Vec3::ZERO,
+        grow: 0.1,
+    };
+    let leapt = lib.waiting(logs, Awaits::new(fin, up).over(1.2), iter::empty());
+    let sink = Change::Shifts {
+        by: Vec3::ZERO,
+        turn: Quat::IDENTITY,
+        scale: 0.0,
+    };
+    let sunk = lib.mover(logs, Motion::Still, 0.0, Some(leapt));
+    lib.awaiting(sunk, Awaits::new(fin, sink).after(2.2).over(3.0));
+    lib.moving(sunk, tongue(1.1, 1.15, 2.2));
+    lib.waiting(
+        logs,
+        Awaits::new(fin, up).after(1.5).over(3.0),
+        [tongue(0.6, 0.62, 1.3)],
+    );
+    let warm = Change::Kindles { dim: 0.0 };
+    let warmer = lib.waiting(logs, Awaits::new(fin, warm).over(2.0), iter::empty());
+    lib.light_riding(
+        warmer,
+        frame.at(0.0, face - 0.7, 0.9),
+        9.0,
+        [1.0, 0.55, 0.22],
+        1.0,
+        LightKind::Flicker,
+    );
+    lib.sparks(Sparks {
+        lasts: Some(3.5),
+        spread: frame.size(0.4, 0.08, 0.12),
+        rate: 45.0,
+        vel: Vec3::Y * 1.2,
+        jitter: Vec3::new(0.3, 0.4, 0.3),
+        lift: 0.6,
+        drag: 0.8,
+        wander: 1.2,
+        life: 1.8,
+        rgba: [1.6, 0.55, 0.12, 3.0],
+        size: Vec3::splat(0.018),
+        ..Sparks::burst(fin, frame.at(0.0, fire_o - 0.05, 0.45))
+    });
+    // And from then on motes of warm light drifting about the inglenook.
+    lib.sparks(Sparks::motes(
+        fin,
+        frame.at(0.0, far - 3.0, 1.6),
+        frame.size(2.6, 0.9, 2.2),
+    ));
+    let spout = kettle_at + kettle_turn * Vec3::new(0.22, 0.19, 0.0);
+    let steam = Inst::new(
+        spout + Vec3::Y * 0.2,
+        Quat::IDENTITY,
+        Vec3::new(0.09, 0.45, 0.09),
+        kind::MIST,
+        [0.85, 0.85, 0.85, 0.6],
+        0,
+    );
+    let sing = Change::Arrives {
+        from: Vec3::ZERO,
+        grow: 0.0,
+    };
+    lib.waiting(spout, Awaits::new(fin, sing).after(2.5).over(2.5), [steam]);
+    lib.cue(Cue {
+        finish: fin,
+        delay: 1.0,
+        sound: Sfx::Chime,
+        at: logs,
+        volume: 0.5,
+    });
     // The mantel: a shelf on corbels, candles in brass sticks, a clock, jars of
     // remedies.
     let my = top + 0.45;
@@ -449,21 +617,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         kind::WOOD,
         WALNUT,
     ));
-    let stick = lib.turned(
-        &[
-            (0.0, 0.0),
-            (0.5, 0.0),
-            (0.5, 0.08),
-            (0.2, 0.18),
-            (0.14, 0.5),
-            (0.2, 0.74),
-            (0.16, 0.84),
-            (0.36, 0.92),
-            (0.36, 1.0),
-            (0.0, 1.0),
-        ],
-        16,
-    );
+    let stick = candlestick(lib);
     for s in [-1.0f32, 1.0] {
         let x = s * (BREAST - 0.15);
         lib.decor(piece(
@@ -724,6 +878,97 @@ fn armchair(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, facing: f32, r
         }
     }
     guard(lib, frame, (a - 0.45, a + 0.45), (o - 0.47, o + 0.47), 1.35);
+}
+
+/// A ginger cat curled asleep in the chair at `a`, `o` (facing as `armchair`), once the
+/// room is in order: it gathers out of a swirl of warm motes, and sleeps on there,
+/// breathing.
+fn sleeping_cat(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, facing: f32) {
+    let q = frame.turn()
+        * if facing > 0.0 {
+            Quat::IDENTITY
+        } else {
+            Quat::from_rotation_y(PI)
+        };
+    let seat = frame.at(a, o, 0.0) + q * Vec3::new(0.06, 0.52, 0.0);
+    // Its parts laid out in the chair's frame, a little over life size in a chair this
+    // size, so it reads across the room.
+    let on = |p: Vec3| seat + q * (p * 1.15);
+    let fin = Finish::Room(frame.dept);
+    let breathe = Motion::Bob {
+        amp: 0.004,
+        period: 3.6,
+        rock: 0.0,
+    };
+    let m = lib.mover(seat, breathe, 0.0, None);
+    let gather = Change::Arrives {
+        from: Vec3::ZERO,
+        grow: 0.0,
+    };
+    lib.awaiting(m, Awaits::new(fin, gather).after(1.5).over(2.5));
+    let fur = rgba([0.6, 0.32, 0.12], 1.0);
+    let ball = lib.shape(Mesh::sphere(20));
+    // Curled round on itself, its head on its flank toward the chair's front.
+    lib.moving(
+        m,
+        ball.sized(Vec3::new(0.36, 0.15, 0.31) * 1.15).inst(
+            on(Vec3::new(0.0, 0.07, 0.0)),
+            q * Quat::from_rotation_y(0.3),
+            kind::CLOTH,
+            fur,
+        ),
+    );
+    let head = on(Vec3::new(0.12, 0.12, 0.09));
+    let look = q * Quat::from_rotation_y(-0.5);
+    lib.moving(
+        m,
+        ball.sized(Vec3::new(0.12, 0.1, 0.12) * 1.15)
+            .inst(head, look, kind::CLOTH, fur),
+    );
+    lib.moving(
+        m,
+        ball.sized(Vec3::new(0.05, 0.04, 0.06) * 1.15).inst(
+            head + look * Vec3::new(0.058, -0.023, 0.0),
+            look,
+            kind::CLOTH,
+            [0.85, 0.75, 0.6, 1.0],
+        ),
+    );
+    let ear = lib.shape(Mesh::cone(8));
+    for s in [-1.0f32, 1.0] {
+        lib.moving(
+            m,
+            ear.sized(Vec3::new(0.035, 0.05, 0.022) * 1.15).inst(
+                head + look * (Vec3::new(-0.01, 0.055, s * 0.035) * 1.15),
+                look * Quat::from_rotation_x(s * 0.3),
+                kind::CLOTH,
+                fur,
+            ),
+        );
+    }
+    // Its tail round in front of it.
+    let tail: Vec<Vec3> = (0..=12)
+        .map(|k| {
+            let t = k as f32 / 12.0;
+            let th = -2.4 + t * 2.7;
+            on(Vec3::new(0.2 * libm::cosf(th), 0.05 + 0.02 * t, 0.18 * libm::sinf(th)))
+        })
+        .collect();
+    let tail = lib.shape(Mesh::sweep(&tail, &[0.03, 0.018], &circle(1.0, 8), true));
+    lib.moving(m, tail.at(Vec3::ZERO, Quat::IDENTITY, kind::CLOTH, fur));
+    lib.sparks(Sparks {
+        delay: 1.0,
+        lasts: Some(2.8),
+        spread: Vec3::splat(0.2),
+        rate: 25.0,
+        vel: Vec3::Y * 0.25,
+        jitter: Vec3::splat(0.25),
+        lift: 0.05,
+        wander: 0.6,
+        life: 2.0,
+        rgba: [1.4, 0.95, 0.5, 1.8],
+        ..Sparks::burst(fin, seat + Vec3::Y * 0.1)
+    });
 }
 
 /// A sofa across the inglenook's mouth at `a`, `o`, facing the fire, on turned feet,
@@ -1329,6 +1574,45 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
                     0,
                 ),
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No case side's candle stands in a category's sign, wherever the sign hangs: over
+    /// a case, or between two where a category stands in parts apart.
+    #[test]
+    fn case_candles_clear_the_signs() {
+        let lib = Library::generate(Layout::Great, crate::game::SEED);
+        let hearth = |c: usize| lib.dept_of(c) == dept::HEARTH_LIBRARY;
+        let wicks: Vec<Vec3> = (lib.movers.iter())
+            .filter(|m| match m.awaits {
+                Some(Awaits {
+                    finish: Finish::Face(f),
+                    ..
+                }) => hearth(lib.faces[f].category),
+                _ => false,
+            })
+            .map(|m| m.pivot)
+            .collect();
+        assert_eq!(wicks.len(), 40, "a candle on every side");
+        for l in &lib.labels {
+            let LabelKind::Category(c) = l.kind else { continue };
+            if !hearth(c) {
+                continue;
+            }
+            for &w in &wicks {
+                let d = w - l.pos;
+                let along = d.dot(Vec3::Y.cross(l.normal)).abs();
+                assert!(
+                    along > 1.06 || d.dot(l.normal).abs() > 0.2,
+                    "a candle at {w} in {}'s sign",
+                    l.text
+                );
+            }
         }
     }
 }
