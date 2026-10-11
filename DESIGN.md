@@ -426,6 +426,21 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
   nearer face, so no step moves a book more than 5 cm (more steps at speed): at
   long frames (a hitch, the pacing bot's 0.05 s) a hard throw used to pass the
   middle of an outer wall and land on its top, outside the building.
+- A dropped book's middle is kept far enough from walls, furniture taller than
+  0.9 m and closed gates for it to lie flat (half its diagonal). Where two such
+  pieces stand nearer each other than that (a 1.2 m piece 14 cm off the Great
+  Library's south room's west wall), pushing out of one pushed into the other,
+  and it gave up inside the wall, on its top, inside the ceiling (one in seven of
+  a test's throws there). It now lies at the nearest place clear of both
+  that isn't through a wall (a solid up to the ceiling, or a closed gate).
+- No book lies through the ceiling (the floor above's underside, or through a hole
+  in it the next one up). Couriers set every load down within 0.4 m of their
+  room's drop spot, and the heaps there grew into spires through the ceiling,
+  6 m high; a book dropped on a heap up to the ceiling lies instead at the nearest
+  place it fits under it.
+- Loading lays down again any book a save left on top of a tall piece or through
+  a ceiling (`Loose::rescue`), lowest first, at the nearest place it can lie, on
+  the side of a wall it was nearest. One playtest save held 62.
 - Gathering takes only books with no wall, case or closed gate between them and
   the aim point.
 - Generation picks drop points per pile; dropping them through the same code

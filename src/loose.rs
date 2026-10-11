@@ -28,6 +28,11 @@ const REPOSE: f32 = 0.6;
 const MAX_TILT: f32 = 0.45;
 const SLIDE_STEP: f32 = 0.05;
 const MAX_SLIDE_STEPS: usize = 14;
+/// The rings a search for a place to lie steps out by, and how far out it looks: from
+/// a gap too narrow to lie in, and from a heap up to the ceiling.
+const SEARCH_STEP: f32 = 0.05;
+const GAP_REACH: f32 = 2.0;
+const CEILING_REACH: f32 = 4.0;
 /// Furniture taller than this (above its floor) sheds books off its top rather than
 /// holding them.
 const SHED_HEIGHT: f32 = 0.9;
@@ -381,16 +386,49 @@ impl Grid {
 
     /// True if the segment `a`–`b` crosses the footprint of a tall solid or a closed gate.
     fn crosses_tall(&self, a: Vec2, b: Vec2) -> bool {
-        let d = b - a;
-        let inv = Vec2::new(1.0 / d.x, 1.0 / d.y);
-        self.all_solids().filter(|&(_, mx)| self.tall(mx)).any(|(mn, mx)| {
-            let t1 = (xz(mn) - a) * inv;
-            let t2 = (xz(mx) - a) * inv;
-            let tmin = t1.min(t2).max_element().max(0.0);
-            let tmax = t1.max(t2).min_element().min(1.0);
-            tmax >= tmin
-        })
+        (self.all_solids())
+            .filter(|&(_, mx)| self.tall(mx))
+            .any(|(mn, mx)| through(a, b, mn, mx))
     }
+
+    /// Walls: solids up to the ceiling, which nothing passes over, and closed gates.
+    fn walls(&self) -> impl Iterator<Item = (Vec3, Vec3)> + '_ {
+        let walls = (self.solids.iter().copied()).filter(|&(_, mx)| mx.y >= self.roof - 0.05);
+        walls.chain(self.gates.iter().map(|&(_, mn, mx)| (mn, mx)))
+    }
+
+    /// Whether the line from `a` to `b` passes through a wall.
+    fn crosses_wall(&self, a: Vec2, b: Vec2) -> bool {
+        self.walls().any(|(mn, mx)| through(a, b, mn, mx))
+    }
+
+    /// `p`, or if it is inside a wall, just out of it by its nearest side.
+    fn out_of_walls(&self, mut p: Vec2) -> Vec2 {
+        for (mn, mx) in self.walls() {
+            let (mn, mx) = (xz(mn), xz(mx));
+            if p.cmpgt(mn).all() && p.cmplt(mx).all() {
+                let out = [
+                    (p.x - mn.x, Vec2::new(mn.x - 1e-3, p.y)),
+                    (mx.x - p.x, Vec2::new(mx.x + 1e-3, p.y)),
+                    (p.y - mn.y, Vec2::new(p.x, mn.y - 1e-3)),
+                    (mx.y - p.y, Vec2::new(p.x, mx.y + 1e-3)),
+                ];
+                p = out.iter().min_by(|a, b| a.0.total_cmp(&b.0)).unwrap().1;
+            }
+        }
+        p
+    }
+}
+
+/// Whether the line from `a` to `b` passes through the box `mn`..`mx`, seen from above.
+fn through(a: Vec2, b: Vec2, mn: Vec3, mx: Vec3) -> bool {
+    let d = b - a;
+    let inv = Vec2::new(1.0 / d.x, 1.0 / d.y);
+    let t1 = (xz(mn) - a) * inv;
+    let t2 = (xz(mx) - a) * inv;
+    let tmin = t1.min(t2).max_element().max(0.0);
+    let tmax = t1.max(t2).min_element().min(1.0);
+    tmax >= tmin
 }
 
 pub struct Loose {
@@ -788,7 +826,9 @@ impl Loose {
             c.y = c.y.clamp(g.min.y + r, g.max.y - r);
             c
         };
+        let from = walls(c);
         // Pushing out of one piece can push into a wall or another piece; settle it.
+        let mut settled = false;
         for _ in 0..4 {
             c = walls(c);
             let before = c;
@@ -817,21 +857,103 @@ impl Loose {
                 }
             }
             if c == before {
+                settled = true;
                 break;
             }
         }
-        walls(c)
+        let c = walls(c);
+        // Between two pieces nearer each other than a book is wide, pushing out of one
+        // pushes into the other, and it can end inside one, to lie on its top (a wall's
+        // top is under the ceiling). Lie instead at the nearest place clear of both.
+        if settled || self.clear_at(lv, r, c) {
+            return c;
+        }
+        self.nearest(lv, from, GAP_REACH, |q| self.clear_at(lv, r, q))
+            .unwrap_or(c)
+    }
+
+    /// Whether a book `r` from its middle to its corners can lie flat with its middle
+    /// at `c` on level `lv`: inside the level's walls, clear of tall furniture and
+    /// closed gates, over floor or books.
+    fn clear_at(&self, lv: usize, r: f32, c: Vec2) -> bool {
+        let g = &self.grids[lv];
+        c.cmpge(g.min + r).all()
+            && c.cmple(g.max - r).all()
+            && g.height(c) != HOLE
+            && (g.all_solids()).filter(|&(_, mx)| g.tall(mx)).all(|(mn, mx)| {
+                let q = Vec2::new(c.x.clamp(mn.x, mx.x), c.y.clamp(mn.z, mx.z));
+                c.distance(q) >= r - 1e-3
+            })
+    }
+
+    /// The nearest point to `from` on level `lv` that `ok` accepts and that isn't
+    /// through a wall from it, looked for in rings out to `reach`. From inside a wall
+    /// (a book a save left on one's top), the side nearest is the one it came from.
+    fn nearest(&self, lv: usize, from: Vec2, reach: f32, ok: impl Fn(Vec2) -> bool) -> Option<Vec2> {
+        let g = &self.grids[lv];
+        let from = g.out_of_walls(from);
+        let rings = (reach / SEARCH_STEP).ceil() as usize;
+        (1..=rings).find_map(|k| {
+            let rad = k as f32 * SEARCH_STEP;
+            let n = ((std::f32::consts::TAU * rad / SEARCH_STEP).ceil() as usize).max(8);
+            (0..n)
+                .map(|i| from + Vec2::from_angle(i as f32 * std::f32::consts::TAU / n as f32) * rad)
+                .find(|&q| ok(q) && !g.crosses_wall(from, q))
+        })
+    }
+
+    /// How high the space over `p` on level `lv` reaches: to the underside of the
+    /// floor above, or through a hole in it to that level's ceiling, or the roof.
+    fn ceiling(&self, lv: usize, p: Vec2) -> f32 {
+        match self.grids.get(lv + 1) {
+            Some(up) if up.is_hole(p) => self.ceiling(lv + 1, p),
+            Some(up) => up.y - SLAB,
+            None => self.grids[lv].roof_at(p),
+        }
+    }
+
+    /// Whether book `b` lying at `r` on level `lv` is under the ceiling, at its middle
+    /// and its corners.
+    fn under_ceiling(&self, lv: usize, b: u32, r: &Rest) -> bool {
+        let h = self.half(b);
+        let top = r.c.y + h.x * r.su.abs() + h.y * r.sv.abs() + r.rise(self.size[b as usize].x);
+        let (c, u, v) = (r.xz(), r.u * h.x, r.v() * h.y);
+        [c, c + u + v, c + u - v, c - u + v, c - u - v]
+            .iter()
+            .all(|&p| top <= self.ceiling(lv, p) + 1e-3)
     }
 
     /// Where a book dropped at `c` (length along `u`) on level `lv` comes to rest: it
     /// slides downhill while its support is too steep, then fits what is under it.
     /// `Err` is where it slid over an edge (its centre over a hole), to fall from.
     /// A hole is judged by the surface books land on, so another book overhanging the
-    /// edge holds it, as the landing test in `step` says.
+    /// edge holds it, as the landing test in `step` says. Never through the ceiling: on
+    /// a heap grown up to it, the book lies instead at the nearest place it fits under.
     fn drop(&self, lv: usize, b: u32, c: Vec2, u: Vec2) -> Result<Rest, Vec2> {
+        let c = self.slide(lv, b, self.keep_clear(lv, b, c), u)?;
+        let r = self.fit(lv, b, c, u).1;
+        if self.under_ceiling(lv, b, &r) {
+            return Ok(r);
+        }
+        let room = self.half(b).length();
+        let fits = |q: Vec2| self.clear_at(lv, room, q) && self.under_ceiling(lv, b, &self.fit(lv, b, q, u).1);
+        let Some(q) = self.nearest(lv, c, CEILING_REACH, fits) else {
+            return Ok(r);
+        };
+        // Sliding on from there can tip a corner up into the ceiling again.
+        let slid = self.fit(lv, b, self.slide(lv, b, q, u)?, u).1;
+        Ok(if self.under_ceiling(lv, b, &slid) {
+            slid
+        } else {
+            self.fit(lv, b, q, u).1
+        })
+    }
+
+    /// A book on level `lv` slides from `c` downhill while its support is too steep;
+    /// where it stops, or `Err` where its centre came over a hole.
+    fn slide(&self, lv: usize, b: u32, mut c: Vec2, u: Vec2) -> Result<Vec2, Vec2> {
         let g = &self.grids[lv];
         let open = |c: Vec2| g.height(c) == HOLE;
-        let mut c = self.keep_clear(lv, b, c);
         let v = Vec2::new(u.y, -u.x);
         for _ in 0..MAX_SLIDE_STEPS {
             if open(c) {
@@ -848,10 +970,7 @@ impl Loose {
             }
             c = next;
         }
-        if open(c) {
-            return Err(c);
-        }
-        Ok(self.fit(lv, b, c, u).1)
+        if open(c) { Err(c) } else { Ok(c) }
     }
 
     /// True if book `y` lies above book `x` (both on one level): on some heightfield
@@ -1543,6 +1662,33 @@ impl Loose {
         self.moved[bi] = true;
         self.index(b);
     }
+
+    /// Books a save left where nothing reaches them, from before `drop` kept them from
+    /// it: on top of a tall piece (dropped in a gap narrower than a book, beside a
+    /// wall up to the ceiling) or through the ceiling over a heap. Each is laid down
+    /// again at the nearest place it can lie, the lowest first. Returns them.
+    pub fn rescue(&mut self) -> Vec<u32> {
+        let n = self.size.len() as u32;
+        let mut stuck: Vec<u32> = (0..n)
+            .filter(|&b| self.resting[b as usize] && self.out_of_reach(b))
+            .collect();
+        stuck.sort_by(|&a, &b| self.rest[a as usize].c.y.total_cmp(&self.rest[b as usize].c.y));
+        self.take(&stuck);
+        for &b in &stuck {
+            let (p, rot) = self.pose[b as usize];
+            self.land(b, self.level[b as usize], p, Vec3::ZERO, rot);
+        }
+        stuck
+    }
+
+    /// Whether resting book `b` lies on top of a tall piece or through the ceiling.
+    fn out_of_reach(&self, b: u32) -> bool {
+        let (r, lv) = (&self.rest[b as usize], self.level[b as usize]);
+        let g = &self.grids[lv];
+        let c = r.xz();
+        let on_tall = (g.all_solids()).any(|(mn, mx)| g.tall(mx) && c.cmpgt(xz(mn)).all() && c.cmplt(xz(mx)).all());
+        on_tall || !self.under_ceiling(lv, b, r)
+    }
 }
 
 /// An f32 ordered by `total_cmp`, for heaps.
@@ -2110,5 +2256,149 @@ mod tests {
             got.iter().all(|&b| loose.rest[b as usize].c.z < -4.0),
             "reached through the case"
         );
+    }
+
+    /// Fly books until all have landed (or `secs` pass).
+    fn fly(loose: &mut Loose, n: usize, secs: f32) {
+        let (mut pos, mut rot) = (vec![Vec3::ZERO; n], vec![Quat::IDENTITY; n]);
+        for _ in 0..(secs * 60.0) as usize {
+            loose.update(1.0 / 60.0, &mut pos, &mut rot);
+        }
+    }
+
+    /// In the Great Library's ground floor south room a piece 1.2 m high stands 14 cm
+    /// off the west wall, which goes up to the ceiling: narrower than a book. Books
+    /// landing there used to be pushed from the piece into the wall and left on its
+    /// top, inside the ceiling; they lie beside the gap instead, on this side.
+    #[test]
+    fn books_land_beside_a_gap_too_narrow_to_lie_in() {
+        let lib = Library::generate(crate::library::Layout::Great, crate::game::SEED);
+        let mut loose = Loose::new(&lib);
+        let b = 29526;
+        for z in [16.37, 18.0, 22.24, 25.0] {
+            for (vx, vy) in [(-1.0, 3.0), (-3.0, 3.0), (-6.0, 2.0), (-12.0, 4.0)] {
+                loose.take(&[b]);
+                loose.throw(
+                    b,
+                    Vec3::new(-12.72, 0.4, z),
+                    Vec3::new(vx, vy, 0.0),
+                    Quat::IDENTITY,
+                    Vec3::ONE,
+                    0.0,
+                );
+                fly(&mut loose, lib.books.len(), 3.0);
+                let r = loose.rest[b as usize];
+                assert!(loose.is_resting(b) && !loose.out_of_reach(b), "from z {z}: {r:?}");
+                assert!(r.c.y < 1.0 && r.c.x > -12.8, "from z {z}, at {vx}: lies at {:?}", r.c);
+                assert!(loose.furniture_overlap(b) < 0.01, "from z {z}: in the furniture");
+            }
+        }
+        assert_eq!(loose.heightfield_errors(), 0);
+    }
+
+    /// A heap grown up to the ceiling takes no book through it: books dropped on one
+    /// lie at the nearest place they fit under it, as couriers drop them at a room's
+    /// drop spot.
+    #[test]
+    fn heaps_stop_at_the_ceiling() {
+        let lib = Library::generate(crate::library::Layout::Great, crate::game::SEED);
+        let mut loose = Loose::new(&lib);
+        let drop = lib.rooms[0].drop;
+        let (lv, at) = (lib.rooms[0].level, Vec2::new(drop.x, drop.z));
+        let ceiling = loose.ceiling(lv, at);
+        // A column of books, one flat on another, up to just under the ceiling.
+        let resting: Vec<u32> = (0..lib.books.len() as u32).filter(|&b| loose.is_resting(b)).collect();
+        let (column, thrown) = (&resting[..400], &resting[400..440]);
+        loose.take(column);
+        loose.take(thrown);
+        let mut y = loose.height_at(lv, at);
+        let mut stacked = 0;
+        for &b in column {
+            let t = loose.size[b as usize].x;
+            if y + t > ceiling - 0.01 {
+                break;
+            }
+            let r = Rest {
+                c: Vec3::new(at.x, y, at.y),
+                u: Vec2::X,
+                su: 0.0,
+                sv: 0.0,
+            };
+            loose.restore(b, lv, r);
+            y += t;
+            stacked += 1;
+        }
+        loose.rebuild_all();
+        assert!(y > ceiling - 0.06, "the column reaches {y}, under {ceiling}");
+        for (i, &b) in thrown.iter().enumerate() {
+            let jitter = Vec3::new((i % 5) as f32 * 0.2 - 0.4, 0.0, (i / 5 % 5) as f32 * 0.2 - 0.4);
+            let from = drop + Vec3::Y * 0.9 + jitter;
+            loose.throw(
+                b,
+                from,
+                Vec3::ZERO,
+                Quat::from_rotation_y(i as f32),
+                Vec3::ONE,
+                i as f32 * 0.1,
+            );
+        }
+        fly(&mut loose, lib.books.len(), 12.0);
+        for &b in column[..stacked].iter().chain(thrown) {
+            assert!(loose.is_resting(b), "book {b} still in the air");
+            assert!(
+                !loose.out_of_reach(b),
+                "book {b} through the ceiling: {:?}",
+                loose.rest[b as usize]
+            );
+        }
+        assert_eq!(loose.heightfield_errors(), 0);
+    }
+
+    /// A save from before can hold books out of reach: one on the top of the wall by
+    /// that gap, inside the ceiling, and a heap through the ceiling. They are laid down
+    /// again where they can be reached, the one from the wall on its own side.
+    #[test]
+    fn rescue_lays_down_books_a_save_left_out_of_reach() {
+        let lib = Library::generate(crate::library::Layout::Great, crate::game::SEED);
+        let mut loose = Loose::new(&lib);
+        let wall = 29526;
+        let (lv, at) = (lib.rooms[0].level, Vec2::new(lib.rooms[0].drop.x, lib.rooms[0].drop.z));
+        let ceiling = loose.ceiling(lv, at);
+        let column: Vec<u32> = (0..lib.books.len() as u32)
+            .filter(|&b| loose.is_resting(b) && b != wall)
+            .take(30)
+            .collect();
+        loose.take(&column);
+        loose.take(&[wall]);
+        let flat = |c: Vec3, u: Vec2| Rest { c, u, su: 0.0, sv: 0.0 };
+        loose.restore(
+            wall,
+            0,
+            flat(
+                Vec3::new(-12.811_592, 5.65, 22.238_735),
+                Vec2::new(0.249, 0.968).normalize(),
+            ),
+        );
+        // The column from just under the ceiling up through it.
+        let mut y = ceiling - 0.3;
+        for &b in &column {
+            loose.restore(b, lv, flat(Vec3::new(at.x, y, at.y), Vec2::X));
+            y += loose.size[b as usize].x;
+        }
+        loose.rebuild_all();
+        let stuck = loose.rescue();
+        assert!(stuck.contains(&wall) && stuck.len() > 20, "{} rescued", stuck.len());
+        fly(&mut loose, lib.books.len(), 5.0);
+        for &b in column.iter().chain([&wall]) {
+            assert!(
+                loose.is_resting(b) && !loose.out_of_reach(b),
+                "book {b}: {:?}",
+                loose.rest[b as usize]
+            );
+        }
+        let r = loose.rest[wall as usize];
+        assert!(r.c.y < 1.0 && r.c.x > -12.8, "the book from the wall lies at {:?}", r.c);
+        assert!(loose.rescue().is_empty());
+        assert_eq!(loose.heightfield_errors(), 0);
     }
 }

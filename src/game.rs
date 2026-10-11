@@ -2901,6 +2901,10 @@ impl Game {
             }
         }
         self.loose.rebuild_all();
+        let rescued = self.loose.rescue();
+        if !rescued.is_empty() {
+            eprintln!("hushfold: {} books lay out of reach; laid down again", rescued.len());
+        }
         for (b, p) in airborne {
             self.loose
                 .throw(b, p, Vec3::ZERO, self.rot[b as usize], Vec3::ZERO, 0.0);
