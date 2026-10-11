@@ -1,0 +1,24 @@
+# A heap scooped up, and the armful thrown back across the floor.
+#   promo/clip.sh promo/clips/hall-scoop-and-toss.txt <out>
+buy Arms
+buy Arms
+buy Arms
+buy Sift
+buy LongToss
+# The toasts and hints from all that learning fade.
+wait 420
+facepile
+wait 10
+record hall-scoop-and-toss
+wait 30
+press
+wait 75
+release
+wait 45
+# Round to the open floor, and the whole armful tossed.
+turn 160 6 70
+charge all
+wait 50
+throw
+wait 150
+stop

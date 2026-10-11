@@ -245,6 +245,25 @@ all back to use.
   toss would land), `printactive`, `quit`. `fill` and `take` pull books from
   anywhere in the piles, which then settle.
 
+## Store art
+
+`promo/` makes the store page's pictures, all from scripted runs (so they are the
+same each time) and none of it by hand:
+
+- `promo/shots/hall.txt` and `promo/shots/great.txt`: the screenshots, from a new
+  Hall to rooms of the Great Library half in order.
+  `promo/shoot.sh promo/shots/hall.txt out` (and `-l great` for the other); `-s
+  3840x2160` for art cut from them.
+- `promo/clips/*.txt`: gameplay clips for a trailer, each a few seconds, with their
+  sound. `promo/clip.sh promo/clips/hall-filing.txt out` records one (ffmpeg) and
+  makes `out/hall-filing.mp4`.
+- `promo/logo/make.py`: the logo (the name in Cinzel, set as outlines, under a
+  folded-paper crane alighting on a book), as SVGs beside it, and PNGs at the
+  store's and icons' sizes.
+- `promo/capsules.py shots out`: drafts of Steam's capsules (header, small, main,
+  vertical, library, the library hero and page background) from 4K screenshots
+  and the logo.
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or

@@ -1,0 +1,20 @@
+# Filing: an armful of one category, its runs aglow; a tap on a run sends every
+# volume of that series carried flying home (Series Bundle).
+#   promo/clip.sh promo/clips/hall-filing.txt <out>
+buy Arms
+buy Arms
+buy Arms
+buy Glow
+buy Glow
+buy Glow
+buy SortSense
+buy Bundle
+wait 420
+take 0 60
+faceslot
+wait 30
+record hall-filing
+wait 40
+click
+wait 120
+stop

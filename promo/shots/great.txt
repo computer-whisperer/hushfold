@@ -1,0 +1,57 @@
+# Store screenshots in the Great Library: promo/shoot.sh -l great promo/shots/great.txt <out>.
+# Each room shown has half its categories finished (their celebrations up), the rest
+# still in heaps; departments own eight categories each, the Observatory 0 to 7.
+hud off
+unveil
+wait 30
+# Observatory
+cheat finish category 0
+cheat finish category 2
+cheat finish category 4
+cheat finish category 6
+# Bestiary
+cheat finish category 24
+cheat finish category 26
+cheat finish category 28
+cheat finish category 30
+# Chronicle Hall
+cheat finish category 40
+cheat finish category 42
+cheat finish category 44
+cheat finish category 46
+# Clockworks
+cheat finish category 64
+cheat finish category 66
+cheat finish category 68
+cheat finish category 70
+# Hearth Library
+cheat finish category 88
+cheat finish category 90
+cheat finish category 92
+cheat finish category 94
+# The celebrations play out.
+wait 900
+
+# The atrium, three storeys of galleries over the great heap.
+glide 0 0 6.5 0 8 30
+shot 06-great-atrium
+
+# The Observatory: finished categories trace their constellations.
+glide 0 0 -15 0 -4 30
+shot 07-great-observatory
+
+# The Chronicle Hall's banners, from its far end.
+glide 31.2 6 0 270 -4 30
+shot 08-great-chronicle-hall
+
+# The Clockworks: stopped clocks hold books in the air.
+glide 0 12 -15 0 -4 30
+shot 09-great-clockworks
+
+# The Bestiary's skeleton over its egg.
+glide -15 0 0 270 -4 30
+shot 10-great-bestiary
+
+# The Hearth Library's armchairs.
+glide -31.2 12 0 90 -4 30
+shot 11-great-hearth

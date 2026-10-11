@@ -1,0 +1,15 @@
+# The Observatory under its painted sky: a category put in order traces its
+# constellation (two already traced).
+#   promo/clip.sh -l great promo/clips/great-observatory.txt <out>
+hud off
+unveil
+cheat finish category 0
+cheat finish category 2
+wait 900
+glide 0 0 -16 0 2 30
+record great-observatory
+wait 60
+turn 0 32 150
+cheat finish category 4
+wait 480
+stop

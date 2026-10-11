@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="25 13.5 152 152" width="200" height="200">
+<defs>
+  <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#f6dc9a"/><stop offset="0.55" stop-color="#e8ba60"/>
+    <stop offset="1" stop-color="#b8833a"/>
+  </linearGradient>
+  <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#fbf3e2"/><stop offset="1" stop-color="#c9b894"/>
+  </linearGradient>
+</defs>
+<mask id="bite"><rect width="200" height="200" fill="white"/><circle cx="166" cy="34" r="27" fill="black"/></mask><circle cx="150" cy="46" r="30" fill="url(#gold)" mask="url(#bite)"/>
+<polygon points="82,114 54,32 104,108" fill="#a8976f" stroke="#8a7650" stroke-width="0.6" stroke-linejoin="round"/>
+<polygon points="84,120 34,78 78,124" fill="#c9b894" stroke="#8a7650" stroke-width="0.6" stroke-linejoin="round"/>
+<polygon points="84,120 34,78 82,115" fill="#ece0c8" stroke="#8a7650" stroke-width="0.6" stroke-linejoin="round"/>
+<polygon points="72,122 100,106 100,136" fill="#ece0c8" stroke="#8a7650" stroke-width="0.6" stroke-linejoin="round"/>
+<polygon points="100,106 130,122 100,136" fill="#c9b894" stroke="#8a7650" stroke-width="0.6" stroke-linejoin="round"/>
+<polygon points="116,126 156,70 123,128" fill="#fbf3e2" stroke="#8a7650" stroke-width="0.6" stroke-linejoin="round"/>
+<polygon points="116,126 156,70 113,119" fill="#ece0c8" stroke="#8a7650" stroke-width="0.6" stroke-linejoin="round"/>
+<polygon points="156,70 170,80 158,79" fill="#fbf3e2" stroke="#8a7650" stroke-width="0.6" stroke-linejoin="round"/>
+<polygon points="86,116 132,24 98,114" fill="#ece0c8" stroke="#8a7650" stroke-width="0.6" stroke-linejoin="round"/>
+<polygon points="98,114 132,24 122,116" fill="#fbf3e2" stroke="#8a7650" stroke-width="0.6" stroke-linejoin="round"/>
+<path fill="url(#gold)" d="M 100 152 C 82 142 56 140 32 146 L 32 157 C 56 151 82 153 100 163 C 118 153 144 151 168 157 L 168 146 C 144 140 118 142 100 152 Z"/><path fill="url(#paper)" d="M 100 148 C 82 136 58 134 36 140 L 36 149 C 58 143 82 145 100 155 Z"/><path fill="url(#paper)" d="M 100 148 C 118 136 142 134 164 140 L 164 149 C 142 143 118 145 100 155 Z"/><path fill="none" stroke="#b39f78" stroke-width="0.8" d="M 46 143 C 64 140 84 142 96 148 M 104 148 C 116 142 136 140 154 143"/>
+</svg>

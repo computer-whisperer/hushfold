@@ -1,0 +1,62 @@
+# Store screenshots in the Hall: promo/shoot.sh promo/shots/hall.txt <out>
+# (1920x1080 by default; -s 3840x2160 for capsule art). Each scene begins in a fresh
+# Hall (`library hall`), so none carries the last one's armful or skills.
+
+# The Hall as a new game finds it, the East Wing veiled.
+hud off
+wait 60
+glide 0 0 6.5 0 0 30
+shot 01-hall-overture
+
+# Gathering: a scoop's ring grown over a heap, the interface showing.
+library hall
+hud on
+buy Arms
+buy Arms
+buy Arms
+buy Glow
+buy Glow
+buy Glow
+buy Signposts
+buy SortSense
+buy Sift
+buy Glimpse
+buy Echo
+buy Summon
+# The toasts and hints from all that learning fade.
+wait 420
+facepile
+wait 10
+press
+wait 40
+shot 02-hall-scoop
+release
+wait 60
+
+# Filing: an armful of one category, the run of the active book's series aglow.
+take 0 40
+faceslot
+wait 30
+shot 03-hall-filing
+
+# A shelver posted by a heap, folding off with books to file.
+library hall
+hud off
+buy Shelver
+buy Shelver
+wait 420
+facepile
+wait 5
+post
+wait 420
+print
+facefam 0
+wait 20
+shot 04-hall-familiar
+
+# Half the Hall in order: the West Wing's lanterns in their categories' colours.
+library hall
+cheat shelve 0.5
+wait 600
+glide 22 0 15 315 5 30
+shot 05-hall-lanterns

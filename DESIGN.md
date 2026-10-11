@@ -963,3 +963,16 @@ veiled in it (it could not have touched anything that moved); one with the Map
 Room open starts fresh as before. `great_library_below_the_first_floor_generates_as_before`
 pins what that relies on: every book's series, volume, size and slot, and where
 every book starts but those starting upstairs.
+
+## Store art
+Everything for the store page is made by scripted runs (`promo/`), so it is made
+again as the game changes rather than redrawn: screenshots (`promo/shots`), clips
+for a trailer with their own sound (`promo/clips`, `record` ... `stop`: frames piped
+to ffmpeg, the mix written in step), and capsules cut from 4K screenshots with the
+logo laid over them (`promo/capsules.py`). Scenes needing a state of play get it
+from the cheats (`cheat finish category`, `cheat shelve`, `buy`) in a fresh library
+each (`library hall`), and wait for the toasts that learning raises to fade.
+`glide` and `turn` move the camera, eased, for clips. The logo (`promo/logo/make.py`)
+is the name in Cinzel, the face of the library's own signs, set as outlines in the
+HUD's gold, under a folded-paper crane (the familiars) alighting on an open book
+before a crescent moon: the night library and its paper helpers.
