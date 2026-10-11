@@ -282,9 +282,9 @@ fn case_candles(lib: &mut Library, frame: &RoomFrame) {
             let face = &lib.faces[f];
             let foot = face.center + face.right * 1.15 + Vec3::Y * (UNIT_H + 0.13);
             lib.decor(stick.at(foot, Quat::IDENTITY, kind::METAL, brass));
-            let (base, tall) = (foot + Vec3::Y * 0.11, 0.2);
+            let (base, tall) = (foot + Vec3::Y * 0.11, 0.22);
             lib.decor(
-                wax.sized(Vec3::new(0.055, tall, 0.055))
+                wax.sized(Vec3::new(0.06, tall, 0.06))
                     .at(base, Quat::IDENTITY, kind::PLAIN, rgba(WAX, 1.0)),
             );
             let wick = base + Vec3::Y * (tall + 0.004);
@@ -292,8 +292,20 @@ fn case_candles(lib: &mut Library, frame: &RoomFrame) {
                 from: Vec3::ZERO,
                 grow: 0.1,
             };
-            let lit = flame(wick, (0.034, 0.08), FLAME);
-            lib.waiting(wick, Awaits::new(Finish::Face(f), catch).after(0.4).over(0.8), [lit]);
+            let side = Finish::Face(f);
+            let lit = flame(wick, (0.046, 0.11), [FLAME[0], FLAME[1], FLAME[2], 6.0]);
+            lib.waiting(wick, Awaits::new(side, catch).after(0.4).over(0.8), [lit]);
+            lib.sparks(Sparks {
+                delay: 0.35,
+                lasts: Some(0.4),
+                spread: Vec3::splat(0.015),
+                rate: 40.0,
+                vel: Vec3::Y * 0.5,
+                jitter: Vec3::splat(0.3),
+                life: 0.9,
+                size: Vec3::splat(0.012),
+                ..Sparks::burst(side, wick)
+            });
         }
     }
 }
@@ -926,10 +938,10 @@ fn sleeping_cat(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32, facing: f3
         .map(|k| {
             let t = k as f32 / 12.0;
             let th = -2.4 + t * 2.7;
-            on(Vec3::new(0.19 * libm::cosf(th), 0.03 + 0.01 * t, 0.17 * libm::sinf(th)))
+            on(Vec3::new(0.2 * libm::cosf(th), 0.05 + 0.02 * t, 0.18 * libm::sinf(th)))
         })
         .collect();
-    let tail = lib.shape(Mesh::sweep(&tail, &[0.026, 0.017], &circle(1.0, 8), true));
+    let tail = lib.shape(Mesh::sweep(&tail, &[0.03, 0.018], &circle(1.0, 8), true));
     lib.moving(m, tail.at(Vec3::ZERO, Quat::IDENTITY, kind::CLOTH, fur));
     lib.sparks(Sparks {
         delay: 1.0,
