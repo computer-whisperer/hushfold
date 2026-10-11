@@ -14,7 +14,6 @@ use super::hearth_library::{hurricane_lamp, turned_leg};
 use super::*;
 use crate::audio::Sfx;
 use std::f32::consts::{FRAC_PI_2, PI};
-use std::iter;
 
 /// The rows of cases down the room: how far either side of the middle, and where
 /// along it the first one stands.
@@ -635,7 +634,7 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         turn: tip,
         scale: 1.0,
     };
-    let opened = lib.waiting(hinge, Awaits::new(fin, open).after(0.3).over(1.4), iter::empty());
+    let opened = lib.waiter(hinge, Awaits::new(fin, open).after(0.3).over(1.4));
     let close = Change::Shifts {
         by: -(tip.inverse() * lift),
         turn: tip.inverse(),
@@ -754,7 +753,7 @@ fn fair_cloud(lib: &mut Library, frame: &RoomFrame, mouth: Vec3, rest: Vec3, siz
         from: mouth - over,
         grow: 0.08,
     };
-    let risen = lib.waiting(over, Awaits::new(fin, rise).after(delay).over(3.2), iter::empty());
+    let risen = lib.waiter(over, Awaits::new(fin, rise).after(delay).over(3.2));
     let f = (k as f32 * 0.618_034).fract();
     let wander = Motion::Slide {
         travel: frame.across() * (0.35 + 0.3 * f) * if k.is_multiple_of(2) { 1.0 } else { -1.0 },

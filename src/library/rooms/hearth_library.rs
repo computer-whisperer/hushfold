@@ -14,7 +14,6 @@
 use super::*;
 use crate::audio::Sfx;
 use std::f32::consts::{FRAC_PI_2, PI};
-use std::iter;
 
 /// A wall case's depth from the wall to its face.
 const WALL_D: f32 = 0.04 + FACE_DEPTH;
@@ -541,7 +540,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         from: Vec3::ZERO,
         grow: 0.1,
     };
-    let leapt = lib.waiting(logs, Awaits::new(fin, up).over(1.2), iter::empty());
+    let leapt = lib.waiter(logs, Awaits::new(fin, up).over(1.2));
     let sink = Change::Shifts {
         by: Vec3::ZERO,
         turn: Quat::IDENTITY,
@@ -556,7 +555,7 @@ fn fireplace(lib: &mut Library, frame: &RoomFrame) {
         [tongue(0.6, 0.62, 1.3)],
     );
     let warm = Change::Kindles { dim: 0.0 };
-    let warmer = lib.waiting(logs, Awaits::new(fin, warm).over(2.0), iter::empty());
+    let warmer = lib.waiter(logs, Awaits::new(fin, warm).over(2.0));
     lib.light_riding(
         warmer,
         frame.at(0.0, face - 0.7, 0.9),
