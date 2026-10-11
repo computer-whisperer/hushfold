@@ -154,10 +154,8 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
                 }
             }
         }
-        for mut faces in [left, right] {
-            let right = Vec3::Y.cross(faces[0].1);
-            faces.sort_by(|p, q| p.0.dot(right).total_cmp(&q.0.dot(right)));
-            lib.add_category(rng, cat, &faces, titles);
+        for faces in [left, right] {
+            lib.add_category(rng, cat, &left_to_right(faces), titles);
             cat += 1;
         }
     }
