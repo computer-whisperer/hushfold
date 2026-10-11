@@ -878,9 +878,13 @@ library had one save there (save.json, the Great Library's great.json); the firs
 run with the list copies them in, library written in and times kept, and leaves
 them be (`saves::import_old`). A save is stamped with the generation of the
 library it was made in (`game::generation`): saves name books by index, so one
-from another generation starts fresh, kept aside as `<n>.old.json` (the list says
-it will), as does one in another save format (`SAVE_VERSION`); nothing older is
-migrated. Each generation is bumped
+from another generation starts fresh, kept aside as `<n>.old.json`, as does one in
+another save format (`SAVE_VERSION`) or from another seed; nothing older is
+migrated. Such a save opens only from Load, whose row says it will start fresh:
+Continue, and the library behind the title screen, are the latest save that opens
+as it was. A copy set aside is never listed, deleted with its save, or numbered
+over. The save list is imported into a folder beside its place and moved there
+whole, so an import cut short is made again next run. Each generation is bumped
 whenever where its books go changes. The Hall's (pinned by
 `hall_generates_as_before`) was 0, as 0.1.x saves have it, until the titles were
 rewritten: 1 (kept when the maths moved to libm, which moved 176 loose books by

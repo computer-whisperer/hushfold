@@ -404,7 +404,7 @@ impl Running {
             HudAction::Use(u, l) => self.game.set_in_use(u, l, &mut self.audio),
             HudAction::Cheat(c) => self.game.cheat(c, &mut self.audio),
             HudAction::Show(screen) => self.show(screen),
-            HudAction::Continue => match self.hud.saves.first() {
+            HudAction::Continue => match saves::latest(&self.hud.saves) {
                 Some(s) if self.game.save_path.as_ref() != Some(&s.path) => {
                     self.open_soon(s.summary.layout, s.path.clone(), false)
                 }
@@ -702,16 +702,17 @@ impl ApplicationHandler for App {
             _ if scripted => std::env::temp_dir().join(format!("hushfold-script-{}", std::process::id())),
             _ => platform::data_dir(),
         };
-        // The title screen opens over the save written last, or with none a fresh Hall
+        // The title screen opens over the save Continue plays, or with none a fresh Hall
         // never saved; scripts play a fresh, unsaved Hall (or HUSHFOLD_LIBRARY=great).
         let latest = if scripted {
             None
         } else {
             saves::import_old(&data);
-            saves::list(&data).into_iter().next()
+            let list = saves::list(&data);
+            saves::latest(&list).map(|s| (s.summary.layout, s.path.clone()))
         };
         let layout = match (&latest, std::env::var("HUSHFOLD_LIBRARY").as_deref()) {
-            (Some(s), _) => s.summary.layout,
+            (Some((layout, _)), _) => *layout,
             (None, Ok("great")) if scripted => Layout::Great,
             _ => Layout::Hall,
         };
@@ -726,7 +727,7 @@ impl ApplicationHandler for App {
             wait: 10,
             dir: std::env::var("HUSHFOLD_SHOT_DIR").unwrap_or_else(|_| ".".into()).into(),
         });
-        game.save_path = latest.map(|s| s.path);
+        game.save_path = latest.map(|(_, path)| path);
         let loaded = game.load();
         eprintln!(
             "hushfold: {}: {} books in {} series, generated in {:.0} ms{}",

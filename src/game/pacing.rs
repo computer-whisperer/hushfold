@@ -742,9 +742,13 @@ fn wading_along(g: &Game, path: &[Vec3]) -> f32 {
 pub(super) fn simulate(layout: Layout) -> f32 {
     let mut g = Game::new(layout);
     if let Some(path) = std::env::var_os("HUSHFOLD_RESUME") {
-        g.save_path = Some(path.into());
-        assert!(g.load(), "no save of {} to resume at {:?}", layout.name(), g.save_path);
+        // From a copy, as loading sets aside a save that doesn't fit.
+        let copy = std::env::temp_dir().join(format!("hushfold-resume-{}.json", std::process::id()));
+        std::fs::copy(&path, &copy).expect("copy the save to resume");
+        g.save_path = Some(copy.clone());
+        assert!(g.load(), "no save of {} to resume at {path:?}", layout.name());
         g.save_path = None;
+        let _ = std::fs::remove_file(copy);
     }
     let pos = g.player.pos;
     let mut bot = Bot {

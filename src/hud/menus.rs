@@ -123,7 +123,7 @@ pub(super) fn title(ctx: &egui::Context, hud: &mut Hud, page: TitlePage, actions
 
 fn title_menu(ui: &mut egui::Ui, hud: &Hud, actions: &mut Vec<HudAction>) {
     const SIZE: f32 = 30.0;
-    if let Some(latest) = hud.saves.first() {
+    if let Some(latest) = crate::saves::latest(&hud.saves) {
         if item(ui, "Continue", SIZE).clicked() {
             actions.push(HudAction::Continue);
         }

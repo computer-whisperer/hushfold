@@ -2855,7 +2855,10 @@ impl Game {
             eprintln!("hushfold: save file unreadable, starting fresh");
             return false;
         };
-        if data.seed != SEED || data.layout.is_some_and(|l| l != self.layout) {
+        // Not one to start fresh over: this game is then never saved.
+        if data.layout.is_some_and(|l| l != self.layout) {
+            eprintln!("hushfold: {} is a save of another library; not opened", path.display());
+            self.save_path = None;
             return false;
         }
         let ported = self.layout == Layout::Great
@@ -2866,7 +2869,7 @@ impl Game {
             eprintln!(
                 "hushfold: the save is from before the upper floors were relaid; they are veiled in it, so it carries on"
             );
-        } else if data.generation != generation(self.layout) || data.version != SAVE_VERSION {
+        } else if data.seed != SEED || data.generation != generation(self.layout) || data.version != SAVE_VERSION {
             // Kept aside rather than overwritten by the fresh game's first save.
             let old = path.with_extension("old.json");
             eprintln!(
@@ -4189,8 +4192,9 @@ mod tests {
             (Layout::Great, g.total_shelved(), g.total_books())
         );
         assert!(sum.fits && sum.play_time == g.play_time);
-        // Neither opens as the other library, nor is set aside for trying.
-        assert!(!saving_to(Layout::Hall, &great_save).load());
+        // Neither opens as the other library, nor is set aside or written over for trying.
+        let mut wrong = saving_to(Layout::Hall, &great_save);
+        assert!(!wrong.load() && wrong.save_path.is_none());
         assert!(great_save.exists());
         // A save from before the list names no library; it opens as the one asked for.
         let mut data: serde_json::Value = serde_json::from_slice(&std::fs::read(&hall_save).unwrap()).unwrap();
@@ -4202,6 +4206,13 @@ mod tests {
         let json = format!(
             r#"{{"seed":{SEED},"lumens":5,"earned":900,"upgrades":[2,1],"shelved":[1,2,3],"held":[],
                 "player":[0.0,0.0,6.5,0.0,0.0],"play_time":60.0}}"#
+        );
+        std::fs::write(&hall_save, json).unwrap();
+        assert!(!saving_to(Layout::Hall, &hall_save).load());
+        assert!(!hall_save.exists() && hall_save.with_extension("old.json").exists());
+        // As does one from another seed.
+        let json = format!(
+            r#"{{"seed":1,"lumens":5,"earned":900,"shelved":[1,2,3],"held":[],"player":[0.0,0.0,6.5,0.0,0.0],"play_time":60.0,"version":{SAVE_VERSION},"generation":1,"layout":"Hall"}}"#
         );
         std::fs::write(&hall_save, json).unwrap();
         assert!(!saving_to(Layout::Hall, &hall_save).load());

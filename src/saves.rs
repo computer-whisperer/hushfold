@@ -19,20 +19,26 @@ fn dir(data: &Path) -> PathBuf {
     data.join("saves")
 }
 
-/// The number a save file is named by (`7.json`, and `7.old.json` set aside from it).
+/// The number any file in the list goes by: a save's (`7.json`), one set aside from
+/// it as from another version (`7.old.json`), one half-written (`7.json.tmp`).
 fn number(name: &std::ffi::OsStr) -> Option<u32> {
     name.to_str()?.split('.').next()?.parse().ok()
 }
 
+/// A save itself is named `<n>.json` and nothing more.
+fn is_save(path: &Path) -> bool {
+    let stem = path.file_stem().and_then(|s| s.to_str());
+    path.extension().is_some_and(|x| x == "json") && stem.is_some_and(|s| s.parse::<u32>().is_ok())
+}
+
 /// The saves, the one written last first. Files that are not a save (one set aside
-/// as from another version, `<n>.old.json`, or one cut short) are passed over.
+/// as from another version, one half-written) are passed over.
 pub fn list(data: &Path) -> Vec<Save> {
     let Ok(entries) = std::fs::read_dir(dir(data)) else {
         return Vec::new();
     };
     let mut saves: Vec<Save> = (entries.flatten())
-        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-        .filter(|e| e.path().file_stem().and_then(number).is_some())
+        .filter(|e| is_save(&e.path()))
         .filter_map(|e| {
             Some(Save {
                 when: e.metadata().ok()?.modified().ok()?,
@@ -45,19 +51,29 @@ pub fn list(data: &Path) -> Vec<Save> {
     saves
 }
 
+/// The save Continue plays and the title screen opens over: the one written last
+/// that opens as it was (not one from another version, which opens fresh).
+pub fn latest(saves: &[Save]) -> Option<&Save> {
+    saves.iter().find(|s| s.summary.fits)
+}
+
 /// Where a new game is saved: numbered after every file in the list, so none of
-/// them is ever written over.
+/// them (a save, or one set aside) is ever written over.
 pub fn new_path(data: &Path) -> PathBuf {
     let last = (std::fs::read_dir(dir(data)).into_iter().flatten().flatten())
         .filter_map(|e| number(&e.file_name()))
         .max()
         .unwrap_or(0);
-    dir(data).join(format!("{}.json", last + 1))
+    let mut n = last + 1;
+    while dir(data).join(format!("{n}.json")).exists() {
+        n += 1;
+    }
+    dir(data).join(format!("{n}.json"))
 }
 
-/// Delete a save, and any copy of it set aside as from another version.
+/// Delete a save. A copy set aside from it as from another version is kept (its
+/// number is never used again).
 pub fn delete(path: &Path) -> std::io::Result<()> {
-    let _ = std::fs::remove_file(path.with_extension("old.json"));
     std::fs::remove_file(path)
 }
 
@@ -66,12 +82,14 @@ const OLD: [(&str, Layout); 2] = [("save.json", Layout::Hall), ("great.json", La
 
 /// The first run with the save list copies the saves from before it in, oldest first,
 /// with their library written in and their times kept. The old files are left as
-/// they were and, the list now being there, never read again.
+/// they were and, the list now being there, never read again. The list is made
+/// beside its place and moved there whole, so one cut short is made again next run.
 pub fn import_old(data: &Path) {
-    let dir = dir(data);
-    if dir.exists() {
+    let (list, dir) = (dir(data), data.join("saves.importing"));
+    if list.exists() {
         return;
     }
+    let _ = std::fs::remove_dir_all(&dir);
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("hushfold: can't make the save list at {}: {e}", dir.display());
         return;
@@ -102,10 +120,14 @@ pub fn import_old(data: &Path) {
                 std::fs::write(&to, bytes)?;
                 std::fs::File::options().write(true).open(&to)?.set_modified(when)
             });
-        match copied {
-            Ok(()) => eprintln!("hushfold: {} is now {} in the save list", path.display(), to.display()),
-            Err(e) => eprintln!("hushfold: couldn't copy {} into the save list: {e}", path.display()),
+        if let Err(e) = copied {
+            eprintln!("hushfold: couldn't copy {} into the save list: {e}", path.display());
+            return;
         }
+    }
+    match std::fs::rename(&dir, &list) {
+        Ok(()) => eprintln!("hushfold: {n} saves copied into the save list at {}", list.display()),
+        Err(e) => eprintln!("hushfold: couldn't make the save list at {}: {e}", list.display()),
     }
 }
 
@@ -159,7 +181,11 @@ mod tests {
         let before: Vec<Vec<u8>> = ["save.json", "great.json"]
             .map(|n| std::fs::read(data.join(n)).unwrap())
             .into();
+        // An import cut short before is begun again.
+        std::fs::create_dir_all(data.join("saves.importing")).unwrap();
+        std::fs::copy(data.join("save.json"), data.join("saves.importing/1.json")).unwrap();
         import_old(&data);
+        assert!(!data.join("saves.importing").exists());
         let list = list(&data);
         let got: Vec<(Layout, PathBuf)> = list.iter().map(|s| (s.summary.layout, s.path.clone())).collect();
         let dir = data.join("saves");
@@ -188,8 +214,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
-    /// A new game is numbered past every file in the list, kept aside or not; only
-    /// saves are listed, newest first; deleting takes what was set aside too.
+    /// A new game is numbered past every file in the list; only saves themselves are
+    /// listed (not a whole save set aside, nor one half-written), the newest first;
+    /// Continue passes over one that would open fresh; deleting keeps what was set aside.
     #[test]
     fn the_list_numbers_orders_and_deletes() {
         let data = scratch("list");
@@ -200,16 +227,25 @@ mod tests {
         let second = new_path(&data);
         saved(Layout::Hall, &second, 2);
         age(&second, 600);
-        std::fs::write(data.join("saves/3.old.json"), "{}").unwrap();
-        std::fs::write(data.join("saves/2.old.json"), "{}").unwrap();
+        for name in ["3.old.json", "2.old.json", "1.json.tmp"] {
+            std::fs::copy(&first, data.join("saves").join(name)).unwrap();
+        }
         std::fs::write(data.join("saves/notes.json"), "{}").unwrap();
         std::fs::write(data.join("saves/4.json"), "cut sh").unwrap();
         assert_eq!(new_path(&data), data.join("saves/5.json"));
-        let paths: Vec<PathBuf> = list(&data).into_iter().map(|s| s.path).collect();
-        assert_eq!(paths, vec![first.clone(), second.clone()]);
+        let saves = list(&data);
+        let paths: Vec<&PathBuf> = saves.iter().map(|s| &s.path).collect();
+        assert_eq!(paths, vec![&first, &second]);
+        assert_eq!(latest(&saves).map(|s| &s.path), Some(&first));
+        // Written last, but by another version: listed, and not what Continue plays.
+        let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&first).unwrap()).unwrap();
+        v["version"] = 0.into();
+        std::fs::write(&first, serde_json::to_vec(&v).unwrap()).unwrap();
+        let saves = list(&data);
+        assert!(saves[0].path == first && !saves[0].summary.fits);
+        assert_eq!(latest(&saves).map(|s| &s.path), Some(&second));
         delete(&second).unwrap();
-        assert!(!second.exists() && !data.join("saves/2.old.json").exists());
-        assert!(data.join("saves/3.old.json").exists());
+        assert!(!second.exists() && data.join("saves/2.old.json").exists());
         let _ = std::fs::remove_dir_all(&data);
     }
 }
