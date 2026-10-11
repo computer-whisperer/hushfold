@@ -1061,19 +1061,11 @@ fn bench(lib: &mut Library, frame: &RoomFrame, s: f32, glass: &Glassware) {
         0,
     ));
     // The glow of its brews over it once they are kindled.
-    let glow = lib.mover(at(0.0, (o0 + o1) * 0.5, 0.35), Motion::Still, 0.0, None);
-    let kindles = Awaits::new(glass.room, Change::Kindles { dim: 0.0 })
-        .after(6.2)
-        .over(2.5);
-    lib.awaiting(glow, kindles);
-    lib.light_riding(
-        glow,
-        at(0.0, (o0 + o1) * 0.5, 0.35),
-        3.0,
-        [0.9, 0.85, 0.7],
-        0.6,
-        LightKind::Static,
-    );
+    let over = at(0.0, (o0 + o1) * 0.5, 0.35);
+    let glow = lib.mover(over, Motion::Still, 0.0, None);
+    let kindles = Change::Kindles { dim: 0.0 };
+    lib.awaiting(glow, Awaits::new(glass.room, kindles).after(6.2).over(2.5));
+    lib.light_riding(glow, over, 3.0, [0.9, 0.85, 0.7], 0.6, LightKind::Static);
     // Crates on the shelf below.
     for k in 0..4 {
         let o = o0 + 0.7 + k as f32 * 1.4;
@@ -1187,11 +1179,11 @@ fn transmutation(lib: &mut Library, frame: &RoomFrame) {
         violet.push(Inst { param: 1, ..ring });
     }
     // Each a little higher than the last, so they don't share a face where they cross.
-    for (k, &(p, q)) in sides.iter().enumerate() {
-        let rot = Quat::from_rotation_arc(Vec3::Y, (q - p).normalize());
+    for (k, &(from, to)) in sides.iter().enumerate() {
+        let rot = Quat::from_rotation_arc(Vec3::Y, (to - from).normalize());
         let lift = Vec3::Y * (k % 4) as f32 * 0.002;
-        let size = Vec3::new(0.03, p.distance(q), 0.03);
-        violet.push(Inst::new((p + q) * 0.5 + lift, rot, size, kind::EMISSIVE, glow, 1));
+        let size = Vec3::new(0.03, from.distance(to), 0.03);
+        violet.push(Inst::new((from + to) * 0.5 + lift, rot, size, kind::EMISSIVE, glow, 1));
     }
     let drawn_in = Change::Shifts {
         by: Vec3::ZERO,
@@ -1222,18 +1214,18 @@ fn transmutation(lib: &mut Library, frame: &RoomFrame) {
         let ring = band(lib, flush, (u, v), (radius, 0.04, 0.0025), kind::EMISSIVE, gold);
         lib.waiting(flush, Awaits::new(room, grows(0.0)).after(delay).over(1.4), [ring]);
     }
-    for (k, &(p, q)) in sides.iter().enumerate() {
-        let (p, q) = (p.with_y(flush.y), q.with_y(flush.y));
-        let d = (q - p).normalize();
+    for (k, &(from, to)) in sides.iter().enumerate() {
+        let (from, to) = (from.with_y(flush.y), to.with_y(flush.y));
+        let d = (to - from).normalize();
         let rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Y.cross(d), Vec3::Y, d));
-        let size = Vec3::new(0.04, 0.0025, p.distance(q) + 0.04);
-        let strip = Inst::new((p + q) * 0.5, rot, size, kind::EMISSIVE, gold, 0);
+        let size = Vec3::new(0.04, 0.0025, from.distance(to) + 0.04);
+        let strip = Inst::new((from + to) * 0.5, rot, size, kind::EMISSIVE, gold, 0);
         let delay = if k < 4 {
             4.6 + 0.35 * k as f32
         } else {
             6.0 + 0.35 * (k - 4) as f32
         };
-        lib.waiting(p, Awaits::new(room, grows(0.0)).after(delay).over(0.6), [strip]);
+        lib.waiting(from, Awaits::new(room, grows(0.0)).after(delay).over(0.6), [strip]);
     }
     lib.sparks(Sparks {
         delay: 7.0,
