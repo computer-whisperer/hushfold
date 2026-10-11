@@ -972,12 +972,8 @@ fn notes_ring(lib: &mut Library, frame: &RoomFrame) {
         rate: TAU / 60.0,
     };
     let ring = lib.mover(centre, turns, 0.0, None);
-    // Still until the notes are in their places, then easing round (only its turning
-    // waits: a kindling to full brightness changes nothing else).
-    let starts = Awaits::new(fin, Change::Kindles { dim: 1.0 })
-        .after(NOTES_RISE + 4.5)
-        .over(6.0)
-        .still();
+    // Still until the notes are in their places, then easing round.
+    let starts = Awaits::starts(fin).after(NOTES_RISE + 4.5).over(6.0);
     lib.awaiting(ring, starts);
     let count = 8;
     for i in 0..count {

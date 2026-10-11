@@ -33,8 +33,6 @@ const WORDS: f32 = -1.85;
 /// rings, each its radius and its turn (radians a second).
 const FLOCK: (f32, f32) = (1.0, 20.5);
 const RINGS: [(f32, f32); 2] = [(2.1, TAU / 70.0), (3.6, TAU / 95.0)];
-/// The height of the ridge a crane's wings turn about, at size 1 (`crane`'s).
-const RIDGE: f32 = 0.02;
 /// Where each category's crane hovers (a, o), at the mouth of its alcove (the near
 /// wall's out from its cases), and how high.
 const HOVER: [(f32, f32); 8] = [
@@ -878,13 +876,6 @@ fn lectern(lib: &mut Library, f: &RoomFrame, a: f32, words: bool) {
     lib.light(at.at + Vec3::Y * 1.6, 3.5, [1.0, 0.78, 0.45], 0.5, LightKind::Static);
 }
 
-/// A change that changes nothing: for a mover whose own motion is all that waits.
-const STAYS: Change = Change::Shifts {
-    by: Vec3::ZERO,
-    turn: Quat::IDENTITY,
-    scale: 1.0,
-};
-
 /// The rings the cranes circle on once the room is in order: a mover each about the
 /// flock's middle, still until then and easing up to its turn after.
 fn flock(lib: &mut Library, f: &RoomFrame) -> [u32; 2] {
@@ -893,7 +884,7 @@ fn flock(lib: &mut Library, f: &RoomFrame) -> [u32; 2] {
     let mut after = 2.0;
     RINGS.map(|(_, rate)| {
         let m = lib.mover(c, Motion::Spin { axis: Vec3::Y, rate }, 0.0, None);
-        lib.awaiting(m, Awaits::new(fin, STAYS).after(after).over(12.0).still());
+        lib.awaiting(m, Awaits::starts(fin).after(after).over(12.0));
         after += 1.0;
         m
     })
@@ -939,7 +930,7 @@ fn takes_off(
 /// A crane's wings (`parts` 1 to 4), each a mover riding `body`, beating slowly about
 /// its ridge once `a` comes; `k` sets their time.
 fn wings(lib: &mut Library, bird: &Crane, parts: &[Inst; 5], body: u32, a: Awaits, k: f32) {
-    let ridge = bird.at + bird.rot * Vec3::Y * (RIDGE * bird.size);
+    let ridge = bird.ridge();
     for (side, s) in [-1.0f32, 1.0].into_iter().enumerate() {
         let beat = Motion::Swing {
             axis: bird.rot * Vec3::Z * s,
@@ -1002,7 +993,7 @@ fn cranes(lib: &mut Library, f: &RoomFrame, rings: [u32; 2]) {
         };
         // Hung from the ceiling over its back; it sways from there, and turns about
         // its thread.
-        let back = bird.at + bird.rot * Vec3::Y * (RIDGE * bird.size);
+        let back = bird.ridge();
         let hook = Vec3::new(back.x, f.y + RoomFrame::HEIGHT, back.z);
         let k = k as f32;
         let off = 1.0 + 0.35 * k;
@@ -1038,7 +1029,14 @@ fn cranes(lib: &mut Library, f: &RoomFrame, rings: [u32; 2]) {
                 [0.8, 0.76, 0.66, 1.0],
             ),
         );
-        wings(lib, &bird, &parts, m, Awaits::new(fin, STAYS).after(off).over(2.0), k);
+        wings(
+            lib,
+            &bird,
+            &parts,
+            m,
+            Awaits::new(fin, Change::Stays).after(off).over(2.0),
+            k,
+        );
     }
 }
 
@@ -1099,7 +1097,7 @@ fn alcove_cranes(lib: &mut Library, f: &RoomFrame, rings: [u32; 2]) {
             &bird,
             &parts,
             m,
-            Awaits::new(fin, STAYS).after(0.3).over(2.0),
+            Awaits::new(fin, Change::Stays).after(0.3).over(2.0),
             k + 7.0,
         );
         lib.sparks(Sparks {

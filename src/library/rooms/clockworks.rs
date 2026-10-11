@@ -722,17 +722,9 @@ fn clock_works(lib: &mut Library, c: Vec3, n: Vec3, r: f32, k: usize) {
         from: -n * 0.4,
         grow: 0.3,
     };
-    let works = lib.waiting(
-        back,
-        Awaits::new(fin, comes_in).after(at).over(1.8),
-        std::iter::empty::<Inst>(),
-    );
-    // Only their turning waits (a kindling to full brightness changes nothing else);
-    // both start together, so their teeth stay together.
-    let starts = Awaits::new(fin, Change::Kindles { dim: 1.0 })
-        .after(at + 1.0)
-        .over(2.5)
-        .still();
+    let works = lib.waiter(back, Awaits::new(fin, comes_in).after(at).over(1.8));
+    // Only their turning waits; both start together, so their teeth stay together.
+    let starts = Awaits::starts(fin).after(at + 1.0).over(2.5);
     let great = gear(
         lib,
         wheel(0.25, 14, 0.03)

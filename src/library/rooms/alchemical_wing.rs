@@ -1212,7 +1212,11 @@ fn transmutation(lib: &mut Library, frame: &RoomFrame) {
     let flush = frame.at(0.0, CIRCLE_O, 0.00175);
     for (radius, delay) in [(r, 4.0), (triangle, 7.0)] {
         let ring = band(lib, flush, (u, v), (radius, 0.04, 0.0025), kind::EMISSIVE, gold);
-        lib.waiting(flush, Awaits::new(room, grows(0.0)).after(delay).over(1.4), [ring]);
+        lib.waiting(
+            flush,
+            Awaits::new(room, Change::grows(0.0)).after(delay).over(1.4),
+            [ring],
+        );
     }
     for (k, &(from, to)) in sides.iter().enumerate() {
         let (from, to) = (from.with_y(flush.y), to.with_y(flush.y));
@@ -1225,7 +1229,11 @@ fn transmutation(lib: &mut Library, frame: &RoomFrame) {
         } else {
             6.0 + 0.35 * (k - 4) as f32
         };
-        lib.waiting(from, Awaits::new(room, grows(0.0)).after(delay).over(0.6), [strip]);
+        lib.waiting(
+            from,
+            Awaits::new(room, Change::grows(0.0)).after(delay).over(0.6),
+            [strip],
+        );
     }
     lib.sparks(Sparks {
         delay: 7.0,
@@ -1290,7 +1298,7 @@ fn transmutation(lib: &mut Library, frame: &RoomFrame) {
         0.0,
         Some(float),
     );
-    lib.awaiting(halo, Awaits::new(room, grows(0.0)).after(3.5).over(1.5));
+    lib.awaiting(halo, Awaits::new(room, Change::grows(0.0)).after(3.5).over(1.5));
     let ring = band(
         lib,
         stone,
@@ -1306,9 +1314,4 @@ fn transmutation(lib: &mut Library, frame: &RoomFrame) {
         Awaits::new(room, Change::Kindles { dim: 0.0 }).after(3.5).over(2.5),
     );
     lib.light_riding(warmth, stone, 5.0, [1.0, 0.75, 0.4], 0.8, LightKind::Static);
-}
-
-/// Coming in where it rests, growing from `grow` of its size about its pivot.
-fn grows(grow: f32) -> Change {
-    Change::Arrives { from: Vec3::ZERO, grow }
 }

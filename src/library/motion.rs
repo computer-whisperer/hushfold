@@ -122,6 +122,7 @@ impl Mover {
             Change::Arrives { from, grow } => (Quat::IDENTITY, grow + (1.0 - grow) * k, from * (1.0 - k), 1.0),
             Change::Shifts { by, turn, scale } => (Quat::IDENTITY.slerp(turn, k), 1.0 + (scale - 1.0) * k, by * k, 1.0),
             Change::Kindles { dim } => (Quat::IDENTITY, 1.0, Vec3::ZERO, dim + (1.0 - dim) * k),
+            Change::Stays => (Quat::IDENTITY, 1.0, Vec3::ZERO, 1.0),
         };
         let whole = change * turn;
         Pose {

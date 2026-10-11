@@ -325,7 +325,9 @@ fn sky(lib: &mut Library, frame: &RoomFrame) {
         let house = lib.mover(p, Motion::Still, 0.0, Some(m));
         lib.awaiting(
             house,
-            Awaits::new(room, grows(0.0)).after(1.0 + 0.45 * k as f32).over(0.8),
+            Awaits::new(room, Change::grows(0.0))
+                .after(1.0 + 0.45 * k as f32)
+                .over(0.8),
         );
         let warm = [GOLD_LIGHT[0], GOLD_LIGHT[1], GOLD_LIGHT[2], 2.5];
         lib.moving(house, gem.inst(p, Quat::IDENTITY, kind::EMISSIVE, warm));
@@ -598,7 +600,11 @@ fn trace(lib: &mut Library, frame: &RoomFrame, f: &Figure, fin: Finish, start: f
             GOLD_LIGHT,
             0,
         );
-        lib.waiting(p, Awaits::new(fin, grows(0.0)).after(delay).over(STEP * 1.3), [line]);
+        lib.waiting(
+            p,
+            Awaits::new(fin, Change::grows(0.0)).after(delay).over(STEP * 1.3),
+            [line],
+        );
         for (s, when) in [(i, delay), (j, delay + STEP * 1.1)] {
             if !reached[s] {
                 reached[s] = true;
@@ -611,11 +617,6 @@ fn trace(lib: &mut Library, frame: &RoomFrame, f: &Figure, fin: Finish, start: f
             glint(lib, at(s), start + k as f32 * STEP * 0.5);
         }
     }
-}
-
-/// Coming in where it rests, growing from `grow` of its size about its pivot.
-fn grows(grow: f32) -> Change {
-    Change::Arrives { from: Vec3::ZERO, grow }
 }
 
 /// A point of light on the painted sky, twinkling.
@@ -701,7 +702,7 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
     let lit = [GOLD_LIGHT[0], GOLD_LIGHT[1], GOLD_LIGHT[2], 0.6];
     let rim = base + up * 0.00825;
     let ring = band(lib, rim, flat, (1.25, 0.02, 0.0025), kind::EMISSIVE, lit);
-    lib.waiting(rim, Awaits::new(room, grows(0.6)).over(1.2), [ring]);
+    lib.waiting(rim, Awaits::new(room, Change::grows(0.6)).over(1.2), [ring]);
     for (o0, o1, from) in [
         (RoomFrame::O_NEAR + 1.0, COURT - 1.25, COURT - 1.25),
         (COURT + 1.25, RoomFrame::O_FAR - 0.3, COURT + 1.25),
@@ -709,7 +710,11 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
         let mut strip = piece(frame, (-0.015, 0.015), (o0, o1), (0.006, 0.0085), kind::EMISSIVE, gold);
         strip.color = lit;
         let pivot = frame.at(0.0, from, 0.00725);
-        lib.waiting(pivot, Awaits::new(room, grows(0.0)).after(0.6).over(2.5), [strip]);
+        lib.waiting(
+            pivot,
+            Awaits::new(room, Change::grows(0.0)).after(0.6).over(2.5),
+            [strip],
+        );
     }
     // A brass hoop round the top of the drum, and the column.
     let hoop = lib.shape(Mesh::torus(0.08, 64, 10)).scaled(0.62);
@@ -770,7 +775,9 @@ fn orrery(lib: &mut Library, frame: &RoomFrame) {
     for (k, &(_, r, h, s, _, _)) in planets.iter().enumerate() {
         let c = base + up * (h + 0.14 + s * 0.5);
         let path = band(lib, c, flat, (r, 0.008, 0.004), kind::EMISSIVE, [1.0, 0.82, 0.5, 0.45]);
-        let drawn = Awaits::new(room, grows(0.0)).after(0.6 + 0.45 * k as f32).over(1.8);
+        let drawn = Awaits::new(room, Change::grows(0.0))
+            .after(0.6 + 0.45 * k as f32)
+            .over(1.8);
         lib.waiting(c, drawn, [path]);
     }
     for (k, &(t, r, h, s, rgb, years)) in planets.iter().enumerate() {
@@ -958,7 +965,11 @@ fn telescope(lib: &mut Library, frame: &RoomFrame) {
             1,
         ),
     ];
-    lib.waiting(found, Awaits::new(room, grows(0.0)).after(5.5).over(2.5), glints);
+    lib.waiting(
+        found,
+        Awaits::new(room, Change::grows(0.0)).after(5.5).over(2.5),
+        glints,
+    );
     lib.sparks(Sparks {
         delay: 6.0,
         lasts: Some(0.6),

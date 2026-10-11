@@ -1342,10 +1342,8 @@ fn voyage(lib: &mut Library, f: &RoomFrame, at: Vec3, heading: Vec3) -> u32 {
         rate: way * TAU / 60.0,
     };
     let circles = lib.mover(round, circling, 0.0, None);
-    // Only its turning waits (a change that changes nothing), still until the ship
-    // has nearly come to the circle.
-    let starts = Awaits::new(fin, Change::Kindles { dim: 1.0 }).after(16.0).over(8.0);
-    lib.awaiting(circles, starts.still());
+    // Only its turning waits, still until the ship has nearly come to the circle.
+    lib.awaiting(circles, Awaits::starts(fin).after(16.0).over(8.0));
     let shift = |by: Vec3, turn: Quat| Change::Shifts { by, turn, scale: 1.0 };
     let sails = lib.mover(at, Motion::Still, 0.0, Some(circles));
     lib.awaiting(

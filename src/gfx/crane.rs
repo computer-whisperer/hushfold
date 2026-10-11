@@ -88,6 +88,11 @@ const PARTS: usize = 5;
 pub const MESHES: usize = PARTS * Fold::ALL.len();
 
 impl Crane {
+    /// The middle of the ridge its wings are hinged along.
+    pub fn ridge(&self) -> Vec3 {
+        self.at + self.rot * Vec3::Y * (self.fold.shape().ridge * self.size)
+    }
+
     /// Its parts, as instances of `kind::CRANE`.
     pub fn parts(&self) -> [Inst; PARTS] {
         let shape = self.fold.shape();

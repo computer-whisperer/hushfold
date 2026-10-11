@@ -20,6 +20,8 @@ const WALL_BACK: f32 = 0.04;
 /// outside the books, and standing proud of the faces like pilasters.
 const STILE_IN: f32 = UNIT_W * 0.5 - SIDE_T - 0.03;
 const STILE_OUT: f32 = UNIT_W * 0.5 + 0.01;
+/// Its middle, from the face's.
+pub(super) const STILE_MID: f32 = (STILE_IN + STILE_OUT) * 0.5;
 const STILE_PROUD: f32 = 0.025;
 /// The frieze across the top of a face, clear of the tallest book on the top shelf.
 const FRIEZE_Y: f32 = 2.98;
@@ -646,9 +648,8 @@ impl Library {
             ],
             6,
         );
-        let mid = (STILE_IN + STILE_OUT) * 0.5;
         for e in [-1.0f32, 1.0] {
-            let stile = Vec3::new(e * mid, RAIL_Y, STILE_PROUD);
+            let stile = Vec3::new(e * STILE_MID, RAIL_Y, STILE_PROUD);
             rail.add(&bracket, stile, Quat::from_rotation_x(TAU / 4.0), Vec3::ONE);
         }
         let rail = self.shape(rail);

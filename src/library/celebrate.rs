@@ -53,6 +53,15 @@ pub enum Change {
     /// Its glowing parts (`kind::glows`) and the lights it carries at `dim` of their
     /// brightness until then (0: dark), then full.
     Kindles { dim: f32 },
+    /// Nothing about it changes: only its own motion waits (`Awaits::starts`).
+    Stays,
+}
+
+impl Change {
+    /// Coming in where it rests, growing from `grow` of its size about its pivot.
+    pub fn grows(grow: f32) -> Change {
+        Change::Arrives { from: Vec3::ZERO, grow }
+    }
 }
 
 impl Awaits {
@@ -79,6 +88,12 @@ impl Awaits {
     /// Its own motion waits too (see `still`).
     pub fn still(self) -> Awaits {
         Awaits { still: true, ..self }
+    }
+
+    /// Only its own motion waits for `finish`: at rest until then, then easing up to
+    /// speed.
+    pub fn starts(finish: Finish) -> Awaits {
+        Awaits::new(finish, Change::Stays).still()
     }
 
     /// How far through its change it is `since` seconds after its finish (`None`: not
@@ -167,6 +182,10 @@ impl Sparks {
             ..Sparks::burst(finish, at)
         }
     }
+
+    pub fn after(self, delay: f32) -> Sparks {
+        Sparks { delay, ..self }
+    }
 }
 
 /// A sound that waits for `finish`: `sound` from `at`, `delay` seconds after it, at
@@ -185,6 +204,12 @@ impl Library {
     /// is made with `Motion::Still`.
     pub fn awaiting(&mut self, m: u32, a: Awaits) {
         self.movers[m as usize].awaits = Some(a);
+    }
+
+    /// A mover that only waits, with no parts of its own (for lights and movers to
+    /// ride): about `pivot`, changing as `a` says.
+    pub fn waiter(&mut self, pivot: Vec3, a: Awaits) -> u32 {
+        self.waiting(pivot, a, [])
     }
 
     /// A piece (or several, as one mover's parts) that only waits: `parts` about

@@ -2030,7 +2030,7 @@ impl Library {
             for (f, end) in [(first, -1.0f32), (last, 1.0)] {
                 let face = &self.faces[f];
                 // Over the end stile's middle, just behind the face, on the crown.
-                let along = face.right * (end * (UNIT_W * 0.5 - 0.05));
+                let along = face.right * (end * kit::STILE_MID);
                 let foot = face.center + along - face.normal * 0.03 + Vec3::Y * (UNIT_H + 0.13);
                 let horns_up = face.rot() * Quat::from_rotation_z(FRAC_PI_2);
                 let parts = [
@@ -2275,13 +2275,7 @@ impl Library {
             rate: -TAU / 240.0,
         };
         let turns = self.mover(centre, spin, 0.0, Some(dial));
-        self.awaiting(
-            turns,
-            Awaits::new(fin, Change::Kindles { dim: 1.0 })
-                .after(WING_WAKES + 2.5)
-                .over(6.0)
-                .still(),
-        );
+        self.awaiting(turns, Awaits::starts(fin).after(WING_WAKES + 2.5).over(6.0));
         let sky = self.disc_inst(m, Vec3::new(0.0, top, 0.04), (r, 0.01), kind::PLAIN, rgba(SKY, 1.0));
         self.moving(turns, sky);
         // Gilt stars about the sky, clear of the moons, and the moons (glowing a little)
@@ -2345,10 +2339,7 @@ impl Library {
         // seven smaller about the crown turning slower the other, once all have come.
         // Each comes from a coffer of its own, and bobs in its own time.
         let gathered = FINALE + 4.3;
-        let turns = Awaits::new(fin, Change::Kindles { dim: 1.0 })
-            .after(gathered)
-            .over(8.0)
-            .still();
+        let turns = Awaits::starts(fin).after(gathered).over(8.0);
         for (count, r, up, period, size, (first, apart), sky_r) in [
             (12, 2.3, 0.3, 200.0, 1.0, (0.2, 0.15), (2.6, 2.2)),
             (7, 1.25, 1.2, -300.0, 0.75, (0.4, 0.25), (1.0, 1.2)),
