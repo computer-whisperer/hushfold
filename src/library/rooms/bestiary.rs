@@ -645,8 +645,7 @@ fn skeleton(lib: &mut Library, frame: &RoomFrame) -> (u32, [Vec3; 2]) {
         period: 9.0,
     };
     let stirred = lib.mover(pivot, nod, 0.0, None);
-    let woken = Awaits::new(Finish::Room(frame.dept), Change::Kindles { dim: 1.0 });
-    lib.awaiting(stirred, woken.after(HATCH).over(4.0).still());
+    lib.awaiting(stirred, Awaits::starts(Finish::Room(frame.dept)).after(HATCH).over(4.0));
     let sway = Motion::Swing {
         axis: v,
         amp: 0.012,
@@ -1100,13 +1099,7 @@ fn hatchling(lib: &mut Library, frame: &RoomFrame, foot: Vec3) {
         period: 11.0,
     };
     let looking = lib.mover(neck, look, 0.0, Some(lift));
-    lib.awaiting(
-        looking,
-        Awaits::new(fin, Change::Kindles { dim: 1.0 })
-            .after(HATCH + 3.2)
-            .over(3.0)
-            .still(),
-    );
+    lib.awaiting(looking, Awaits::starts(fin).after(HATCH + 3.2).over(3.0));
     let mut head = sweep(
         &[at(0.0, 0.2, 0.06), at(0.0, 0.25, 0.085), at(0.0, 0.29, 0.105)],
         &[0.034, 0.026],
