@@ -6,7 +6,9 @@
 //! steeper than books rest on, so piles form and spill. Taking books out of a pile
 //! re-drops whatever rested on them. Furniture is a solid column from its level's
 //! floor: tables hold books, taller pieces (cases, walls, railings, closed gates)
-//! shed them off their tops.
+//! shed them off their tops, and none lies on one. A book coming down on one goes
+//! on off it the way it was going if that way comes down to the floor (a throw
+//! over a case that falls short), else the shortest way, over neighbouring tops.
 //!
 //! Each level has its own heightfield and index. Where a level has no floor (a well
 //! or a stairwell) its heightfield is a hole: a book flies up into the level above
@@ -36,6 +38,19 @@ const CEILING_REACH: f32 = 4.0;
 /// Furniture taller than this (above its floor) sheds books off its top rather than
 /// holding them.
 const SHED_HEIGHT: f32 = 0.9;
+/// How far across tall furniture a book on top of it looks for the way off (a pillar
+/// of cases is some 3.6 m across), and the lip up to a neighbouring top that a book
+/// going across the tops steps up rather than stops at (a case's cap stands a
+/// centimetre over the core between cases).
+const WAY_OFF: f32 = 4.0;
+const LIP: f32 = 0.1;
+/// How fast a book that comes down on tall furniture goes off it, at least: one
+/// thrown over keeps its own speed, one dropped slides off and falls beside it.
+const SLIDE_OFF: f32 = 1.5;
+/// How wide a way down from a top must be for a book to come down it, both along the
+/// way and across it: wider than the seams between neighbouring cases, and clear of an
+/// edge the way runs beside.
+const WAY_DOWN: f32 = 0.2;
 pub const GRAVITY: f32 = 9.0;
 /// A flying book's collision radius.
 const FLY_R: f32 = 0.05;
@@ -389,6 +404,49 @@ impl Grid {
         (self.all_solids())
             .filter(|&(_, mx)| self.tall(mx))
             .any(|(mn, mx)| through(a, b, mn, mx))
+    }
+
+    /// How far from `at` along `dir` is a way down off tall furniture within `reach`:
+    /// where a book can come down (floor, low furniture or a drop), `WAY_DOWN` square.
+    /// Never through a wall or out of the level.
+    fn way_down(&self, at: Vec2, dir: Vec2, reach: f32) -> Option<f32> {
+        let low = |q: Vec2| self.base_at(q) - self.y <= SHED_HEIGHT;
+        let side = dir.perp() * (WAY_DOWN * 0.5);
+        let mut down = None;
+        for k in 1..=((reach + WAY_DOWN) / SEARCH_STEP) as usize {
+            let d = k as f32 * SEARCH_STEP;
+            let q = at + dir * d;
+            if !(q.cmpgt(self.min).all() && q.cmplt(self.max).all()) || self.base_at(q) >= self.roof - 0.05 {
+                return None;
+            }
+            if !(low(q) && low(q + side) && low(q - side)) {
+                down = None;
+                continue;
+            }
+            let start = *down.get_or_insert(d);
+            if start > reach {
+                return None;
+            }
+            if d - start >= WAY_DOWN - 1e-4 {
+                return (!self.crosses_wall(at, q)).then_some(start);
+            }
+        }
+        None
+    }
+
+    /// The way off tall furniture from `at` on top of it, and how far: along `travel`
+    /// if that comes down within `WAY_OFF`, so a book thrown over a case that falls
+    /// short on its top goes on over; else the shortest of eight ways.
+    fn way_off(&self, at: Vec2, travel: Vec2) -> Option<(Vec2, f32)> {
+        let along = (travel.length() > 0.1).then(|| travel.normalize());
+        along
+            .and_then(|d| Some((d, self.way_down(at, d, WAY_OFF)?)))
+            .or_else(|| {
+                (0..8)
+                    .map(|i| Vec2::from_angle(i as f32 * std::f32::consts::FRAC_PI_4))
+                    .filter_map(|d| Some((d, self.way_down(at, d, WAY_OFF)?)))
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+            })
     }
 
     /// Walls: solids up to the ceiling, which nothing passes over, and closed gates.
@@ -828,7 +886,6 @@ impl Loose {
         };
         let from = walls(c);
         // Pushing out of one piece can push into a wall or another piece; settle it.
-        let mut settled = false;
         for _ in 0..4 {
             c = walls(c);
             let before = c;
@@ -857,18 +914,23 @@ impl Loose {
                 }
             }
             if c == before {
-                settled = true;
                 break;
             }
         }
         let c = walls(c);
         // Between two pieces nearer each other than a book is wide, pushing out of one
-        // pushes into the other, and it can end inside one, to lie on its top (a wall's
-        // top is under the ceiling). Lie instead at the nearest place clear of both.
-        if settled || self.clear_at(lv, r, c) {
+        // pushes into the other and back (to where it began, as if settled), and it can
+        // end inside one, to lie on its top. Lie instead at the nearest place clear of
+        // both; from the middle of a broad top, the nearest past the way off it.
+        if self.clear_of_tall(lv, r, c) {
             return c;
         }
-        self.nearest(lv, from, GAP_REACH, |q| self.clear_at(lv, r, q))
+        let fits = |q: Vec2| self.clear_at(lv, r, q);
+        (self.nearest(lv, from, GAP_REACH, fits))
+            .or_else(|| {
+                let (out, d) = g.way_off(from, Vec2::ZERO)?;
+                self.nearest(lv, from + out * (d + r), GAP_REACH, fits)
+            })
             .unwrap_or(c)
     }
 
@@ -877,13 +939,17 @@ impl Loose {
     /// closed gates, over floor or books.
     fn clear_at(&self, lv: usize, r: f32, c: Vec2) -> bool {
         let g = &self.grids[lv];
-        c.cmpge(g.min + r).all()
-            && c.cmple(g.max - r).all()
-            && g.height(c) != HOLE
-            && (g.all_solids()).filter(|&(_, mx)| g.tall(mx)).all(|(mn, mx)| {
-                let q = Vec2::new(c.x.clamp(mn.x, mx.x), c.y.clamp(mn.z, mx.z));
-                c.distance(q) >= r - 1e-3
-            })
+        c.cmpge(g.min + r).all() && c.cmple(g.max - r).all() && g.height(c) != HOLE && self.clear_of_tall(lv, r, c)
+    }
+
+    /// Whether a book `r` from its middle to its corners, its middle at `c`, keeps clear
+    /// of the tall furniture and closed gates on level `lv`.
+    fn clear_of_tall(&self, lv: usize, r: f32, c: Vec2) -> bool {
+        let g = &self.grids[lv];
+        (g.all_solids()).filter(|&(_, mx)| g.tall(mx)).all(|(mn, mx)| {
+            let q = Vec2::new(c.x.clamp(mn.x, mx.x), c.y.clamp(mn.z, mx.z));
+            c.distance(q) >= r - 1e-3
+        })
     }
 
     /// The nearest point to `from` on level `lv` that `ok` accepts and that isn't
@@ -1438,27 +1504,31 @@ impl Loose {
             if p.x <= lo.x || p.x >= hi.x || p.z <= lo.z || p.z >= hi.z || p.y >= hi.y {
                 continue;
             }
-            if prev.y >= hi.y - 1e-4 {
+            // Coming down on it, or (a tall piece) going across tops to one a lip higher.
+            let lip = if g.tall(mx) { LIP } else { 1e-4 };
+            if prev.y >= hi.y - lip {
                 if !g.tall(mx) {
                     continue; // a table top: the landing test below catches it
                 }
-                // Off the top of a tall piece, toward its nearest edge that has open
-                // floor (or a drop) beyond it, not a wall or more furniture.
+                // Off the top of a tall piece, over its neighbours if they are tall too:
+                // straight off if it is over the edge already (within its reach of the
+                // top) with the floor just below, else on the way it was going if that
+                // comes down to the floor, else the shortest way. With nowhere to come
+                // down within reach it settles here, and lying down finds it a place.
                 p.y = hi.y;
                 v.y = v.y.abs() * 0.25;
-                let mut edges = [
-                    (p.x - lo.x, Vec2::NEG_X, Vec2::new(lo.x - 0.1, p.z)),
-                    (hi.x - p.x, Vec2::X, Vec2::new(hi.x + 0.1, p.z)),
-                    (p.z - lo.z, Vec2::NEG_Y, Vec2::new(p.x, lo.z - 0.1)),
-                    (hi.z - p.z, Vec2::Y, Vec2::new(p.x, hi.z + 0.1)),
-                ];
-                edges.sort_by(|a, b| a.0.total_cmp(&b.0));
-                let open = |q: Vec2| {
-                    q.cmpgt(g.min + 0.2).all() && q.cmplt(g.max - 0.2).all() && g.base_at(q) - g.y <= SHED_HEIGHT
+                let at = Vec2::new(p.x, p.z);
+                let edge = Vec2::new(p.x.clamp(mn.x, mx.x), p.z.clamp(mn.z, mx.z));
+                let going = match (at - edge).try_normalize() {
+                    Some(off) if g.way_down(at, off, WAY_DOWN).is_some() => off,
+                    _ => Vec2::new(v.x, v.z),
                 };
-                let out = edges.iter().find(|e| open(e.2)).unwrap_or(&edges[0]).1;
-                v.x = v.x * 0.5 + out.x * 1.5;
-                v.z = v.z * 0.5 + out.y * 1.5;
+                let Some((out, _)) = g.way_off(at, going) else {
+                    return true;
+                };
+                let speed = (v.x * out.x + v.z * out.y).max(SLIDE_OFF);
+                v.x = out.x * speed;
+                v.z = out.y * speed;
                 continue;
             }
             // From the side: out along the shallower horizontal axis.
@@ -1665,8 +1735,9 @@ impl Loose {
 
     /// Books a save left where nothing reaches them, from before `drop` kept them from
     /// it: on top of a tall piece (dropped in a gap narrower than a book, beside a
-    /// wall up to the ceiling) or through the ceiling over a heap. Each is laid down
-    /// again at the nearest place it can lie, the lowest first. Returns them.
+    /// wall up to the ceiling, or at the end of a top hemmed in by neighbours a lip
+    /// higher) or through the ceiling over a heap. Each is laid down again at the
+    /// nearest place it can lie, the lowest first. Returns them.
     pub fn rescue(&mut self) -> Vec<u32> {
         let n = self.size.len() as u32;
         let mut stuck: Vec<u32> = (0..n)
@@ -2096,6 +2167,109 @@ mod tests {
             assert!(r.c.y < 1.0, "book {b} stayed up at {r:?}");
         }
         assert_settled(&mut loose, books.iter().copied());
+    }
+
+    /// A book thrown across a case that falls short on its top goes on over it, the
+    /// way it was going, and lands beyond it; thrown the other way, on the other side.
+    #[test]
+    fn a_book_short_on_a_case_top_goes_on_over() {
+        let (lib, mut loose) = library();
+        loose.set_gate(0, false);
+        // The row of cases at z = -4.
+        let g = &loose.grids[0];
+        let (mn, mx) = (g.solids.iter().copied())
+            .find(|&(mn, mx)| g.tall(mx) && (mn.x..mx.x).contains(&-16.0) && (mn.z..mx.z).contains(&-4.0))
+            .unwrap();
+        let (_, top) = loose
+            .best_pile(|_, c, _| Some(xz(c).distance(Vec2::new(-16.0, 0.0))))
+            .unwrap();
+        let b = loose.gather(0, Vec2::new(top.x, top.z), 1.5, 1, |_| true)[0];
+        for across in [-1.0f32, 1.0] {
+            loose.take(&[b]);
+            // Coming down on the top just past its near edge.
+            let near = if across < 0.0 { mx.z - 0.08 } else { mn.z + 0.08 };
+            let from = Vec3::new(-16.0, mx.y + 0.2, near);
+            loose.throw(
+                b,
+                from,
+                Vec3::new(0.0, 0.0, 1.2 * across),
+                Quat::IDENTITY,
+                Vec3::ZERO,
+                0.0,
+            );
+            fly(&mut loose, lib.books.len(), 4.0);
+            let r = loose.rest[b as usize];
+            assert!(loose.is_resting(b) && r.c.y < 1.0, "book {b} stayed up at {r:?}");
+            let beyond = if across < 0.0 { r.c.z < mn.z } else { r.c.z > mx.z };
+            assert!(
+                beyond,
+                "thrown across the case ({across}), it came down back at z {}",
+                r.c.z
+            );
+        }
+    }
+
+    /// No book stays on top of tall furniture anywhere in the Great Library: dropped
+    /// over every tall piece, at its corners, the middles of its sides and its middle,
+    /// each comes off. (Some lay at the ends of a top hemmed in by neighbours a lip
+    /// higher, as the Clockworks' pillars are by their cases.)
+    #[test]
+    fn books_come_off_every_tall_top() {
+        let lib = Library::generate(crate::library::Layout::Great, crate::game::SEED);
+        let mut loose = Loose::new(&lib);
+        for i in 0..loose.gate_boxes.len() {
+            loose.set_gate(i, false);
+        }
+        let books: Vec<u32> = (0..lib.books.len() as u32)
+            .filter(|&b| loose.is_resting(b) && loose.level[b as usize] == 0)
+            .take(9)
+            .collect();
+        let mut tops = 0;
+        for lv in 0..loose.grids.len() {
+            let g = &loose.grids[lv];
+            let solids: Vec<(Vec3, Vec3)> = (g.solids.iter().copied())
+                .filter(|&(_, mx)| g.tall(mx) && mx.y < g.roof - 0.05)
+                .collect();
+            for (mn, mx) in solids {
+                tops += 1;
+                loose.take(&books);
+                let k = [0.03f32, 0.5, 0.97];
+                for (i, &b) in books.iter().enumerate() {
+                    let (fx, fz) = (k[i % 3], k[i / 3]);
+                    let at = Vec3::new(mn.x + (mx.x - mn.x) * fx, mx.y + 0.3, mn.z + (mx.z - mn.z) * fz);
+                    loose.throw(b, at, Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY, Vec3::ZERO, 0.0);
+                }
+                fly(&mut loose, lib.books.len(), 4.0);
+                for &b in &books {
+                    let r = loose.rest[b as usize];
+                    assert!(loose.is_resting(b), "book {b} still in the air over {mn}..{mx}");
+                    assert!(!loose.out_of_reach(b), "book {b} stayed on {mn}..{mx} at {r:?}");
+                }
+            }
+        }
+        assert!(tops > 300, "only {tops} tall tops");
+    }
+
+    /// A book a save left on top of a Clockworks pillar, at the end hemmed in by the
+    /// case across it, comes down beside the pillar on loading (it used to be laid down
+    /// on the top again, each time).
+    #[test]
+    fn a_book_left_on_a_pillar_comes_down() {
+        let lib = Library::generate(crate::library::Layout::Great, crate::game::SEED);
+        let mut loose = Loose::new(&lib);
+        let b = 85619;
+        let on_top = Rest {
+            c: Vec3::new(-2.969, 15.22, -25.2),
+            u: Vec2::new(-0.853, 0.522),
+            su: 0.0,
+            sv: 0.0,
+        };
+        loose.restore(b, 2, on_top);
+        loose.rebuild_all();
+        assert!(loose.out_of_reach(b));
+        assert_eq!(loose.rescue(), vec![b]);
+        let r = loose.rest[b as usize];
+        assert!(loose.is_resting(b) && !loose.out_of_reach(b) && r.c.y < 12.5, "{r:?}");
     }
 
     /// A book whose fall is interrupted by another gather is still drawn where it lies.
