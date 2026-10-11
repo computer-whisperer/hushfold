@@ -3,8 +3,12 @@
 //! a glasshouse garden under a glazed side wall, paved in stone, with staging of
 //! potted plants along the glass, small trees in tubs, flower-press tables, a bed of
 //! moonflowers glowing faintly, and herbs hung to dry from every beam.
+//!
+//! Each side of a row finished, ivy hangs in festoons along its cornice. The room
+//! finished, the garden comes into bloom (`in_bloom`).
 
 use super::*;
+use crate::audio::Sfx;
 use std::f32::consts::{FRAC_PI_2, PI};
 
 /// Where the rows stand (a), and where they start (o).
@@ -45,6 +49,10 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
     let kit = Kit::new(lib);
     garden(lib, frame, &kit);
     herbs(lib, frame);
+    for cat in frame.categories.clone() {
+        festoon(lib, cat);
+    }
+    in_bloom(lib, frame, &kit);
 }
 
 /// The garden's turned pieces, each made once.
@@ -485,6 +493,15 @@ fn tree(
     }
 }
 
+/// A moonflower's open trumpet, its foot at the origin, seen inside and out.
+fn trumpet() -> Mesh {
+    let profile = [(0.0, 0.0), (0.06, 0.06), (0.14, 0.3), (0.32, 0.62), (0.5, 0.78)];
+    Mesh::lathe(&profile.map(Vec2::from), 20).two_sided()
+}
+
+/// A moonflower's glow.
+const MOONFLOWER: [f32; 4] = [0.82, 0.9, 1.0, 1.6];
+
 /// The moonflower bed: a stone-kerbed bed of dark soil, leaves, and pale blossoms on
 /// their stems, giving off a faint light of their own and stirring as if in a breeze.
 fn moonflowers(lib: &mut Library, frame: &RoomFrame, kit: &Kit, rng: &mut StdRng) {
@@ -509,33 +526,37 @@ fn moonflowers(lib: &mut Library, frame: &RoomFrame, kit: &Kit, rng: &mut StdRng
         kind::PLAIN,
         [SOIL[0], SOIL[1], SOIL[2]],
     ));
-    // An open trumpet, seen inside and out.
-    let trumpet = [(0.0, 0.0), (0.06, 0.06), (0.14, 0.3), (0.32, 0.62), (0.5, 0.78)];
-    let bloom = lib.shape(Mesh::lathe(&trumpet.map(Vec2::from), 20).two_sided());
-    let up = Vec3::Y;
+    let bloom = lib.shape(trumpet());
     for k in 0..14 {
         let p = frame.at(a + rng.gen_range(-1.0..1.0f32), o + rng.gen_range(-0.65..0.65f32), 0.47);
         spray(lib, p, rng.gen_range(0.35..0.6f32), GREENS[k % 3], rng);
         if k % 3 != 2 {
             let h = rng.gen_range(0.45..0.8f32);
-            let t = rng.gen_range(0.0..TAU);
-            let sway = Motion::Swing {
-                axis: Vec3::new(libm::cosf(t), 0.0, libm::sinf(t)),
-                amp: 0.05,
-                period: rng.gen_range(5.0..8.0),
-            };
-            let m = lib.mover(p, sway, rng.gen_range(0.0..8.0), None);
-            let stem = kit.disc.sized(Vec3::new(0.015, h, 0.015));
-            lib.moving(
-                m,
-                stem.inst(p + up * (h * 0.5), Quat::IDENTITY, kind::LEAF, [0.2, 0.38, 0.15, 1.0]),
-            );
-            let rot = Quat::from_rotation_y(rng.gen_range(0.0..TAU)) * Quat::from_rotation_x(0.35);
-            let flower = bloom.sized(Vec3::new(0.15, 0.1, 0.15));
-            lib.moving(m, flower.at(p + up * h, rot, kind::CRYSTAL, [0.82, 0.9, 1.0, 1.6]));
+            moonflower(lib, kit, bloom, p, h, rng);
         }
     }
     lib.light(frame.at(a, o, 1.3), 4.5, [0.7, 0.85, 1.0], 0.7, LightKind::Static);
+}
+
+/// A moonflower on its stem `h` tall from `p`, stirring as if in a breeze: its mover.
+fn moonflower(lib: &mut Library, kit: &Kit, bloom: Shape, p: Vec3, h: f32, rng: &mut StdRng) -> u32 {
+    let t = rng.gen_range(0.0..TAU);
+    let sway = Motion::Swing {
+        axis: Vec3::new(libm::cosf(t), 0.0, libm::sinf(t)),
+        amp: 0.05,
+        period: rng.gen_range(5.0..8.0),
+    };
+    let m = lib.mover(p, sway, rng.gen_range(0.0..8.0), None);
+    let stem = kit.disc.sized(Vec3::new(0.015, h, 0.015));
+    let up = Vec3::Y;
+    lib.moving(
+        m,
+        stem.inst(p + up * (h * 0.5), Quat::IDENTITY, kind::LEAF, [0.2, 0.38, 0.15, 1.0]),
+    );
+    let rot = Quat::from_rotation_y(rng.gen_range(0.0..TAU)) * Quat::from_rotation_x(0.35);
+    let flower = bloom.sized(Vec3::new(0.15, 0.1, 0.15));
+    lib.moving(m, flower.at(p + up * h, rot, kind::CRYSTAL, MOONFLOWER));
+    m
 }
 
 /// A table for pressing flowers at `o` beside the stacks: a press with its screws,
@@ -839,6 +860,358 @@ fn herbs(lib: &mut Library, frame: &RoomFrame) {
                 ),
             );
             a += rng.gen_range(0.9..1.5);
+        }
+    }
+}
+
+/// Ivy along the cornice of category `cat`'s cases once it is finished, spreading out
+/// from its middle case as leaves drift down: a festoon across each case's frieze and a
+/// drop between cases. The Night Flowers' ivy is starred with moonflowers.
+fn festoon(lib: &mut Library, cat: usize) {
+    let fin = Finish::Category(cat);
+    let faces: Vec<(Vec3, Vec3)> = (lib.faces_of(cat))
+        .map(|f| (lib.faces[f].center, lib.faces[f].normal))
+        .collect();
+    let (middle, n) = faces[faces.len() / 2];
+    let up = Vec3::Y;
+    let right = up.cross(n);
+    let pivot = middle + up * (UNIT_H + 0.05);
+    // Hung just proud of the cornice's crown, from under it to over the top shelf.
+    let turn = Quat::from_mat3(&Mat3::from_cols(right, up, n));
+    let swag: Vec<Vec2> = (0..=16)
+        .map(|j| (j as f32 / 16.0, 0.09, 0.09))
+        .chain((0..=16).rev().map(|j| (j as f32 / 16.0, 0.04, 0.2)))
+        .map(|(t, y, dip)| Vec2::new(-1.3 + 2.6 * t, UNIT_H + y - dip * 4.0 * t * (1.0 - t)))
+        .collect();
+    let swag = Mesh::prism(&swag, 0.004);
+    let pendant = |x: f32| {
+        let pts = [
+            (-0.05, 0.1),
+            (0.05, 0.1),
+            (0.065, -0.04),
+            (0.04, -0.15),
+            (0.0, -0.25),
+            (-0.04, -0.15),
+            (-0.065, -0.04),
+        ];
+        Mesh::prism(&pts.map(|(dx, y)| Vec2::new(x + dx, UNIT_H + y)), 0.004)
+    };
+    let night = lib.catalog.categories[cat].name == "Night Flowers";
+    let (mut ivy, mut blooms) = (Mesh::default(), Mesh::default());
+    let flower = trumpet();
+    for (k, &(c, _)) in faces.iter().enumerate() {
+        let at = c + n * 0.1 - pivot;
+        ivy.add(&swag, at, turn, Vec3::ONE);
+        let last = k + 1 == faces.len();
+        for x in [-1.35, 1.35].into_iter().take(if last { 2 } else { 1 }) {
+            ivy.add(&pendant(x), at, turn, Vec3::ONE);
+            if night {
+                let p = at + right * x + up * (UNIT_H + 0.02) + n * 0.03;
+                let open = Quat::from_rotation_arc(up, (n - up * 0.4).normalize());
+                blooms.add(&flower, p, open, Vec3::new(0.11, 0.08, 0.11));
+            }
+        }
+        if night {
+            let p = at + up * (UNIT_H - 0.1) + n * 0.03;
+            let open = Quat::from_rotation_arc(up, (n - up * 0.6).normalize());
+            blooms.add(&flower, p, open, Vec3::new(0.12, 0.09, 0.12));
+        }
+    }
+    let ivy = lib.shape(ivy);
+    let mut parts = vec![ivy.at(pivot, Quat::IDENTITY, kind::FRET, [0.12, 0.3, 0.1, 1.0])];
+    if night {
+        let blooms = lib.shape(blooms);
+        parts.push(blooms.at(pivot, Quat::IDENTITY, kind::CRYSTAL, MOONFLOWER));
+    }
+    let spread = Change::Arrives {
+        from: Vec3::ZERO,
+        grow: 0.0,
+    };
+    lib.waiting(pivot, Awaits::new(fin, spread).over(3.0), parts);
+    let run = faces[faces.len() - 1].0 - faces[0].0;
+    lib.sparks(Sparks {
+        kind: kind::LEAF,
+        rgba: [0.16, 0.36, 0.12, 1.0],
+        size: Vec3::new(0.035, 0.003, 0.028),
+        at: pivot + n * 0.15,
+        spread: run.abs() * 0.5 + Vec3::splat(0.05),
+        lasts: Some(2.5),
+        rate: 14.0,
+        life: 2.5,
+        vel: Vec3::ZERO,
+        jitter: Vec3::splat(0.15),
+        lift: -1.2,
+        drag: 1.2,
+        wander: 0.6,
+        ..Sparks::burst(fin, pivot)
+    });
+}
+
+/// The room finished, the garden comes into bloom. Fresh moonflowers rise in the bed
+/// one after another as its light swells and pollen glints rise from it; moonflower
+/// vines climb the glasshouse's piers and their trumpets open, glowing; the drying
+/// herbs shed petals and leaves over the whole room, and the petals settle on the
+/// paving. Fireflies come out over the garden and stay.
+fn in_bloom(lib: &mut Library, frame: &RoomFrame, kit: &Kit) {
+    let fin = Finish::Room(frame.dept);
+    let mut rng = StdRng::seed_from_u64(0x4e7b_b100);
+    let (a, o) = BED;
+    let bloom = lib.shape(trumpet());
+    for k in 0..9 {
+        let p = frame.at(a + rng.gen_range(-1.0..1.0f32), o + rng.gen_range(-0.65..0.65f32), 0.47);
+        let h = rng.gen_range(0.5..0.9f32);
+        let m = moonflower(lib, kit, bloom, p, h, &mut rng);
+        let rise = Change::Arrives {
+            from: Vec3::ZERO,
+            grow: 0.0,
+        };
+        lib.awaiting(m, Awaits::new(fin, rise).after(0.2 + k as f32 * 0.35).over(1.8));
+    }
+    // The bed's light swells as they open and settles to twice what it was.
+    let heart = frame.at(a, o, 1.3);
+    let swell = lib.waiting(heart, Awaits::new(fin, Change::Kindles { dim: 0.0 }).over(2.5), []);
+    let settle = lib.mover(heart, Motion::Still, 0.0, Some(swell));
+    lib.awaiting(
+        settle,
+        Awaits::new(fin, Change::Kindles { dim: 2.2 }).after(2.5).over(4.0),
+    );
+    lib.light_riding(settle, heart, 5.5, [0.7, 0.85, 1.0], 0.7, LightKind::Static);
+    lib.sparks(Sparks {
+        rgba: [0.9, 1.0, 1.5, 3.0],
+        size: Vec3::splat(0.03),
+        spread: frame.size(1.0, 0.1, 0.6),
+        lasts: Some(3.0),
+        rate: 50.0,
+        vel: Vec3::Y * 0.5,
+        ..Sparks::burst(fin, frame.at(a, o, 0.8))
+    });
+    lib.cue(Cue {
+        finish: fin,
+        delay: 1.0,
+        sound: Sfx::Veil,
+        at: heart,
+        volume: 0.5,
+    });
+    vines(lib, frame, fin, &mut rng);
+    shedding(lib, frame, fin);
+    petals(lib, frame, fin, &mut rng);
+    lib.sparks(Sparks {
+        delay: 4.0,
+        rate: 5.0,
+        life: 6.0,
+        wander: 0.3,
+        rgba: [0.75, 1.0, 0.35, 3.0],
+        size: Vec3::splat(0.022),
+        ..Sparks::motes(fin, frame.at(6.6, 24.6, 1.6), frame.size(5.4, 0.9, 6.4))
+    });
+}
+
+/// Moonflower vines climbing the glasshouse's piers, from the staging or the sill up to
+/// the window heads and along under them, leafing as they go; their trumpets open
+/// after, kindling, and a pale light on the glass wall with them.
+fn vines(lib: &mut Library, frame: &RoomFrame, fin: Finish, rng: &mut StdRng) {
+    let (inner, far) = (RoomFrame::A_HALF, RoomFrame::O_FAR);
+    let (out, across, up) = (frame.out(), frame.across(), Vec3::Y);
+    // Each one's foot (a, o, height), the way into the room, and along its wall.
+    let piers = [
+        (inner - 0.16, 18.2, 1.14, -across, out),
+        (inner - 0.16, 21.3, 0.7, -across, out),
+        (inner - 0.16, 24.4, 1.14, -across, out),
+        (inner - 0.16, 27.5, 0.7, -across, out),
+        (4.9, far - 0.16, 0.7, -out, across),
+        (8.5, far - 0.16, 0.7, -out, across),
+    ];
+    let top = 4.95;
+    let round = circle(1.0, 6);
+    let leaf = Mesh::cube();
+    let flower = trumpet();
+    for (k, &(a, o, foot_y, into, along)) in piers.iter().enumerate() {
+        let foot = frame.at(a, o, foot_y);
+        let phase = rng.gen_range(0.0..TAU);
+        // Winding a little across the pier on the way up; then a run either way under
+        // the head, sagging, its end trailing down.
+        let climb: Vec<Vec3> = (0..=24)
+            .map(|j| {
+                let y = (top - foot_y) * j as f32 / 24.0;
+                up * y + along * (0.1 * libm::sinf(y * 2.6 + phase))
+            })
+            .collect();
+        let crest = climb[climb.len() - 1];
+        let runs: Vec<Vec<Vec3>> = [-1.0f32, 1.0]
+            .iter()
+            .map(|&s| {
+                (0..=12)
+                    .map(|j| {
+                        let t = j as f32 / 12.0;
+                        let sag = 0.12 * 4.0 * t * (1.0 - t) + 0.3 * (t - 0.8).max(0.0) / 0.2;
+                        crest + along * (s * 1.2 * t) - up * sag
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut stem = Mesh::sweep(&climb, &[0.013, 0.009], &round, true);
+        for run in &runs {
+            stem.add(
+                &Mesh::sweep(run, &[0.009, 0.005], &round, true),
+                Vec3::ZERO,
+                Quat::IDENTITY,
+                Vec3::ONE,
+            );
+        }
+        let (mut leaves, mut blooms) = (Mesh::default(), Mesh::default());
+        let face = Quat::from_mat3(&Mat3::from_cols(along, up, along.cross(up)));
+        let path: Vec<Vec3> = climb.iter().chain(runs.iter().flatten()).copied().collect();
+        for (j, &p) in path.iter().enumerate().skip(2) {
+            let side = if j % 2 == 0 { 1.0 } else { -1.0 };
+            let tilt = Quat::from_rotation_z(rng.gen_range(-0.8..0.8f32) + side * 0.5);
+            let s = rng.gen_range(0.17..0.25f32);
+            let at = p + along * (side * 0.06) + into * 0.02;
+            leaves.add(&leaf, at, face * tilt, Vec3::new(s, s, 0.004));
+            if j % 4 == 1 {
+                let dir = into + up * rng.gen_range(-0.3..0.5f32) + along * rng.gen_range(-0.4..0.4f32);
+                let open = Quat::from_rotation_arc(up, dir.normalize());
+                blooms.add(&flower, p + into * 0.04, open, Vec3::new(0.13, 0.09, 0.13));
+            }
+        }
+        let (stem, leaves, blooms) = (lib.shape(stem), lib.shape(leaves), lib.shape(blooms));
+        let delay = 1.0 + 0.45 * k as f32;
+        let grow = Change::Arrives {
+            from: Vec3::ZERO,
+            grow: 0.0,
+        };
+        let vine = lib.waiting(
+            foot,
+            Awaits::new(fin, grow).after(delay).over(3.5),
+            [
+                stem.at(foot, Quat::IDENTITY, kind::LEAF, [0.2, 0.36, 0.14, 1.0]),
+                leaves.at(foot, Quat::IDENTITY, kind::FRET, [0.16, 0.4, 0.14, 1.0]),
+            ],
+        );
+        let open = lib.mover(foot, Motion::Still, 0.0, Some(vine));
+        lib.awaiting(
+            open,
+            Awaits::new(fin, Change::Kindles { dim: 0.06 })
+                .after(delay + 2.8)
+                .over(2.0),
+        );
+        lib.moving(open, blooms.at(foot, Quat::IDENTITY, kind::CRYSTAL, MOONFLOWER));
+        // Glints along it as they open.
+        let mid = foot + up * ((top - foot_y) * 0.5);
+        lib.sparks(Sparks {
+            delay: delay + 2.8,
+            lasts: Some(2.0),
+            rate: 30.0,
+            spread: along.abs() * 0.3 + up * ((top - foot_y) * 0.5) + into.abs() * 0.08,
+            vel: up * 0.15,
+            jitter: Vec3::splat(0.2),
+            life: 2.0,
+            rgba: [0.85, 0.95, 1.4, 2.5],
+            ..Sparks::burst(fin, mid)
+        });
+    }
+    let c = frame.at(inner - 1.2, 23.0, 3.4);
+    let glow = lib.waiting(
+        c,
+        Awaits::new(fin, Change::Kindles { dim: 0.0 }).after(3.8).over(3.0),
+        [],
+    );
+    lib.light_riding(glow, c, 8.0, [0.75, 0.85, 1.0], 0.6, LightKind::Static);
+}
+
+/// Petals and leaves shed by the drying herbs, drifting down over the whole room for a
+/// few seconds: pale petals catching the light and lavender over the garden, sage and
+/// straw over the stacks.
+fn shedding(lib: &mut Library, frame: &RoomFrame, fin: Finish) {
+    let garden = (frame.at(6.6, 24.6, 4.9), frame.size(5.6, 0.1, 6.6));
+    let stacks = (frame.at(-6.2, 23.8, 4.9), frame.size(6.4, 0.1, 8.0));
+    for ((at, spread), k, colour, size) in [
+        (garden, kind::PAPER, [0.9, 0.92, 1.0, 0.2], 0.038),
+        (garden, kind::LEAF, rgba(DRYING[1], 1.0), 0.045),
+        (stacks, kind::LEAF, rgba(DRYING[0], 1.0), 0.045),
+        (stacks, kind::LEAF, rgba(DRYING[2], 1.0), 0.045),
+    ] {
+        lib.sparks(Sparks {
+            kind: k,
+            rgba: colour,
+            size: Vec3::new(size, 0.003, size * 0.7),
+            delay: 1.5,
+            lasts: Some(6.0),
+            rate: 18.0,
+            life: 6.5,
+            vel: Vec3::ZERO,
+            jitter: Vec3::new(0.1, 0.05, 0.1),
+            lift: -1.0,
+            drag: 1.2,
+            wander: 0.8,
+            spread,
+            ..Sparks::burst(fin, at)
+        });
+    }
+}
+
+/// Where the shed petals settle: patches strewn over the garden's paving, clear of what
+/// stands on it and of the way in, each scattering out as it comes down. A petal lies a
+/// hair over the paving, thinner than a page.
+fn petals(lib: &mut Library, frame: &RoomFrame, fin: Finish, rng: &mut StdRng) {
+    let (a0, a1) = (PAVING.0 + 0.2, RoomFrame::A_HALF - 1.2);
+    let (o0, o1) = (PAVING.1 + 0.2, RoomFrame::O_FAR - 0.3);
+    let set_down = lib.rooms[frame.dept].drop;
+    let clear = |a: f32, o: f32| {
+        let inside = |(x0, x1): (f32, f32), (y0, y1): (f32, f32)| (x0..x1).contains(&a) && (y0..y1).contains(&o);
+        let bed = inside((BED.0 - 1.4, BED.0 + 1.4), (BED.1 - 1.0, BED.1 + 1.0));
+        let tubs = [(4.7, 20.2), (10.0, 29.2), (4.5, 29.4)]
+            .iter()
+            .any(|&(ta, to)| inside((ta - 0.5, ta + 0.5), (to - 0.5, to + 0.5)));
+        let tables = [20.0, 26.4].iter().any(|&t| inside((1.1, 2.5), (t - 1.1, t + 1.1)));
+        frame.at(a, o, 0.0).distance(set_down) > 3.0 && !bed && !tubs && !tables
+    };
+    let colours = [
+        [0.88, 0.9, 0.96],
+        [0.88, 0.9, 0.96],
+        [0.62, 0.5, 0.82],
+        [0.9, 0.7, 0.75],
+    ];
+    let petal: Vec<Vec2> = (0..8)
+        .map(|k| {
+            let t = k as f32 / 8.0 * TAU;
+            Vec2::new(libm::cosf(t), libm::sinf(t) * 0.65)
+        })
+        .collect();
+    let petal = Mesh::prism(&petal, 1.0);
+    let flat = Quat::from_rotation_x(FRAC_PI_2);
+    let (na, no) = (3, 5);
+    for i in 0..na {
+        for j in 0..no {
+            let ca = a0 + (a1 - a0) * (i as f32 + rng.gen_range(0.3..0.7f32)) / na as f32;
+            let co = o0 + (o1 - o0) * (j as f32 + rng.gen_range(0.3..0.7f32)) / no as f32;
+            let pivot = frame.at(ca, co, 0.0042);
+            let mut patch = Mesh::default();
+            for _ in 0..60 {
+                let r = 1.2 * libm::sqrtf(rng.gen_range(0.0..1.0f32));
+                let t = rng.gen_range(0.0..TAU);
+                let (a, o) = (ca + r * libm::cosf(t), co + r * libm::sinf(t));
+                let s = rng.gen_range(0.016..0.026f32);
+                let turn = Quat::from_rotation_y(rng.gen_range(0.0..TAU)) * flat;
+                if (a0..a1).contains(&a) && (o0..o1).contains(&o) && clear(a, o) {
+                    let at = frame.at(a, o, 0.0049) - pivot;
+                    patch.add(&petal, at, turn, Vec3::new(s, s, 0.0012));
+                }
+            }
+            if patch.verts.is_empty() {
+                continue;
+            }
+            let patch = lib.shape(patch);
+            let colour = colours[rng.gen_range(0..colours.len())];
+            let land = Change::Arrives {
+                from: Vec3::Y * 0.2,
+                grow: 0.25,
+            };
+            let delay = 3.0 + rng.gen_range(0.0..4.5f32);
+            lib.waiting(
+                pivot,
+                Awaits::new(fin, land).after(delay).over(2.0),
+                [patch.at(pivot, Quat::IDENTITY, kind::PLAIN, rgba(colour, 1.0))],
+            );
         }
     }
 }
