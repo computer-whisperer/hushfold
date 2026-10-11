@@ -5,11 +5,16 @@
 //! instruments and a cloud kept in a glass jar stand on it; wind chimes hang over
 //! it, stirring; barometers, thermometers and a weather map hang by the door. The
 //! cloud glows, lit now and then from inside, and a snowflake that will not melt
-//! turns under a bell of glass.
+//! turns under a bell of glass. Once the room is in order the weather turns fair: the
+//! wind rose's ring of points lights round from the north, and the jar's lid tips open
+//! to let fair-weather clouds rise out to drift under the skylight. Over each
+//! category's sign a pennant unfurls as it is finished, streaming in the draught.
 
 use super::hearth_library::{hurricane_lamp, turned_leg};
 use super::*;
+use crate::audio::Sfx;
 use std::f32::consts::{FRAC_PI_2, PI};
+use std::iter;
 
 /// The rows of cases down the room: how far either side of the middle, and where
 /// along it the first one stands.
@@ -36,6 +41,7 @@ const ROSE_LETTERS: Style = Style {
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     debug_assert!(frame.door.abs() < 1.0, "the Weatherhouse wants its door in the middle");
     shelves(lib, frame, rng, titles);
+    pennants(lib, frame);
     great_window(lib, frame);
     near_wall(lib, frame);
     wind_rose(lib, frame, 0.0, 20.6);
@@ -85,6 +91,60 @@ fn shelves(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut 
             })
             .collect();
         lib.add_category(rng, cats.next().unwrap(), &left_to_right(far), titles);
+    }
+}
+
+/// Over each category's sign a gilt staff on the cornice, bare until the category is in
+/// order; then a pennant in its colour unfurls from it and streams downwind in the
+/// draught, stirring, turning as the vane does.
+fn pennants(lib: &mut Library, frame: &RoomFrame) {
+    let downwind = -vane_rest(frame);
+    let gilt = rgba(BRASS, 1.0);
+    let ball = lib.shape(Mesh::sphere(12));
+    // A swallowtail, its hoist along the staff at the origin, its fly along x.
+    let flag = lib.shape(Mesh::prism(
+        &[
+            Vec2::new(0.0, -0.5),
+            Vec2::new(1.0, -0.32),
+            Vec2::new(0.78, 0.0),
+            Vec2::new(1.0, 0.32),
+            Vec2::new(0.0, 0.5),
+        ],
+        1.0,
+    ));
+    // Flying downwind at rest (as the vane points into the wind), drooping a little.
+    let lay =
+        Quat::from_mat3(&Mat3::from_cols(downwind, Vec3::Y, downwind.cross(Vec3::Y))) * Quat::from_rotation_z(-0.12);
+    for cat in frame.categories.clone() {
+        let faces: Vec<usize> = lib.faces_of(cat).collect();
+        let face = &lib.faces[faces[faces.len() / 2]];
+        // At the end of the middle case's cornice, past its sign.
+        let foot = face.center + face.right * 1.2 + face.normal * 0.07 + Vec3::Y * (UNIT_H + 0.13);
+        let top = foot + Vec3::Y * 0.85;
+        lib.pole(foot, top, 0.018, kind::METAL, gilt);
+        lib.decor(
+            ball.sized(Vec3::splat(0.045))
+                .inst(top, Quat::IDENTITY, kind::METAL, gilt),
+        );
+        let hoist = top - Vec3::Y * 0.14;
+        let f = (cat as f32 * 0.618_034).fract();
+        let stir = Motion::Swing {
+            axis: Vec3::Y,
+            amp: 0.15,
+            period: 2.0 + 0.6 * f,
+        };
+        let turning = wind(lib, hoist);
+        let m = lib.mover(hoist, stir, 3.0 * f, Some(turning));
+        let unfurl = Change::Arrives {
+            from: Vec3::ZERO,
+            grow: 0.05,
+        };
+        lib.awaiting(m, Awaits::new(Finish::Category(cat), unfurl).after(0.6).over(1.8));
+        let col = catalog::category_color(&lib.catalog.categories[cat]);
+        let pennant = flag
+            .sized(Vec3::new(0.5, 0.18, 0.006))
+            .at(hoist, lay, kind::CLOTH, rgba(col, 1.0));
+        lib.moving(m, pennant);
     }
 }
 
@@ -452,6 +512,49 @@ fn wind_rose(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         let at = c + dir * (r * 1.25 + 0.3) + Vec3::Y * 0.002;
         text::set_line(&mut lib.text, letter, ROSE_LETTERS, at, right, up, 1.0);
     }
+    // Between the ring and the letters, the rest of the compass's thirty-two points:
+    // brass lozenges in the boards, the half-winds longest (the four winds' own points
+    // reach through there). When the room is in order they light one after another
+    // round from the north, as the wind goes round, and stay lit; each lit one lies
+    // over its brass, the two 3 mm thick together.
+    let fin = Finish::Room(frame.dept);
+    let lozenge = lib.shape(Mesh::prism(
+        &[
+            Vec2::new(0.5, 0.0),
+            Vec2::new(0.0, 0.5),
+            Vec2::new(-0.5, 0.0),
+            Vec2::new(0.0, -0.5),
+        ],
+        1.0,
+    ));
+    for k in (0..32).filter(|k| k % 8 != 0) {
+        let th = FRAC_PI_2 + 0.01 - k as f32 / 32.0 * TAU;
+        let radial = right * libm::cosf(th) + up * libm::sinf(th);
+        let lay = Quat::from_mat3(&Mat3::from_cols(radial, Vec3::Y.cross(radial), Vec3::Y));
+        let len = match k {
+            _ if k % 4 == 0 => 0.3,
+            _ if k % 2 == 0 => 0.22,
+            _ => 0.14,
+        };
+        let p = c + radial * (r * 1.24 - len * 0.5);
+        lib.decor(lozenge.sized(Vec3::new(len, len * 0.36, 0.0015)).inst(
+            p + Vec3::Y * 0.00075,
+            lay,
+            kind::METAL,
+            rgba(BRASS, 1.0),
+        ));
+        let lit = lozenge.sized(Vec3::new(len + 0.01, len * 0.36 + 0.006, 0.0015)).inst(
+            p + Vec3::Y * 0.00225,
+            lay,
+            kind::EMISSIVE,
+            [1.0, 0.64, 0.26, 0.9],
+        );
+        let kindle = Change::Arrives {
+            from: Vec3::ZERO,
+            grow: 0.2,
+        };
+        lib.waiting(p, Awaits::new(fin, kindle).after(k as f32 * 0.08).over(0.5), [lit]);
+    }
 }
 
 /// A glass jar on a stone pedestal at `a`, `o`, a small cloud kept inside it: the
@@ -514,7 +617,59 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
         .map(Vec2::from),
         40,
     ));
-    lib.decor(lid.at(base + Vec3::Y * (h + 0.06), Quat::IDENTITY, kind::METAL, brass));
+    // Once the room is in order the lid tips open on its far rim and fair weather is
+    // let out of the jar; a while later it closes again (a second change undoing the
+    // first, from inside it).
+    let fin = Finish::Room(frame.dept);
+    let lid_at = base + Vec3::Y * (h + 0.06);
+    let hinge = lid_at + frame.out() * 0.24;
+    let (lift, tip) = (Vec3::Y * 0.1, Quat::from_axis_angle(frame.across(), -0.75));
+    let open = Change::Shifts {
+        by: lift,
+        turn: tip,
+        scale: 1.0,
+    };
+    let opened = lib.waiting(hinge, Awaits::new(fin, open).after(0.3).over(1.4), iter::empty());
+    let close = Change::Shifts {
+        by: -(tip.inverse() * lift),
+        turn: tip.inverse(),
+        scale: 1.0,
+    };
+    let lidded = lib.mover(hinge, Motion::Still, 0.0, Some(opened));
+    lib.awaiting(lidded, Awaits::new(fin, close).after(7.5).over(1.8));
+    lib.moving(lidded, lid.at(lid_at, Quat::IDENTITY, kind::METAL, brass));
+    let mouth = base + Vec3::Y * (h - 0.1);
+    for (k, (ca, co, y, size)) in [
+        (-1.25f32, 20.3f32, 4.55f32, 1.15f32),
+        (1.35, 22.0, 4.85, 0.95),
+        (-0.55, 24.0, 4.95, 0.85),
+        (1.05, 26.1, 4.6, 1.05),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        fair_cloud(lib, frame, mouth, frame.at(ca, co, y), size, k);
+    }
+    lib.sparks(Sparks {
+        delay: 0.9,
+        lasts: Some(4.0),
+        spread: Vec3::new(0.12, 0.05, 0.12),
+        rate: 12.0,
+        vel: Vec3::Y * 1.4,
+        jitter: Vec3::new(0.25, 0.4, 0.25),
+        lift: 0.3,
+        life: 2.2,
+        rgba: [0.75, 0.85, 1.0, 1.2],
+        size: Vec3::splat(0.015),
+        ..Sparks::burst(fin, mouth)
+    });
+    lib.cue(Cue {
+        finish: fin,
+        delay: 0.8,
+        sound: Sfx::Veil,
+        at: mouth,
+        volume: 0.5,
+    });
     let jar = Mesh::lathe(
         &[
             (r - 0.02, 0.0),
@@ -579,6 +734,57 @@ fn cloud_jar(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
     lib.light_riding(m, cloud, 3.5, [0.7, 0.8, 1.0], 0.7, LightKind::Flicker);
 }
 
+/// The `k`th fair-weather cloud let out of the jar at `mouth` once the room is in order:
+/// rising out of it, small at first and growing, then drifting off to `rest` under the
+/// skylight, about `size` metres across, where it stays, floating and wandering a
+/// little to and fro.
+fn fair_cloud(lib: &mut Library, frame: &RoomFrame, mouth: Vec3, rest: Vec3, size: f32, k: usize) {
+    let fin = Finish::Room(frame.dept);
+    let delay = 0.9 + k as f32 * 0.8;
+    // Up out of the jar to its height, then across to its place: from there, so
+    // nothing passes low over the floor.
+    let over = Vec3::new(mouth.x, rest.y, mouth.z);
+    let rise = Change::Arrives {
+        from: mouth - over,
+        grow: 0.08,
+    };
+    let risen = lib.waiting(over, Awaits::new(fin, rise).after(delay).over(3.2), iter::empty());
+    let f = (k as f32 * 0.618_034).fract();
+    let wander = Motion::Slide {
+        travel: frame.across() * (0.35 + 0.3 * f) * if k.is_multiple_of(2) { 1.0 } else { -1.0 },
+        period: 60.0 + 25.0 * f,
+    };
+    let drifted = lib.mover(over, wander, 40.0 * f, Some(risen));
+    let drift = Change::Shifts {
+        by: rest - over,
+        turn: Quat::IDENTITY,
+        scale: 1.0,
+    };
+    lib.awaiting(drifted, Awaits::new(fin, drift).after(delay + 1.4).over(4.0));
+    let float = Motion::Bob {
+        amp: 0.05,
+        period: 9.0 + 4.0 * f,
+        rock: 0.04,
+    };
+    let m = lib.mover(over, float, 9.0 * f, Some(drifted));
+    let puff = lib.shape(Mesh::sphere(16));
+    // A cumulus: a broad body, puffs either side and heaped on top.
+    let turn = frame.turn() * Quat::from_rotation_y(f * 1.2 - 0.6);
+    for (off, s) in [
+        (Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.62, 0.34, 0.5)),
+        (Vec3::new(-0.33, -0.04, 0.05), Vec3::new(0.42, 0.26, 0.38)),
+        (Vec3::new(0.34, -0.03, -0.04), Vec3::new(0.46, 0.28, 0.4)),
+        (Vec3::new(0.06, 0.14, 0.02), Vec3::new(0.4, 0.32, 0.36)),
+        (Vec3::new(-0.13, 0.1, -0.11), Vec3::new(0.3, 0.24, 0.3)),
+    ] {
+        let mut i = puff
+            .sized(s * size)
+            .inst(over + turn * (off * size), turn, kind::MIST, [0.86, 0.89, 0.96, 0.7]);
+        i.param = 1;
+        lib.moving(m, i);
+    }
+}
+
 /// A gilt cockerel's outline, standing on the origin and facing +x, 1.5 times its
 /// size in metres.
 fn cockerel() -> Vec<Vec2> {
@@ -613,6 +819,29 @@ fn cockerel() -> Vec<Vec2> {
     ]
     .map(|(x, y)| Vec2::new(x, y) * 1.5)
     .to_vec()
+}
+
+/// The way the vane's arrow points at rest: off to the window's side of the room.
+fn vane_rest(frame: &RoomFrame) -> Vec3 {
+    (frame.out() * 0.8 - frame.across() * 0.6).normalize()
+}
+
+/// A mover about `pivot` turning as the room's wind does, which veers a twelfth of the
+/// way round now and then and backs again more seldom: whatever rides it at `pivot`
+/// turns with the vane.
+fn wind(lib: &mut Library, pivot: Vec3) -> u32 {
+    let veer = Motion::Tick {
+        axis: Vec3::Y,
+        steps: 12,
+        period: 12.0 * 19.0,
+    };
+    let back = Motion::Tick {
+        axis: -Vec3::Y,
+        steps: 12,
+        period: 12.0 * 27.0,
+    };
+    let veering = lib.mover(pivot, veer, 0.0, None);
+    lib.mover(pivot, back, 11.0, Some(veering))
 }
 
 /// A weathervane on a post at `a`, `o`: the arms of the four winds, and an arrow with
@@ -650,30 +879,17 @@ fn weathervane(lib: &mut Library, frame: &RoomFrame, a: f32, o: f32) {
             );
         }
     }
-    // The wind veers a twelfth of the way round now and then, and backs again more
-    // seldom; the vane turns to it, overshooting a little, and quivers.
+    // The vane turns to the wind, overshooting a little, and quivers.
     let pivot = frame.at(a, o, top);
-    let veer = Motion::Tick {
-        axis: Vec3::Y,
-        steps: 12,
-        period: 12.0 * 19.0,
-    };
-    let back = Motion::Tick {
-        axis: -Vec3::Y,
-        steps: 12,
-        period: 12.0 * 27.0,
-    };
     let quiver = Motion::Swing {
         axis: Vec3::Y,
         amp: 0.05,
         period: 3.7,
     };
-    let veering = lib.mover(pivot, veer, 0.0, None);
-    let backing = lib.mover(pivot, back, 11.0, Some(veering));
+    let backing = wind(lib, pivot);
     let m = lib.mover(pivot, quiver, 0.0, Some(backing));
-    // The arrow, pointing off to the window's side of the room at rest. It points into
-    // the wind, which blows through the room (`game`'s draught).
-    let dir = (frame.out() * 0.8 - frame.across() * 0.6).normalize();
+    // The arrow points into the wind, which blows through the room (`game`'s draught).
+    let dir = vane_rest(frame);
     lib.vane = Some((m, dir));
     let flat = Quat::from_mat3(&Mat3::from_cols(dir, Vec3::Y, dir.cross(Vec3::Y)));
     let collar = lib.pole_inst(pivot - Vec3::Y * 0.05, pivot + Vec3::Y * 0.05, 0.06, kind::METAL, gilt);
@@ -1094,5 +1310,40 @@ fn ceiling(lib: &mut Library, frame: &RoomFrame) {
             [0.35, 0.45, 0.9, 0.03],
             0,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::library::motion::{Since, pose_of};
+
+    /// The pennants fly away from where the vane points, whichever way the wind has gone
+    /// round: downwind, as the draught blows.
+    #[test]
+    fn pennants_fly_downwind() {
+        let lib = Library::generate(Layout::Great, crate::game::SEED);
+        let (vane, arrow) = lib.vane.expect("the Weatherhouse has its vane");
+        let pennants: Vec<u32> = (0..lib.movers.len() as u32)
+            .filter(|&m| match lib.movers[m as usize].awaits {
+                Some(Awaits {
+                    finish: Finish::Category(c),
+                    ..
+                }) => lib.dept_of(c) == dept::WEATHERHOUSE,
+                _ => false,
+            })
+            .collect();
+        assert_eq!(pennants.len(), 8);
+        let since: Since = &|_| Some(1.0e5);
+        let level = |v: Vec3| Vec2::new(v.x, v.z).normalize();
+        for t in [0.0, 37.0, 400.0, 2500.0, 9000.0] {
+            let downwind = -level(pose_of(&lib.movers, vane, t, since).turn * arrow);
+            for &p in &pennants {
+                let part = &lib.moving_insts[lib.movers[p as usize].parts.start as usize];
+                let fly = Quat::from_array(part.rot) * Vec3::X;
+                let flies = level(pose_of(&lib.movers, p, t, since).turn * fly);
+                assert!(flies.dot(downwind) > 0.95, "t {t}: flies {flies}, downwind {downwind}");
+            }
+        }
     }
 }
