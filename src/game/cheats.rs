@@ -20,6 +20,10 @@ pub enum Cheat {
     /// Go to where a new game starts (`None`), or to a department's doorway: just
     /// inside it, or in front of its veil while that is closed.
     GoTo(Option<usize>),
+    /// Shelve every book of a part of the library at once, from the piles, the air,
+    /// the clocks' hold and the arms (not those already flying or carried), so it is
+    /// finished and celebrates.
+    Finish(Finish),
 }
 
 impl Game {
@@ -40,6 +44,7 @@ impl Game {
             Cheat::LiftVeils => self.open_all_gates(),
             Cheat::Shelve(frac) => self.cheat_shelve(frac, audio),
             Cheat::GoTo(room) => self.cheat_go_to(room),
+            Cheat::Finish(f) => self.cheat_finish(f, audio),
         }
         self.dirty_save = true;
     }
@@ -82,6 +87,33 @@ impl Game {
         }
     }
 
+    fn cheat_finish(&mut self, f: Finish, audio: &mut Audio) {
+        let lib = &self.lib;
+        let part = |b: u32| match f {
+            Finish::Face(i) => lib.books[b as usize].face as usize == i,
+            Finish::Category(c) => lib.category_of_book(b) == c,
+            Finish::Room(d) => lib.dept_of_book(b) == d,
+            Finish::Storey(l) => lib.rooms[lib.dept_of_book(b)].level == l,
+            Finish::Library => true,
+        };
+        let books: Vec<u32> = (0..lib.books.len() as u32)
+            .filter(|&b| part(b) && matches!(self.state[b as usize], BookState::Loose | BookState::Held))
+            .collect();
+        let resting: Vec<u32> = books.iter().copied().filter(|&b| self.loose.is_resting(b)).collect();
+        self.loose.take(&resting);
+        for &b in &books {
+            if self.state[b as usize] == BookState::Loose && !self.loose.is_resting(b) {
+                self.loose.forget(b);
+                self.tossed[b as usize] = false;
+            }
+            self.held.retain(|&h| h != b);
+            self.credit_shelved(b);
+        }
+        self.active = self.active.min(self.held.len().saturating_sub(1));
+        self.start_clocks();
+        self.check_gates(audio);
+    }
+
     fn cheat_go_to(&mut self, room: Option<usize>) {
         let (at, yaw) = match room {
             None => self.lib.spawn,
@@ -119,6 +151,28 @@ mod tests {
         }
         assert!(g.lumens >= g.total_shelved() as u64);
         assert_eq!(g.loose.heightfield_errors(), 0);
+    }
+
+    /// Finishing a room shelves all its books, from wherever they are, and finishes it
+    /// and every side of its cases; its storey waits for the rest.
+    #[test]
+    fn finishing_a_room_finishes_its_cases() {
+        let mut g = Game::new(Layout::Great);
+        let mut audio = Audio::silent();
+        g.cheat(Cheat::Finish(Finish::Room(dept::CLOCKWORKS)), &mut audio);
+        let d = dept::CLOCKWORKS;
+        assert_eq!(g.dept_shelved[d], g.dept_total[d]);
+        assert!(g.finished_since(Finish::Room(d)).is_some());
+        let cats = g.lib.catalog.departments[d].categories.clone();
+        for f in (0..g.lib.faces.len()).filter(|&f| cats.contains(&g.lib.faces[f].category)) {
+            assert!(g.finished_since(Finish::Face(f)).is_some(), "face {f}");
+        }
+        assert!(g.finished_since(Finish::Storey(2)).is_none());
+        assert!(g.finished_since(Finish::Room(0)).is_none());
+        assert_eq!(g.loose.heightfield_errors(), 0);
+        g.cheat(Cheat::Finish(Finish::Library), &mut audio);
+        assert!(g.finished_since(Finish::Library).is_some());
+        assert_eq!(g.total_shelved(), g.total_books());
     }
 
     /// Going to a veiled room leaves you in front of its veil, not shut in behind it.

@@ -155,11 +155,7 @@ impl Game {
             let hours = c.stopped_at + since / 3600.0;
             for (hand, turns) in c.hands.iter().zip([hours / 12.0, hours]) {
                 let turn = Quat::from_axis_angle(c.n, -(turns - libm::floorf(turns)) * std::f32::consts::TAU);
-                let pose = motion::Pose {
-                    turn,
-                    shift: c.face - turn * c.face,
-                };
-                out.push(pose.inst(hand));
+                out.push(motion::Pose::about(c.face, (turn, Vec3::ZERO)).inst(hand));
             }
             let haze = 1.0 - (since / 2.0).min(1.0);
             if haze > 0.0 {
@@ -181,7 +177,8 @@ impl Game {
     /// level, and how hard (m/s²), gusting. Its vane's arrow points into it.
     pub(super) fn draught(&self) -> Option<Vec2> {
         let (m, rest) = self.lib.vane?;
-        let arrow = motion::pose_of(&self.lib.movers, m, self.clock).turn * rest;
+        let since = |f| self.finished_since(f);
+        let arrow = motion::pose_of(&self.lib.movers, m, self.clock, &since).turn * rest;
         let from = Vec2::new(arrow.x, arrow.z).normalize_or_zero();
         let t = self.time;
         let gust = 1.0 + GUSTS * (0.6 * libm::sinf(t * 0.73) + 0.4 * libm::sinf(t * 1.9 + 1.3));

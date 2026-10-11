@@ -1,6 +1,7 @@
 //! Game state: player, books in motion, upgrades, progression, save/load (familiars
 //! in `familiar`, cheats in `cheats`).
 
+mod celebrate;
 mod cheats;
 mod familiar;
 mod mood;
@@ -9,6 +10,7 @@ mod pacing;
 mod rooms;
 mod sound;
 
+use celebrate::{Filled, Finished, LONG_AGO};
 pub use cheats::Cheat;
 use familiar::Familiar;
 pub use familiar::Role;
@@ -420,8 +422,19 @@ struct Particle {
     vel: Vec3,
     life: f32,
     max: f32,
-    color: [f32; 3],
-    size: f32,
+    /// What it is: an `EMISSIVE` spark glows by w and fades as it goes; anything else
+    /// (a petal, a scrap of paper) tumbles by `spin` and shrinks away at the end.
+    kind: u32,
+    rgba: [f32; 4],
+    size: Vec3,
+    rot: Quat,
+    spin: Vec3,
+    /// How it rises (m/s², falling if negative), how fast its speed dies away, how
+    /// hard it is pushed about at random (m/s²), and how long it takes to fade in.
+    lift: f32,
+    drag: f32,
+    wander: f32,
+    rise: f32,
 }
 
 /// The compass: the way to the active book's slot (Sort Sense), or to its
@@ -632,6 +645,8 @@ pub struct Game {
     poses: Vec<motion::Pose>,
     /// When each of the Clockworks' stopped clocks started again (`clock`), if it has.
     started: Vec<Option<f64>>,
+    /// When each part of the library was finished (`celebrate`).
+    finished: Finished,
     /// The first folio taken this session has been explained.
     told_folio: bool,
     /// Just outside the Arcanum's doorway, where couriers leave its books while its
@@ -786,6 +801,7 @@ impl Game {
             clock: 0.0,
             poses: Vec::new(),
             started: vec![None; lib.stopped.len()],
+            finished: Finished::new(&lib),
             told_folio: false,
             threshold,
             wary: Default::default(),
@@ -1015,7 +1031,13 @@ impl Game {
     pub fn update(&mut self, dt: f32, input: &Input, audio: &mut Audio, can_play: bool) {
         self.time += dt;
         self.clock += dt as f64;
-        motion::pose(&self.lib.movers, self.clock, &mut self.poses);
+        let (finished, clock) = (&self.finished, self.clock);
+        motion::pose(
+            &self.lib.movers,
+            clock,
+            &|f| finished.when(f).map(|t| clock - t),
+            &mut self.poses,
+        );
         if can_play {
             self.play_time += dt as f64;
         }
@@ -1122,6 +1144,7 @@ impl Game {
         self.home_tossed(&landings);
         self.update_familiars(dt);
         self.update_particles(dt);
+        self.celebrate(dt, audio);
 
         // Lanterns ease toward their category completion.
         for c in 0..self.lib.catalog.categories.len() {
@@ -1852,37 +1875,31 @@ impl Game {
     }
 
     /// Book `b` is home: its state, the counts, and the lumens it earns with any
-    /// series or category bonus. Returns whether it completed its series and its
-    /// category. No sound or sparkle; `on_shelved` adds those.
-    fn credit_shelved(&mut self, b: u32) -> (bool, bool) {
+    /// series or category bonus. Returns what it finished. No sound or sparkle;
+    /// `on_shelved` adds those.
+    fn credit_shelved(&mut self, b: u32) -> Filled {
         let bi = b as usize;
         self.state[bi] = BookState::Shelved;
         self.pos[bi] = self.lib.books[bi].slot_pos;
         self.rot[bi] = self.lib.books[bi].slot_rot;
-        let s = self.lib.books[bi].series as usize;
-        let cat = self.lib.series[s].category;
-        self.series_shelved[s] += 1;
-        self.category_shelved[cat] += 1;
-        self.dept_shelved[self.lib.dept_of(cat)] += 1;
+        let filled = self.count_shelved(b, self.clock);
         self.lumens += 1;
         self.earned += 1;
         self.dirty_save = true;
-        let series_done = self.series_shelved[s] == self.lib.series[s].volumes;
-        if series_done {
-            let bonus = self.lib.series[s].volumes as u64;
+        if filled.series {
+            let bonus = self.lib.series[self.lib.books[bi].series as usize].volumes as u64;
             self.lumens += bonus;
             self.earned += bonus;
         }
-        let category_done = self.category_shelved[cat] == self.lib.category_books[cat];
-        if category_done {
+        if filled.category {
             self.lumens += 100;
             self.earned += 100;
         }
-        (series_done, category_done)
+        filled
     }
 
     fn on_shelved(&mut self, b: u32, audio: &mut Audio, thunks: &mut u32) {
-        let (series_done, category_done) = self.credit_shelved(b);
+        let filled = self.credit_shelved(b);
         let bi = b as usize;
         let s = self.lib.books[bi].series as usize;
         let cat = self.lib.series[s].category;
@@ -1894,7 +1911,7 @@ impl Game {
         let bright = [col[0] * 3.0 + 0.4, col[1] * 3.0 + 0.35, col[2] * 3.0 + 0.2];
         self.burst(self.lib.books[bi].slot_pos, 5, bright, 0.5);
         let ser = &self.lib.series[s];
-        if series_done && ser.volumes > 1 {
+        if filled.series && ser.volumes > 1 {
             let bonus = ser.volumes;
             audio.play_pitched(Sfx::Chime, 0.45, ser.volumes as usize);
             let title = ser.title.clone();
@@ -1908,7 +1925,7 @@ impl Game {
                 self.burst(p, 6, [1.6, 1.2, 0.5], 0.9);
             }
         }
-        if series_done {
+        if filled.series {
             for k in self.start_clocks() {
                 audio.play_at(Sfx::Veil, 0.6, self.lib.stopped[k].face);
                 self.toast(
@@ -1918,7 +1935,7 @@ impl Game {
                 );
             }
         }
-        if category_done {
+        if filled.category {
             audio.play(Sfx::Fanfare, 0.7);
             let c = catalog::category_color(&self.lib.catalog.categories[cat]);
             self.toast(
@@ -1932,8 +1949,21 @@ impl Game {
             let center = self.lib.category_center[cat];
             self.burst(center + Vec3::Y * 1.5, 120, [c[0] * 4.0, c[1] * 4.0, c[2] * 4.0], 2.0);
         }
+        if filled.room && self.lib.rooms.len() > 1 {
+            let name = &self.lib.catalog.departments[self.lib.dept_of(cat)].name;
+            self.toast(format!("The {name} is in order."), [1.0, 0.9, 0.7], true);
+        }
+        if filled.storey && self.lib.storeys() > 1 {
+            let storey =
+                ["ground floor", "first floor", "top floor"][self.lib.rooms[self.lib.dept_of(cat)].level.min(2)];
+            self.toast(
+                format!("Every room on the {storey} is in order."),
+                [1.0, 0.92, 0.75],
+                true,
+            );
+        }
         self.check_gates(audio);
-        if self.total_shelved() == self.total_books() {
+        if filled.library {
             self.toast(
                 "Every book is home. The library sighs, contented.".into(),
                 [1.0, 0.95, 0.8],
@@ -1954,8 +1984,15 @@ impl Game {
                 vel: v * 0.6,
                 life: 0.0,
                 max: life * self.rng.gen_range(0.6..1.2),
-                color,
-                size: self.rng.gen_range(0.012..0.03),
+                kind: kind::EMISSIVE,
+                rgba: [color[0], color[1], color[2], 2.5],
+                size: Vec3::splat(self.rng.gen_range(0.012..0.03)),
+                rot: Quat::IDENTITY,
+                spin: Vec3::ZERO,
+                lift: 0.15,
+                drag: 1.5,
+                wander: 0.0,
+                rise: 0.0,
             });
         }
     }
@@ -1964,8 +2001,19 @@ impl Game {
         for p in &mut self.particles {
             p.life += dt;
             p.pos += p.vel * dt;
-            p.vel *= 1.0 - dt * 1.5;
-            p.vel.y += dt * 0.15;
+            p.vel *= 1.0 - dt * p.drag;
+            p.vel.y += dt * p.lift;
+            if p.wander > 0.0 {
+                let push = Vec3::new(
+                    self.rng.gen_range(-1.0..1.0),
+                    self.rng.gen_range(-1.0..1.0),
+                    self.rng.gen_range(-1.0..1.0),
+                );
+                p.vel += push * p.wander * dt;
+            }
+            if p.spin != Vec3::ZERO {
+                p.rot = Quat::from_scaled_axis(p.spin * dt) * p.rot;
+            }
         }
         self.particles.retain(|p| p.life < p.max);
     }
@@ -2124,10 +2172,7 @@ impl Game {
             self.state[bi] = BookState::Shelved;
             self.pos[bi] = self.lib.books[bi].slot_pos;
             self.rot[bi] = self.lib.books[bi].slot_rot;
-            let s = self.lib.books[bi].series as usize;
-            self.series_shelved[s] += 1;
-            self.category_shelved[cat] += 1;
-            self.dept_shelved[self.lib.dept_of(cat)] += 1;
+            self.count_shelved(b, self.clock);
         }
     }
 
@@ -2207,7 +2252,10 @@ impl Game {
         };
         let t = self.time;
         let room = MAX_LIGHTS - list.len();
+        // A light riding a mover is out while the mover is not there, and dimmed as it is.
+        let riding = |l: &LightDef| l.rides.and_then(|m| self.poses.get(m as usize));
         let mut near: Vec<(f32, usize)> = (self.lib.lights.iter().enumerate())
+            .filter(|(_, l)| riding(l).is_none_or(|p| p.shown() && p.glow > 0.0))
             .map(|(i, l)| (l.pos.distance(eye) - l.radius, i))
             .collect();
         if near.len() > room {
@@ -2216,16 +2264,16 @@ impl Game {
         }
         for (_, li) in near {
             let l = &self.lib.lights[li];
-            let pos = match l.rides.and_then(|m| self.poses.get(m as usize)) {
-                Some(pose) => pose.point(l.pos),
-                None => l.pos,
+            let (pos, glow) = match riding(l) {
+                Some(pose) => (pose.point(l.pos), pose.glow),
+                None => (l.pos, 1.0),
             };
             match l.kind {
-                LightKind::Static => push(&mut list, pos, l.radius, l.color, l.intensity),
+                LightKind::Static => push(&mut list, pos, l.radius, l.color, l.intensity * glow),
                 LightKind::Flicker => {
                     let f =
                         0.88 + 0.08 * libm::sinf(t * 7.3 + li as f32 * 1.7) + 0.05 * libm::sinf(t * 13.1 + li as f32);
-                    push(&mut list, pos, l.radius, l.color, l.intensity * f);
+                    push(&mut list, pos, l.radius, l.color, l.intensity * f * glow);
                 }
                 LightKind::Lantern(c) => {
                     let g = self.lantern_glow[c];
@@ -2237,7 +2285,7 @@ impl Game {
                         l.color[1] * (1.0 - k) + cc[1] * k,
                         l.color[2] * (1.0 - k) + cc[2] * k,
                     ];
-                    push(&mut list, pos, l.radius + g * 2.0, col, l.intensity + g * 1.6);
+                    push(&mut list, pos, l.radius + g * 2.0, col, (l.intensity + g * 1.6) * glow);
                 }
             }
         }
@@ -2431,14 +2479,19 @@ impl Game {
         // Particles and dust motes.
         for p in &self.particles {
             let k = 1.0 - p.life / p.max;
-            dyn_insts.push(Inst::new(
-                p.pos,
-                Quat::IDENTITY,
-                Vec3::splat(p.size * k.max(0.1)),
-                kind::EMISSIVE,
-                [p.color[0], p.color[1], p.color[2], 2.5 * k],
-                0,
-            ));
+            let fade = if p.rise > 0.0 { (p.life / p.rise).min(1.0) } else { 1.0 };
+            let inst = if p.kind == kind::EMISSIVE {
+                let [r, g, b, w] = p.rgba;
+                Inst::new(p.pos, p.rot, p.size * k.max(0.1), p.kind, [r, g, b, w * k * fade], 0)
+            } else {
+                // Whole until its last fifth, then shrinking away.
+                Inst::new(p.pos, p.rot, p.size * ((k * 5.0).min(1.0) * fade), p.kind, p.rgba, 0)
+            };
+            if kind::translucent(p.kind) {
+                trans.push(inst);
+            } else {
+                dyn_insts.push(inst);
+            }
         }
         // A charging toss: a dotted arc and a ring where it lands.
         if !self.toss_arc.is_empty() {
@@ -2551,11 +2604,17 @@ impl Game {
         let planes = gfx::frustum(self.view_proj(aspect));
         let eye = self.player.eye();
         if self.poses.len() != self.lib.movers.len() {
-            motion::pose(&self.lib.movers, self.clock, &mut self.poses);
+            let (finished, clock) = (&self.finished, self.clock);
+            motion::pose(
+                &self.lib.movers,
+                clock,
+                &|f| finished.when(f).map(|t| clock - t),
+                &mut self.poses,
+            );
         }
         for (m, pose) in self.lib.movers.iter().zip(&self.poses) {
             let c = pose.point(m.pivot);
-            if c.distance(eye) - m.reach < MOVERS_SEEN && gfx::ball_visible(&planes, c, m.reach) {
+            if pose.shown() && c.distance(eye) - m.reach < MOVERS_SEEN && gfx::ball_visible(&planes, c, m.reach) {
                 for i in &self.lib.moving_insts[m.parts.start as usize..m.parts.end as usize] {
                     let to = if kind::translucent(i.kind) {
                         &mut trans
@@ -2767,11 +2826,7 @@ impl Game {
                 self.state[b as usize] = BookState::Shelved;
                 self.pos[b as usize] = self.lib.books[b as usize].slot_pos;
                 self.rot[b as usize] = self.lib.books[b as usize].slot_rot;
-                let s = self.lib.books[b as usize].series as usize;
-                let c = self.lib.series[s].category;
-                self.series_shelved[s] += 1;
-                self.category_shelved[c] += 1;
-                self.dept_shelved[self.lib.dept_of(c)] += 1;
+                self.count_shelved(b, self.clock - LONG_AGO);
             }
         }
         // Gates follow from what is shelved; lift them before anything is laid down.

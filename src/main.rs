@@ -449,8 +449,20 @@ impl Running {
                 Some("menu") => self.hud.menu_open = w.get(1) == Some(&"on"),
                 Some("cheats") => self.hud.cheats_open = w.get(1) == Some(&"on"),
                 // cheat lumens <n> | skills | veils | shelve <fraction> | goto [<department>]
+                // | finish face|category|room|storey <n> | finish all
                 Some("cheat") => {
+                    use library::Finish;
+                    let n = || w.get(3).and_then(|n| n.parse().ok());
                     let c = match w.get(1).copied() {
+                        Some("finish") => match w.get(2).copied() {
+                            Some("face") => n().map(Finish::Face),
+                            Some("category") => n().map(Finish::Category),
+                            Some("room") => n().map(Finish::Room),
+                            Some("storey") => n().map(Finish::Storey),
+                            Some("all") => Some(Finish::Library),
+                            _ => None,
+                        }
+                        .map(game::Cheat::Finish),
                         Some("lumens") => Some(game::Cheat::Lumens(num(2) as u64)),
                         Some("skills") => Some(game::Cheat::AllSkills),
                         Some("veils") => Some(game::Cheat::LiftVeils),

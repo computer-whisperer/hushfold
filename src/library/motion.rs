@@ -4,11 +4,14 @@
 //!
 //! A mover is a pivot and a `Motion` about it, and its parts are laid down where they
 //! are at rest (`Library::moving`), as fixed pieces are; it can ride another mover (a
-//! moon on a planet's arm), and a light can ride it. Each frame the game poses every
-//! mover from the clock (`pose`) and draws the parts of those in view.
+//! moon on a planet's arm), and a light can ride it. A mover can wait for a part of
+//! the library to be finished (`celebrate::Awaits`): hidden until then, or still, or
+//! dark. Each frame the game poses every mover from the clock and what is finished
+//! (`pose`) and draws the parts of those in view.
 
 use super::Library;
-use crate::gfx::Inst;
+use super::celebrate::{Awaits, Change, Finish};
+use crate::gfx::{Inst, kind};
 use glam::{Quat, Vec3};
 use std::f64::consts::TAU;
 use std::ops::Range;
@@ -32,6 +35,9 @@ pub enum Motion {
     /// Sliding out along `travel` and back once every `period`, resting at each end: a
     /// library ladder along its rail.
     Slide { travel: Vec3, period: f32 },
+    /// Not moving of itself: a piece that only waits (`celebrate`).
+    #[allow(dead_code)] // TEMP (round 7), as `celebrate`
+    Still,
 }
 
 impl Motion {
@@ -74,13 +80,14 @@ impl Motion {
                 let out = if c < 2.0 { leg(c) } else { 1.0 - leg(c - 2.0) };
                 (Quat::IDENTITY, travel * out)
             }
+            Motion::Still => (Quat::IDENTITY, Vec3::ZERO),
         }
     }
 }
 
 /// A moving thing: its pivot and motion, where it starts in its cycle (seconds), the
-/// mover it rides (an earlier one), its parts in `Library::moving_insts`, and how far
-/// they reach from the pivot (for culling).
+/// mover it rides (an earlier one), its parts in `Library::moving_insts`, how far
+/// they reach from the pivot (for culling), and what it waits for, if anything.
 #[derive(Clone, Debug)]
 pub struct Mover {
     pub pivot: Vec3,
@@ -89,26 +96,86 @@ pub struct Mover {
     pub rides: Option<u32>,
     pub parts: Range<u32>,
     pub reach: f32,
+    pub awaits: Option<Awaits>,
 }
 
-/// A mover's pose at some time: a point at rest at `p` is then at `turn * p + shift`.
+/// How long ago each part of the library was finished (seconds; `None`: not yet).
+pub type Since<'a> = &'a dyn Fn(Finish) -> Option<f64>;
+
+impl Mover {
+    /// Its own pose at time `t`, not counting what it rides.
+    fn own_pose(&self, t: f64, since: Since) -> Pose {
+        let Some(a) = self.awaits else {
+            return Pose::about(self.pivot, self.motion.at(t + self.phase as f64));
+        };
+        let s = since(a.finish);
+        let (turn, offset) = if a.still {
+            self.motion.at(a.motion_time(s))
+        } else {
+            self.motion.at(t + self.phase as f64)
+        };
+        let k = a.progress(s);
+        let begun = s.is_some_and(|s| s >= a.delay as f64);
+        // The change, about the pivot, after its own motion.
+        let (change, scale, by, glow) = match a.change {
+            Change::Arrives { .. } if !begun => (Quat::IDENTITY, 0.0, Vec3::ZERO, 1.0),
+            Change::Arrives { from, grow } => (Quat::IDENTITY, grow + (1.0 - grow) * k, from * (1.0 - k), 1.0),
+            Change::Shifts { by, turn, scale } => (Quat::IDENTITY.slerp(turn, k), 1.0 + (scale - 1.0) * k, by * k, 1.0),
+            Change::Kindles { dim } => (Quat::IDENTITY, 1.0, Vec3::ZERO, dim + (1.0 - dim) * k),
+        };
+        let whole = change * turn;
+        Pose {
+            turn: whole,
+            scale,
+            shift: self.pivot + by + change * (offset * scale) - whole * (self.pivot * scale),
+            glow,
+        }
+    }
+}
+
+/// A mover's pose at some time: a point at rest at `p` is then at
+/// `turn * (scale * p) + shift`, and what glows of it glows `glow` times as bright.
+/// At `scale` 0 it is not there.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pose {
     pub turn: Quat,
     pub shift: Vec3,
+    pub scale: f32,
+    pub glow: f32,
 }
 
 impl Pose {
+    /// Turned and moved by `(turn, offset)` about `pivot`.
+    pub fn about(pivot: Vec3, (turn, offset): (Quat, Vec3)) -> Pose {
+        Pose {
+            turn,
+            shift: pivot - turn * pivot + offset,
+            scale: 1.0,
+            glow: 1.0,
+        }
+    }
+
     pub fn point(&self, p: Vec3) -> Vec3 {
-        self.turn * p + self.shift
+        self.turn * (p * self.scale) + self.shift
+    }
+
+    /// Whether what it poses is there to be drawn (or lit).
+    pub fn shown(&self) -> bool {
+        self.scale > 1e-4
     }
 
     /// A part laid down at rest as `i`, posed.
     pub fn inst(&self, i: &Inst) -> Inst {
         let (rest, pos) = (Vec3::from(i.pos), self.point(Vec3::from(i.pos)));
+        let mut color = i.color;
+        if kind::glows(i.kind) {
+            color[3] *= self.glow;
+        }
         Inst {
             pos: pos.into(),
             rot: (self.turn * Quat::from_array(i.rot)).normalize().into(),
+            scale: (Vec3::from(i.scale) * self.scale).into(),
+            color,
             moved: (Vec3::from(i.moved) + pos - rest).into(),
             ..*i
         }
@@ -118,35 +185,29 @@ impl Pose {
     fn after(&self, first: &Pose) -> Pose {
         Pose {
             turn: self.turn * first.turn,
-            shift: self.turn * first.shift + self.shift,
+            shift: self.turn * (first.shift * self.scale) + self.shift,
+            scale: self.scale * first.scale,
+            glow: self.glow * first.glow,
         }
     }
 }
 
 /// Mover `m`'s pose at time `t`, with those it rides (one mover's, without posing the
 /// rest).
-pub fn pose_of(movers: &[Mover], m: u32, t: f64) -> Pose {
+pub fn pose_of(movers: &[Mover], m: u32, t: f64, since: Since) -> Pose {
     let mv = &movers[m as usize];
-    let (turn, offset) = mv.motion.at(t + mv.phase as f64);
-    let own = Pose {
-        turn,
-        shift: mv.pivot - turn * mv.pivot + offset,
-    };
+    let own = mv.own_pose(t, since);
     match mv.rides {
-        Some(r) => pose_of(movers, r, t).after(&own),
+        Some(r) => pose_of(movers, r, t, since).after(&own),
         None => own,
     }
 }
 
 /// Every mover's pose at time `t` (seconds), into `out`.
-pub fn pose(movers: &[Mover], t: f64, out: &mut Vec<Pose>) {
+pub fn pose(movers: &[Mover], t: f64, since: Since, out: &mut Vec<Pose>) {
     out.clear();
     for m in movers {
-        let (turn, offset) = m.motion.at(t + m.phase as f64);
-        let own = Pose {
-            turn,
-            shift: m.pivot - turn * m.pivot + offset,
-        };
+        let own = m.own_pose(t, since);
         let posed = match m.rides {
             Some(r) => out[r as usize].after(&own),
             None => own,
@@ -170,6 +231,7 @@ impl Library {
             rides,
             parts: at..at,
             reach: 0.0,
+            awaits: None,
         });
         self.movers.len() as u32 - 1
     }
@@ -201,6 +263,7 @@ mod tests {
             rides,
             parts: 0..0,
             reach: 1.0,
+            awaits: None,
         }
     }
 
@@ -227,7 +290,7 @@ mod tests {
             },
         ] {
             let mut out = Vec::new();
-            pose(&[mover(motion, None)], 0.0, &mut out);
+            pose(&[mover(motion, None)], 0.0, &|_| None, &mut out);
             let p = out[0].point(Vec3::new(3.0, 1.0, 0.0));
             assert!(p.abs_diff_eq(Vec3::new(3.0, 1.0, 0.0), 1e-4), "{motion:?}: {p}");
         }
@@ -242,7 +305,7 @@ mod tests {
         let mut riders = vec![mover(spin, None), mover(spin, Some(0))];
         riders[1].pivot = Vec3::new(3.0, 2.0, 3.0);
         let mut out = Vec::new();
-        pose(&riders, 2.5, &mut out);
+        pose(&riders, 2.5, &|_| None, &mut out);
         // A quarter turn: the rider's pivot has gone round the first's.
         assert!(out[0].point(riders[0].pivot).abs_diff_eq(riders[0].pivot, 1e-5));
         let moved = out[1].point(riders[1].pivot);
@@ -252,6 +315,74 @@ mod tests {
         let (a, b) = (Motion::at(spin, t).0, Motion::at(spin, t + 1.0 / 60.0).0);
         let step = a.angle_between(b);
         assert!((step - rate / 60.0).abs() < 1e-4, "{step}");
+    }
+
+    /// A mover waiting for a room: hidden, then coming in to rest; there, then moved,
+    /// turned and shrunk, and staying so; dark, then lit; still, then turning. A rider
+    /// shares what it rides changes.
+    #[test]
+    fn a_waiting_mover_changes_once_finished() {
+        let room = Finish::Room(3);
+        let pose_at = |a: Awaits, motion: Motion, since: Option<f64>| {
+            let mut m = mover(motion, None);
+            m.awaits = Some(a);
+            let mut out = Vec::new();
+            pose(&[m], 7.0, &move |f| (f == room).then_some(since).flatten(), &mut out);
+            out[0]
+        };
+        let p = Vec3::new(2.0, 2.0, 3.0);
+        let arrives = Awaits::new(
+            room,
+            Change::Arrives {
+                from: Vec3::Y * 2.0,
+                grow: 0.5,
+            },
+        )
+        .after(1.0);
+        for since in [None, Some(0.5)] {
+            assert!(!pose_at(arrives, Motion::Still, since).shown(), "{since:?}");
+        }
+        let half = pose_at(arrives, Motion::Still, Some(2.25));
+        assert!(half.shown() && half.scale > 0.5 && half.scale < 1.0);
+        assert!(half.point(p).y > p.y);
+        let done = pose_at(arrives, Motion::Still, Some(10.0));
+        assert!(done.point(p).abs_diff_eq(p, 1e-5), "{}", done.point(p));
+        let gone = Change::Shifts {
+            by: Vec3::X,
+            turn: Quat::from_rotation_y(1.0),
+            scale: 0.0,
+        };
+        assert!(
+            pose_at(Awaits::new(room, gone), Motion::Still, None)
+                .point(p)
+                .abs_diff_eq(p, 1e-5)
+        );
+        assert!(!pose_at(Awaits::new(room, gone), Motion::Still, Some(3.0)).shown());
+        let kindles = Awaits::new(room, Change::Kindles { dim: 0.2 });
+        assert!((pose_at(kindles, Motion::Still, None).glow - 0.2).abs() < 1e-6);
+        assert!((pose_at(kindles, Motion::Still, Some(3.0)).glow - 1.0).abs() < 1e-6);
+        let spin = Motion::Spin {
+            axis: Vec3::Y,
+            rate: 1.0,
+        };
+        let still = kindles.still();
+        assert!(pose_at(still, spin, None).point(p).abs_diff_eq(p, 1e-5));
+        assert!(pose_at(still, spin, Some(0.2)).point(p).distance(p) < 0.05);
+        assert!(pose_at(still, spin, Some(4.0)).point(p).distance(p) > 0.5);
+        // A rider on a mover half grown is half grown about that mover's pivot.
+        let mut movers = vec![mover(Motion::Still, None), mover(Motion::Still, Some(0))];
+        movers[0].awaits = Some(Awaits::new(
+            room,
+            Change::Arrives {
+                from: Vec3::ZERO,
+                grow: 0.0,
+            },
+        ));
+        let mut out = Vec::new();
+        pose(&movers, 0.0, &|_| Some(1.25), &mut out);
+        let pivot = movers[0].pivot;
+        assert!((out[1].scale - 0.5).abs() < 1e-5);
+        assert!(out[1].point(p).abs_diff_eq(pivot + (p - pivot) * 0.5, 1e-5));
     }
 
     /// A posed part is drawn where it has moved to, and remembers where it was laid
@@ -267,7 +398,7 @@ mod tests {
         let part = Inst::new(Vec3::new(1.0, 0.5, 3.0), Quat::IDENTITY, Vec3::ONE, 0, [1.0; 4], 0);
         let mut out = Vec::new();
         for t in [0.3, 0.7, 1.9] {
-            pose(&movers, t, &mut out);
+            pose(&movers, t, &|_| None, &mut out);
             let posed = out[1].inst(&part);
             let rest = Vec3::from(posed.pos) - Vec3::from(posed.moved);
             assert!(

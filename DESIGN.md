@@ -274,6 +274,27 @@ session.
   session. Standing still takes them, as does reach (Sifting Touch, Lodestone
   Grasp), and familiars, whom they don't mind.
 
+## When a part is finished
+A side of a bookcase, a category, a room, a storey and the whole library are each
+finished when every book that belongs in it is home (`library::Finish`). Each has
+its moment when that happens and a lasting change after it. Generation lays both
+down where it lays down everything else (`library/celebrate.rs`):
+- **Movers that wait** (`Library::awaiting`, or `waiting` for a piece that only
+  waits). A piece can be hidden until then and come in, rising and growing. It can be
+  there and then move off, turn or go, and stay that way. Or it can be dim until then
+  and kindle, along with the lights it carries. Its own motion can also wait, still
+  until then and easing up to speed.
+- **Sparks** (`Library::sparks`). These are glints, petals or scraps of paper,
+  either for a moment or for good.
+- **Sounds** (`Library::cue`).
+
+The game knows when each part was finished (`game/celebrate.rs`). It follows from
+what is shelved, so saves don't store it: what was finished before a load counts as
+finished long ago, with its lasting change in place and its moment past. A room, a
+storey and the library each say so in words when finished. The cheat window and
+scripts (`cheat finish room|storey|face|category <n>`, `cheat finish all`) finish
+any part at once.
+
 ## Loose books
 Every book not shelved or carried is loose (`src/loose.rs`), simulated with
 semi-physics rather than rigid bodies (see SCALING.md for why):

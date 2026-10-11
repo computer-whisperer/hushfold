@@ -2,7 +2,7 @@
 
 use crate::catalog;
 use crate::game::{Aim, Cheat, ECHO_SPEED, Game, Group, SPELLS, Tier, UPGRADES, Upg, spell_times, upg_costs, upg_def};
-use crate::library::{LabelKind, Layout, ROWS};
+use crate::library::{Finish, LabelKind, Layout, ROWS};
 use crate::settings::Settings;
 use egui::{Align2, Color32, FontFamily, FontId, Pos2, Rect, RichText, Stroke, Vec2};
 use glam::{Mat4, Vec3, Vec4};
@@ -910,6 +910,18 @@ fn cheat_window(ctx: &egui::Context, g: &Game, actions: &mut Vec<HudAction>) {
                 ui,
                 "Files books from the piles until every open department is that far home, then the ones whose veils that lifts. The big steps take a few seconds.",
             );
+            heading(ui, "Finish".into());
+            ui.horizontal(|ui| {
+                if let Some(d) = g.lib.room_at(g.player.pos) {
+                    button(ui, "The room you are in", Cheat::Finish(Finish::Room(d)));
+                }
+                if g.lib.storeys() > 1 {
+                    let l = g.lib.world.level_at(g.player.pos);
+                    button(ui, "This storey", Cheat::Finish(Finish::Storey(l)));
+                }
+                button(ui, "Everything", Cheat::Finish(Finish::Library));
+            });
+            note(ui, "Shelves every book of it at once, so it is finished and celebrates.");
             heading(ui, "Go to".into());
             egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                 button(ui, "Where the game starts", Cheat::GoTo(None));

@@ -104,6 +104,12 @@ pub mod kind {
     pub fn translucent(k: u32) -> bool {
         matches!(k, CLEAR | FIRE | MIST)
     }
+
+    /// Whether instances of kind `k` glow by their colour's w (and so can be dimmed
+    /// and kindled: `celebrate::Change::Kindles`).
+    pub fn glows(k: u32) -> bool {
+        matches!(k, EMISSIVE | GLASS | PAPER | CRYSTAL | FIRE)
+    }
 }
 
 #[repr(C)]

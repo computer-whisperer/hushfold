@@ -4,6 +4,9 @@
 //! each piece is declared once, as `decor` (drawn only), `solid` (drawn and in the
 //! way) or drawn parts with one `collide` box standing for them.
 
+// TEMP (round 7): the rooms' celebrations, being built, use what the kit lays out.
+#[allow(dead_code)]
+pub mod celebrate;
 mod great;
 mod hall;
 mod kit;
@@ -19,6 +22,8 @@ use crate::gfx::mesh::{self, Mesh, Shape, circle};
 use crate::gfx::{Inst, kind};
 use crate::text::{self, Glyph, Lettering, Style};
 use crate::world::{Gate, Level, NOSING, SLAB, Slab, Stairs, Stops, World, ray_box};
+#[allow(unused_imports)] // TEMP (round 7), as `celebrate`
+pub use celebrate::{Awaits, Change, Cue, Finish, Sparks};
 use glam::{Mat3, Quat, Vec2, Vec3};
 use motion::{Motion, Mover};
 use rand::prelude::*;
@@ -336,6 +341,9 @@ pub struct Library {
     /// The Weatherhouse's vane: the mover that turns it, and its arrow's direction at
     /// rest (it points into the wind).
     pub vane: Option<(u32, Vec3)>,
+    /// Sparks and sounds waiting for a part of the library to be finished (`celebrate`).
+    pub sparks: Vec<celebrate::Sparks>,
+    pub cues: Vec<celebrate::Cue>,
 }
 
 impl Library {
@@ -375,6 +383,8 @@ impl Library {
             stopped: Vec::new(),
             frozen: Vec::new(),
             vane: None,
+            sparks: Vec::new(),
+            cues: Vec::new(),
         };
         match layout {
             Layout::Hall => hall::build(&mut lib, &mut rng),
