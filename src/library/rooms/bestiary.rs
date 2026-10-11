@@ -269,25 +269,15 @@ fn walls(lib: &mut Library, frame: &RoomFrame) {
     let out = frame.out();
     for s in [-1.0f32, 1.0] {
         let (a0, a1) = (s * 8.8, s * 10.4);
-        // The glass is leaded across its own x, so it is turned to lie along the wall.
-        let (lo, hi) = frame.boxed(a0.min(a1), a0.max(a1), far - 0.04, far + 0.04, 1.26, 4.5);
-        let size = hi - lo;
-        let (rot, size) = if size.z > size.x {
-            (
-                Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
-                Vec3::new(size.z, size.y, size.x),
-            )
-        } else {
-            (Quat::IDENTITY, size)
-        };
-        lib.decor(Inst::new(
-            (lo + hi) * 0.5,
-            rot,
-            size,
-            kind::GLASS,
+        let a = (a0.min(a1), a0.max(a1));
+        pane(
+            lib,
+            frame,
+            a,
+            (far - 0.04, far + 0.04),
+            (1.26, 4.5),
             [0.32, 0.42, 0.85, 1.1],
-            0,
-        ));
+        );
         // The sill sits on the panelling's cap.
         let stone = [0.48, 0.45, 0.4];
         lib.decor(piece(

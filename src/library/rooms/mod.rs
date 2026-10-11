@@ -144,6 +144,23 @@ pub(super) fn slab(
     lib.decor(piece(f, a, o, y, kind, rgb));
 }
 
+/// A window's glass over `a`, `o` and heights `y` above the floor, glowing `rgba`
+/// (`kind::GLASS`). Its leading runs across its own x, so it is turned to lie along
+/// the wall it is in.
+pub(super) fn pane(lib: &mut Library, f: &RoomFrame, a: (f32, f32), o: (f32, f32), y: (f32, f32), rgba: [f32; 4]) {
+    let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, y.0, y.1);
+    let size = hi - lo;
+    let (rot, size) = if size.z > size.x {
+        (
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            Vec3::new(size.z, size.y, size.x),
+        )
+    } else {
+        (Quat::IDENTITY, size)
+    };
+    lib.decor(Inst::new((lo + hi) * 0.5, rot, size, kind::GLASS, rgba, 0));
+}
+
 /// In the way of everything: the floor box over `a`, `o`, `h` high.
 pub(super) fn guard(lib: &mut Library, f: &RoomFrame, a: (f32, f32), o: (f32, f32), h: f32) {
     let (lo, hi) = f.boxed(a.0, a.1, o.0, o.1, 0.0, h);

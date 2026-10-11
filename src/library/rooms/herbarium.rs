@@ -193,31 +193,11 @@ fn walls(lib: &mut Library, frame: &RoomFrame) {
 fn glasshouse(lib: &mut Library, frame: &RoomFrame) {
     let (inner, far) = (RoomFrame::A_HALF, RoomFrame::O_FAR);
     let (y0, y1) = (0.7, 5.05);
-    // The glass is leaded across its own x, so a pane is turned to lie along its wall.
-    let pane = |lib: &mut Library, a: (f32, f32), o: (f32, f32)| {
-        let (lo, hi) = frame.boxed(a.0, a.1, o.0, o.1, y0, y1);
-        let size = hi - lo;
-        let (rot, size) = if size.z > size.x {
-            (
-                Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
-                Vec3::new(size.z, size.y, size.x),
-            )
-        } else {
-            (Quat::IDENTITY, size)
-        };
-        lib.decor(Inst::new(
-            (lo + hi) * 0.5,
-            rot,
-            size,
-            kind::GLASS,
-            [0.3, 0.42, 0.8, 1.0],
-            0,
-        ));
-    };
+    let glaze = |lib: &mut Library, a, o| pane(lib, frame, a, o, (y0, y1), [0.3, 0.42, 0.8, 1.0]);
     // Down the right wall: five bays, piers between and a sill under.
     let bays = [(15.3, 18.0), (18.4, 21.1), (21.5, 24.2), (24.6, 27.3), (27.7, 30.4)];
     for &(o0, o1) in &bays {
-        pane(lib, (inner - 0.04, inner + 0.04), (o0, o1));
+        glaze(lib, (inner - 0.04, inner + 0.04), (o0, o1));
     }
     let mut o = 14.9;
     for &(o0, o1) in &bays {
@@ -260,7 +240,7 @@ fn glasshouse(lib: &mut Library, frame: &RoomFrame) {
     // Across the far wall's right half.
     let far_bays = [(1.5, 4.7), (5.1, 8.3), (8.7, 11.9)];
     for &(a0, a1) in &far_bays {
-        pane(lib, (a0, a1), (far - 0.04, far + 0.04));
+        glaze(lib, (a0, a1), (far - 0.04, far + 0.04));
     }
     let mut a = 1.1;
     for &(a0, a1) in &far_bays {
