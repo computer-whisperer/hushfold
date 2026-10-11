@@ -2,8 +2,15 @@
 //! nave from the door to the Great Chronicle on its stand, the stacks running out from
 //! it either side with a marble bust at the end of each, heraldic banners hung down
 //! the nave, and a timeline that writes itself along the walls.
+//!
+//! The timeline is written as the room is put in order: over each category's wall
+//! case when the category is finished, fresh gold ink running along it and the gems in
+//! its medallions kindling; the rest, once the room is finished, by two pens from the
+//! near corners that meet over the tapestry of the ages, whose golden tree then lights
+//! from its root to its crown. The bare-headed busts are crowned with laurel.
 
 use super::*;
+use crate::audio::Sfx;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 /// The stacks: rows across the room at these `o`, each two cases either side of
@@ -21,6 +28,16 @@ const FAR_ENDS: [f32; 4] = [20.8, 24.0, 27.2, 30.45];
 const FRIEZE: (f32, f32) = (3.72, 4.22);
 const MARBLE: [f32; 3] = [0.62, 0.6, 0.56];
 const GOLD: [f32; 4] = [0.66, 0.48, 0.14, 1.0];
+/// Fresh gold ink, as the timeline is written.
+const INK: [f32; 4] = [1.0, 0.62, 0.22, 2.4];
+/// Once the room is finished, two pens set off writing the timeline from the near
+/// ends of the side walls this long after, going this fast (metres a second).
+const PEN_START: f32 = 0.5;
+const PEN: f32 = 5.0;
+/// Over a category's wall case, its stretch is written this long after the category
+/// is finished, taking this long.
+const CASE_START: f32 = 0.4;
+const CASE_SECS: f32 = 2.0;
 
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     walls(lib, frame);
@@ -29,6 +46,8 @@ pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, ti
         for s in [-1.0f32, 1.0] {
             bust(lib, frame, s, o, i * 2 + (s > 0.0) as usize);
         }
+        // Those on the right are bare-headed (bearded, or long-haired).
+        laurel(lib, frame, o);
     }
     for (i, o) in [17.4f32, 20.8, 24.0, 27.2].into_iter().enumerate() {
         for s in [-1.0f32, 1.0] {
@@ -265,11 +284,122 @@ fn tapestry(lib: &mut Library, f: &RoomFrame) {
         kind::CLOTH,
         [0.75, 0.6, 0.25, 1.0],
     );
+    // Once the room is finished and the pens meet over it, the tree lights from its
+    // root: gold thread up the trunk and out along each pair of boughs, their leaves
+    // and then the crown kindling, a warm light coming up on it.
+    let fin = Finish::Room(f.dept);
+    let lit = pens_meet();
+    let thread = [1.0, 0.6, 0.2, 1.1];
+    let grow = |lib: &mut Library, foot: Vec3, centre: Vec3, size: Vec3, q: Quat, (delay, secs): (f32, f32)| {
+        let grows = Awaits::new(
+            fin,
+            Change::Arrives {
+                from: Vec3::ZERO,
+                grow: 0.0,
+            },
+        )
+        .after(delay)
+        .over(secs);
+        let part = Inst::new(at.at + at.q * centre, at.q * q, size, kind::EMISSIVE, thread, 0);
+        lib.waiting(at.at + at.q * foot, grows, [part]);
+    };
+    let z = z + 0.0075;
+    grow(
+        lib,
+        Vec3::new(0.0, y0 + 0.3, z),
+        Vec3::new(0.0, y0 + 0.95, z),
+        Vec3::new(0.13, 1.3, 0.004),
+        Quat::IDENTITY,
+        (lit, 1.2),
+    );
+    let leaf = |k: usize| (lit + 1.5 + k as f32 * 0.4, 0.6);
+    for (k, y) in [1.0f32, 1.35, 1.7].into_iter().enumerate() {
+        let len = 1.2 - k as f32 * 0.25;
+        for s in [-1.0f32, 1.0] {
+            let turn = Quat::from_rotation_z(s * 0.45);
+            let mid = Vec3::new(s * len * 0.42, y0 + y, z + 0.001);
+            let size = Vec3::new(len, 0.07, 0.004);
+            let inner = mid - turn * Vec3::X * (s * len * 0.5);
+            grow(lib, inner, mid, size, turn, (lit + 0.6 + k as f32 * 0.4, 0.9));
+            let tip = Vec3::new(s * len * 0.82, y0 + y + len * 0.36, z + 0.002);
+            let diamond = Vec3::new(0.16, 0.16, 0.004);
+            grow(lib, tip, tip, diamond, Quat::from_rotation_z(FRAC_PI_4), leaf(k));
+            let glints = Sparks {
+                delay: leaf(k).0,
+                lasts: Some(0.8),
+                rate: 25.0,
+                spread: Vec3::splat(0.05),
+                ..Sparks::burst(fin, at.at + at.q * tip)
+            };
+            lib.sparks(glints);
+        }
+    }
+    let crown = Vec3::new(0.0, y0 + 1.95, z + 0.002);
+    let (top, size) = (leaf(3), Vec3::new(0.25, 0.25, 0.004));
+    grow(lib, crown, crown, size, Quat::from_rotation_z(FRAC_PI_4), (top.0, 0.9));
+    lib.sparks(Sparks {
+        delay: top.0,
+        lasts: Some(2.0),
+        rate: 50.0,
+        spread: Vec3::splat(0.12),
+        ..Sparks::burst(fin, at.at + at.q * crown)
+    });
+    let front = at.at + at.q * Vec3::new(0.0, ym, 0.9);
+    let lamp = lib.waiting(
+        front,
+        Awaits::new(fin, Change::Kindles { dim: 0.0 })
+            .after(lit + 0.8)
+            .over(4.0),
+        [],
+    );
+    lib.light_riding(lamp, front, 5.0, [1.0, 0.72, 0.42], 1.3, LightKind::Static);
+    let air = at.at + at.q * Vec3::new(0.0, ym, 0.4);
+    lib.sparks(Sparks::motes(fin, air, f.size(w * 0.45, (y1 - y0) * 0.45, 0.25)));
+    lib.cue(Cue {
+        finish: fin,
+        delay: lit,
+        sound: Sfx::Veil,
+        at: air,
+        volume: 0.5,
+    });
+}
+
+/// How long after the room is finished the pens writing the timeline meet, in the
+/// middle of the far wall: each comes the length of a side wall and half the far wall.
+fn pens_meet() -> f32 {
+    let along = (RoomFrame::O_FAR - RoomFrame::O_NEAR) + RoomFrame::A_HALF;
+    PEN_START + along / PEN
+}
+
+/// When the timeline is written at `x` along run `run` (0 the left wall, going out; 1
+/// the far wall, left to right; 2 the right wall, coming back toward the door), and
+/// what finishing writes it: over a category's wall case, that category, along the
+/// case from its near end; elsewhere the room, as the pens come to it.
+fn written(f: &RoomFrame, run: usize, x: f32) -> (Finish, f32) {
+    let (near, far) = (RoomFrame::O_NEAR, RoomFrame::O_FAR);
+    let mid = (near + far) * 0.5;
+    let room = Finish::Room(f.dept);
+    // The wall cases closing the aisles: the near sides' on the right, the far sides'
+    // on the left (`stacks`).
+    let (o, ends, first) = match run {
+        0 => (mid + x, FAR_ENDS, 1),
+        2 => (mid - x, NEAR_ENDS, 0),
+        _ => return (room, PEN_START + (far - near + RoomFrame::A_HALF - x.abs()) / PEN),
+    };
+    for (i, &end) in ends.iter().enumerate() {
+        let t = (o - (end - UNIT_W * 0.5)) / UNIT_W;
+        if (0.0..=1.0).contains(&t) {
+            let cat = f.categories.start + 2 * i + first;
+            return (Finish::Category(cat), CASE_START + t * CASE_SECS);
+        }
+    }
+    (room, PEN_START + (o - near) / PEN)
 }
 
 /// The timeline: a band round the side and far walls over the cases, a gilt rule
 /// along it that glows faintly, as if still being written, and a medallion for each
-/// age above or below it.
+/// age above or below it, an amber gem set in it. As the room is put in order fresh
+/// ink runs along the rule and the gems kindle (`written`, `ink`).
 fn timeline(lib: &mut Library, f: &RoomFrame) {
     let ah = RoomFrame::A_HALF;
     let (near, far) = (RoomFrame::O_NEAR, RoomFrame::O_FAR);
@@ -291,6 +421,7 @@ fn timeline(lib: &mut Library, f: &RoomFrame) {
         (0.0, 0.018),
     ];
     let medallion = lib.shape(Mesh::lathe(&coin.map(Vec2::from), 24));
+    let gem = lib.shape(Mesh::dome(16)).sized(Vec3::new(0.1, 0.02, 0.1));
     for (i, (at, len)) in runs.into_iter().enumerate() {
         // The far wall's run stops short of the side walls' bands.
         let len = if i == 1 { len - 0.2 } else { len - 0.1 };
@@ -338,8 +469,110 @@ fn timeline(lib: &mut Library, f: &RoomFrame) {
                 kind::METAL,
                 GOLD,
             );
+            // Plain amber glass until its age is written.
+            let (fin, delay) = written(f, i, x);
+            let c = at.at + at.q * Vec3::new(x, ym + up * 0.11, 0.066);
+            let kindles = Awaits::new(fin, Change::Kindles { dim: 0.0 })
+                .after(delay + 0.1)
+                .over(0.8);
+            let set = at.q * Quat::from_rotation_x(FRAC_PI_2);
+            lib.waiting(c, kindles, [gem.inst(c, set, kind::CRYSTAL, [1.0, 0.72, 0.3, 3.5])]);
+        }
+        // The fresh ink: from each wall case's ends (and, on the far wall, from its
+        // middle, where the pens meet) in pieces no longer than a pen's stroke.
+        let half = (len - 0.1) * 0.5;
+        let mid = (RoomFrame::O_NEAR + RoomFrame::O_FAR) * 0.5;
+        let mut cuts = vec![-half, half];
+        match i {
+            0 => cuts.extend(
+                FAR_ENDS
+                    .iter()
+                    .flat_map(|e| [e - UNIT_W * 0.5, e + UNIT_W * 0.5])
+                    .map(|o| o - mid),
+            ),
+            2 => cuts.extend(
+                NEAR_ENDS
+                    .iter()
+                    .flat_map(|e| [e - UNIT_W * 0.5, e + UNIT_W * 0.5])
+                    .map(|o| mid - o),
+            ),
+            _ => cuts.push(0.0),
+        }
+        cuts.retain(|x| x.abs() <= half);
+        cuts.sort_by(f32::total_cmp);
+        for w in cuts.windows(2) {
+            let n = ((w[1] - w[0]) / 1.8).ceil() as usize;
+            for k in 0..n {
+                let x = |k: usize| w[0] + (w[1] - w[0]) * k as f32 / n as f32;
+                ink(lib, f, (&at, i, ym), (x(k), x(k + 1)));
+            }
         }
     }
+}
+
+/// Fresh ink over the timeline's rule from `x0` to `x1` along run `run` (on the wall
+/// at `at`, the rule `ym` up), written from whichever end is written first (`written`),
+/// gold flecks falling from it as it goes.
+fn ink(lib: &mut Library, f: &RoomFrame, (at, run, ym): (&Spot, usize, f32), (x0, x1): (f32, f32)) {
+    // Asked just inside the ends, so a piece over a case is the case's.
+    let e = (x1 - x0) * 0.01;
+    let ((fin, d0), (_, d1)) = (written(f, run, x0 + e), written(f, run, x1 - e));
+    let (start, delay, secs) = if d0 <= d1 { (x0, d0, d1 - d0) } else { (x1, d1, d0 - d1) };
+    let secs = secs.max(0.2);
+    let p = |x: f32, z: f32| at.at + at.q * Vec3::new(x, ym, z);
+    let grows = Awaits::new(
+        fin,
+        Change::Arrives {
+            from: Vec3::ZERO,
+            grow: 0.0,
+        },
+    )
+    .after(delay)
+    .over(secs);
+    let size = Vec3::new(x1 - x0, 0.03, 0.003);
+    let fresh = Inst::new(p((x0 + x1) * 0.5, 0.049), at.q, size, kind::EMISSIVE, INK, 0);
+    lib.waiting(p(start, 0.049), grows, [fresh]);
+    lib.sparks(Sparks {
+        delay,
+        lasts: Some(secs),
+        spread: (at.q * Vec3::new((x1 - x0) * 0.5, 0.01, 0.01)).abs(),
+        rate: 14.0 * (x1 - x0) / secs,
+        vel: Vec3::ZERO,
+        jitter: Vec3::new(0.08, 0.05, 0.08),
+        lift: -0.5,
+        drag: 1.0,
+        wander: 0.2,
+        life: 1.8,
+        rgba: [1.0, 0.66, 0.26, 2.2],
+        size: Vec3::splat(0.014),
+        ..Sparks::burst(fin, p((x0 + x1) * 0.5, 0.08))
+    });
+}
+
+/// A gilt laurel wreath that comes down onto the bare-headed bust on the right of row
+/// `o` once the room is finished, as the pens pass.
+fn laurel(lib: &mut Library, f: &RoomFrame, o: f32) {
+    let at = Spot::new(f, NAVE - 0.3, o, -FRAC_PI_2);
+    let fin = Finish::Room(f.dept);
+    let delay = PEN_START + (o - RoomFrame::O_NEAR) / PEN;
+    let c = at.at + at.q * Vec3::new(0.0, 1.795, -0.01);
+    let wreath = lib.shape(Mesh::torus(0.3, 24, 8)).sized(Vec3::new(0.21, 0.03, 0.245));
+    let comes = Change::Arrives {
+        from: Vec3::Y * 0.5,
+        grow: 0.6,
+    };
+    lib.waiting(
+        c,
+        Awaits::new(fin, comes).after(delay).over(1.6),
+        [wreath.inst(c, at.q * Quat::from_rotation_x(-0.18), kind::METAL, GOLD)],
+    );
+    lib.sparks(Sparks {
+        delay: delay + 1.3,
+        lasts: Some(0.8),
+        rate: 30.0,
+        spread: Vec3::new(0.1, 0.03, 0.1),
+        ..Sparks::burst(fin, c)
+    });
 }
 
 /// Polished marble, as `i` is shaped and coloured.
