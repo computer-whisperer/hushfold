@@ -179,7 +179,13 @@ impl Running {
         let s = self.hud.settings;
         self.game.fov = s.fov;
         self.game.player.head_bob = s.head_bob;
-        self.audio.configure(s.music, s.music_volume, s.effects_volume);
+        let (music, effects) = (s.music_volume * s.master_volume, s.effects_volume * s.master_volume);
+        self.audio.configure(s.music, music, effects);
+        self.egui_ctx.set_zoom_factor(s.ui_scale);
+        let window = &self.renderer.window;
+        if window.fullscreen().is_some() != s.fullscreen {
+            window.set_fullscreen(s.fullscreen.then_some(Fullscreen::Borderless(None)));
+        }
     }
 
     /// Persist settings (never from scripted runs, which use the defaults).
@@ -232,13 +238,13 @@ impl Running {
                 self.apply_settings();
                 self.save_settings();
             }
-            KeyCode::F3 => self.hud.show_stats = !self.hud.show_stats,
+            KeyCode::F3 => {
+                self.hud.settings.show_fps = !self.hud.settings.show_fps;
+                self.save_settings();
+            }
             KeyCode::F11 => {
-                let full = self.renderer.window.fullscreen().is_none();
-                self.renderer
-                    .window
-                    .set_fullscreen(full.then_some(Fullscreen::Borderless(None)));
-                self.hud.settings.fullscreen = full;
+                self.hud.settings.fullscreen = self.renderer.window.fullscreen().is_none();
+                self.apply_settings();
                 self.save_settings();
             }
             KeyCode::KeyF => self.input.seek = true,
@@ -351,11 +357,11 @@ impl Running {
         self.renderer.sync_chunks(&mut self.game.scene.chunks);
         let cpu_ms = frame_start.elapsed().as_secs_f32() * 1000.0;
         let render_start = Instant::now();
-        self.renderer.sync_gpu = self.hud.show_stats;
+        self.renderer.sync_gpu = self.hud.settings.show_fps;
         let shot = self.renderer.render(FrameInput {
             globals: &globals,
             post: PostParams {
-                exposure: 1.15,
+                exposure: 1.15 * self.hud.settings.brightness,
                 bloom: 0.55,
                 time: self.game.time,
                 vignette: 0.55,
@@ -534,6 +540,26 @@ impl Running {
                     };
                     self.show(screen);
                 }
+                // set <name> <value>: a setting, named as in settings.json (for this run).
+                Some("set") => {
+                    let mut all = serde_json::to_value(self.hud.settings).unwrap_or_default();
+                    let value = w.get(2).and_then(|v| serde_json::from_str(v).ok());
+                    if let (Some(name), Some(value)) = (w.get(1), value) {
+                        all[*name] = value;
+                    }
+                    if let Ok(s) = serde_json::from_value(all) {
+                        self.hud.settings = s;
+                        self.apply_settings();
+                    }
+                }
+                // tab video|audio|controls: the settings screen's.
+                Some("tab") => {
+                    self.hud.settings_tab = match w.get(1).copied() {
+                        Some("audio") => hud::SettingsTab::Audio,
+                        Some("controls") => hud::SettingsTab::Controls,
+                        _ => hud::SettingsTab::Video,
+                    }
+                }
                 // cheat lumens <n> | skills | veils | shelve <fraction> | goto [<department>]
                 // | finish face|category|room|storey <n> | finish all
                 Some("cheat") => {
@@ -560,7 +586,7 @@ impl Running {
                         self.game.cheat(c, &mut self.audio);
                     }
                 }
-                Some("stats") => self.hud.show_stats = w.get(1) == Some(&"on"),
+                Some("stats") => self.hud.settings.show_fps = w.get(1) == Some(&"on"),
                 Some("shot") => {
                     let name = w.get(1).copied().unwrap_or("shot");
                     self.renderer.capture = Some(sc.dir.join(format!("{name}.png")));
@@ -716,6 +742,8 @@ impl ApplicationHandler for App {
         let egui_ctx = egui::Context::default();
         hud::install_fonts(&egui_ctx);
         egui_ctx.set_visuals(egui::Visuals::dark());
+        // The interface size is a setting; egui's own zoom keys would change it unseen.
+        egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
             egui::ViewportId::ROOT,
@@ -736,7 +764,7 @@ impl ApplicationHandler for App {
                 saves: Vec::new(),
                 confirm_delete: None,
                 loading: None,
-                show_stats: false,
+                settings_tab: hud::SettingsTab::default(),
                 fps: 0.0,
                 frame_ms: 0.0,
                 cpu_ms: 0.0,

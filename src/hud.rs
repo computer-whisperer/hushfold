@@ -20,7 +20,7 @@ pub struct Hud {
     pub confirm_delete: Option<PathBuf>,
     /// What is being opened, shown while it is (from the frame before, as it blocks).
     pub loading: Option<String>,
-    pub show_stats: bool,
+    pub settings_tab: SettingsTab,
     pub fps: f32,
     pub frame_ms: f32,
     pub cpu_ms: f32,
@@ -60,6 +60,14 @@ impl Screen {
             Screen::Title(TitlePage::Main) => return None,
         })
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SettingsTab {
+    #[default]
+    Video,
+    Audio,
+    Controls,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -162,7 +170,7 @@ fn panel_frame() -> egui::Frame {
 
 pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<HudAction> {
     let mut actions = Vec::new();
-    if hud.show_stats {
+    if hud.settings.show_fps {
         stats(ctx, g, hud);
     }
     if let Some(what) = &hud.loading {
@@ -702,6 +710,8 @@ fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
         .anchor(Align2::RIGHT_BOTTOM, [-16.0, -16.0])
         .interactable(false)
         .show(ctx, |ui| {
+            // Wrapped clear of the armful's card on a narrow screen (or a big interface).
+            ui.set_max_width((screen.x - 460.0).max(220.0));
             let m = if hud.settings.music { "on" } else { "off" };
             ui.label(
                 RichText::new(format!(

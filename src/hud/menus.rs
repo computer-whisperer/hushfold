@@ -277,16 +277,20 @@ pub(super) fn intro(ctx: &egui::Context, actions: &mut Vec<HudAction>) {
             panel_frame()
                 .fill(Color32::from_rgba_unmultiplied(24, 16, 12, 240))
                 .show(ui, |ui| {
-                    ui.set_width(540.0);
+                    ui.set_width(540.0_f32.min(ctx.content_rect().width() - 48.0));
                     let body = "The night librarian has gone missing, and the library has come undone. \
                     Thousands of books lie in piles across the floor.\n\n\
                     Tap a book to take it, or hold on a pile to scoop an armful. Then find each book's home: \
                     its category's bookcases (look for the signs), the shelf whose letters take its title, \
                     and its series' run of outlines in its colour. Click anywhere on the run to file a volume.\n\n\
                     Every book you file earns a lumen ✦. Spend them in the Grimoire to make the work lighter.";
-                    ui.label(RichText::new(body).font(serif(15.0)).color(INK));
-                    ui.add_space(8.0);
-                    ui.label(RichText::new(CONTROLS).font(serif(13.0)).color(DIM));
+                    // Scrolled on a short screen, so Begin stays in view.
+                    let tall = (ctx.content_rect().height() - 140.0).max(160.0);
+                    egui::ScrollArea::vertical().max_height(tall).show(ui, |ui| {
+                        ui.label(RichText::new(body).font(serif(15.0)).color(INK));
+                        ui.add_space(8.0);
+                        controls(ui, "intro keys");
+                    });
                     ui.add_space(10.0);
                     ui.vertical_centered(|ui| {
                         if item(ui, "Begin", 26.0).clicked() {
@@ -297,16 +301,43 @@ pub(super) fn intro(ctx: &egui::Context, actions: &mut Vec<HudAction>) {
         });
 }
 
-/// Every control, one per line.
-const CONTROLS: &str = "WASD walk · Shift hurry · Space jump · Mouse look\n\
-    Tap a book to take it · Hold on a pile to scoop · Click a run to file\n\
-    Hold right mouse to toss a group, release to throw · X the whole armful\n\
-    F seek the kind of a book or shelf · R sort by department, category or series\n\
-    1–5 cast the spells you have learned\n\
-    G post a familiar where you aim, or take one back\n\
-    Scroll or Q/E cycle the active book · Tab Grimoire\n\
-    M music · F11 fullscreen · F12 screenshot · Esc pause";
+/// Every control and what it does.
+const KEYS: &[(&str, &str)] = &[
+    ("WASD", "walk"),
+    ("Shift", "hurry"),
+    ("Space", "jump"),
+    ("Mouse", "look"),
+    (
+        "Left click",
+        "tap a book to take it · hold on a pile to scoop · click a run to file",
+    ),
+    ("Right mouse", "hold to toss a group, release to throw"),
+    ("X", "the same for the whole armful"),
+    ("F", "seek the kind of the book or shelf you aim at"),
+    ("R", "sort by department, category or series"),
+    ("1–5", "cast the spells you have learned"),
+    ("G", "post a familiar where you aim, or take one back"),
+    ("Scroll, Q / E", "cycle the active book"),
+    ("Tab", "the Grimoire"),
+    ("M", "music on or off"),
+    ("F3", "frame rate"),
+    ("F11", "fullscreen"),
+    ("F12", "screenshot"),
+    ("Esc", "pause"),
+];
 
+fn controls(ui: &mut egui::Ui, id: &str) {
+    egui::Grid::new(id).num_columns(2).spacing([18.0, 3.0]).show(ui, |ui| {
+        for (key, what) in KEYS {
+            ui.label(RichText::new(*key).font(serif(13.0)).color(INK));
+            ui.label(RichText::new(*what).font(serif(13.0)).color(DIM));
+            ui.end_row();
+        }
+    });
+}
+
+/// The settings, by tab; each applies as it changes, and they are written down on
+/// the way out.
 pub(super) fn settings(ctx: &egui::Context, hud: &mut Hud, actions: &mut Vec<HudAction>) {
     shade(ctx, 0.7, 0.7);
     egui::Area::new("settings".into())
@@ -315,34 +346,53 @@ pub(super) fn settings(ctx: &egui::Context, hud: &mut Hud, actions: &mut Vec<Hud
             panel_frame()
                 .fill(Color32::from_rgba_unmultiplied(24, 16, 12, 240))
                 .show(ui, |ui| {
-                    ui.set_width(520.0);
+                    ui.set_width(600.0_f32.min(ctx.content_rect().width() - 48.0));
                     for style in [egui::TextStyle::Body, egui::TextStyle::Button] {
                         ui.style_mut().text_styles.insert(style, serif(15.0));
                     }
+                    ui.spacing_mut().slider_width = 240.0;
                     ui.label(RichText::new("Settings").font(serif(28.0)).color(GOLD));
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        for (tab, name) in [
+                            (SettingsTab::Video, "Video"),
+                            (SettingsTab::Audio, "Audio"),
+                            (SettingsTab::Controls, "Controls"),
+                        ] {
+                            let on = hud.settings_tab == tab;
+                            let text = RichText::new(name).font(serif(19.0)).color(if on { GOLD } else { DIM });
+                            let r = ui.add(egui::Button::new(text).frame(false));
+                            if on {
+                                let line = [r.rect.left_bottom(), r.rect.right_bottom()];
+                                ui.painter().line_segment(line, Stroke::new(1.5_f32, GOLD));
+                            }
+                            if r.clicked() {
+                                hud.settings_tab = tab;
+                            }
+                            ui.add_space(10.0);
+                        }
+                    });
+                    ui.separator();
+                    ui.add_space(6.0);
+                    let tab = hud.settings_tab;
                     let st = &mut hud.settings;
                     let before = *st;
-                    ui.add(
-                        egui::Slider::new(&mut st.look_speed, 0.2..=4.0)
-                            .logarithmic(true)
-                            .fixed_decimals(2)
-                            .text("Look speed"),
-                    );
-                    ui.checkbox(&mut st.invert_look, "Invert vertical look");
-                    ui.add(
-                        egui::Slider::new(&mut st.fov, 55.0..=90.0)
-                            .suffix("°")
-                            .integer()
-                            .text("Field of view"),
-                    );
-                    ui.checkbox(&mut st.head_bob, "Head bob while walking");
-                    fn pct(v: &mut f32) -> egui::Slider<'_> {
-                        egui::Slider::new(v, 0.0..=1.0).custom_formatter(|x, _| format!("{:.0}%", x * 100.0))
-                    }
-                    let music = if st.music { "Music" } else { "Music (off: press M)" };
-                    ui.add(pct(&mut st.music_volume).text(music));
-                    ui.add(pct(&mut st.effects_volume).text("Effects and ambience"));
+                    let tall = (ctx.content_rect().height() * 0.6).max(200.0);
+                    egui::ScrollArea::vertical().max_height(tall).show(ui, |ui| {
+                        ui.set_min_height(280.0);
+                        let grid = egui::Grid::new("settings").num_columns(2).spacing([28.0, 12.0]);
+                        grid.show(ui, |ui| match tab {
+                            SettingsTab::Video => video(ui, st),
+                            SettingsTab::Audio => audio(ui, st),
+                            SettingsTab::Controls => look(ui, st),
+                        });
+                        if tab == SettingsTab::Controls {
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(4.0);
+                            controls(ui, "keys");
+                        }
+                    });
                     if *st != before {
                         actions.push(HudAction::SettingsChanged);
                     }
@@ -354,6 +404,76 @@ pub(super) fn settings(ctx: &egui::Context, hud: &mut Hud, actions: &mut Vec<Hud
                     });
                 });
         });
+}
+
+/// A setting's name, and the key that changes it too.
+fn row(ui: &mut egui::Ui, name: &str, key: Option<&str>) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(name).font(serif(15.0)).color(INK));
+        if let Some(key) = key {
+            ui.label(RichText::new(key).font(serif(12.0)).color(DIM));
+        }
+    });
+}
+
+fn pct(v: &mut f32, range: std::ops::RangeInclusive<f32>) -> egui::Slider<'_> {
+    egui::Slider::new(v, range).custom_formatter(|x, _| format!("{:.0}%", x * 100.0))
+}
+
+fn video(ui: &mut egui::Ui, st: &mut Settings) {
+    row(ui, "Fullscreen", Some("F11"));
+    ui.checkbox(&mut st.fullscreen, "");
+    ui.end_row();
+    row(ui, "Field of view", None);
+    ui.add(egui::Slider::new(&mut st.fov, 55.0..=90.0).suffix("°").integer());
+    ui.end_row();
+    row(ui, "Head bob while walking", None);
+    ui.checkbox(&mut st.head_bob, "");
+    ui.end_row();
+    row(ui, "Brightness", None);
+    ui.add(pct(&mut st.brightness, 0.6..=1.6));
+    ui.end_row();
+    row(ui, "Interface size", None);
+    let size = |x: f32| format!("{:.0}%", x * 100.0);
+    egui::ComboBox::from_id_salt("ui scale")
+        .selected_text(size(st.ui_scale))
+        .show_ui(ui, |ui| {
+            for x in crate::settings::UI_SCALES {
+                ui.selectable_value(&mut st.ui_scale, x, size(x));
+            }
+        });
+    ui.end_row();
+    row(ui, "Show frame rate", Some("F3"));
+    ui.checkbox(&mut st.show_fps, "");
+    ui.end_row();
+}
+
+fn audio(ui: &mut egui::Ui, st: &mut Settings) {
+    row(ui, "Master volume", None);
+    ui.add(pct(&mut st.master_volume, 0.0..=1.0));
+    ui.end_row();
+    row(ui, "Music", Some("M"));
+    ui.checkbox(&mut st.music, "");
+    ui.end_row();
+    row(ui, "Music volume", None);
+    ui.add_enabled(st.music, pct(&mut st.music_volume, 0.0..=1.0));
+    ui.end_row();
+    row(ui, "Effects and ambience", None);
+    ui.add(pct(&mut st.effects_volume, 0.0..=1.0));
+    ui.end_row();
+}
+
+fn look(ui: &mut egui::Ui, st: &mut Settings) {
+    row(ui, "Look speed", None);
+    ui.add(
+        egui::Slider::new(&mut st.look_speed, 0.2..=4.0)
+            .logarithmic(true)
+            .fixed_decimals(2),
+    );
+    ui.end_row();
+    row(ui, "Invert vertical look", None);
+    ui.checkbox(&mut st.invert_look, "");
+    ui.end_row();
 }
 
 /// Painted, not laid out in an area: the card is up for two frames, and a new area
