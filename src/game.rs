@@ -2077,7 +2077,11 @@ impl Game {
         let info = &self.lib.books[b as usize];
         let face = &self.lib.faces[info.face as usize];
         let p = info.slot_pos + face.normal * 0.75;
-        let at = Vec3::new(p.x, face.center.y, p.z);
+        self.standable(Vec3::new(p.x, face.center.y, p.z))
+    }
+
+    /// `at`, if one can stand there; else the nearest place free to stand.
+    pub fn standable(&self, at: Vec3) -> Vec3 {
         if self.nav.free_at(at) {
             at
         } else {
@@ -2172,23 +2176,27 @@ impl Game {
         self.player.pitch = libm::asinf(d.y);
     }
 
-    /// Stand beside the nearest reachable pile and look at its top.
-    pub fn script_face_pile(&mut self) {
+    /// The top of the substantial pile within reach nearest `near`, and where to stand
+    /// beside it (on the player's side).
+    pub fn pile_spot(&self, near: Vec3) -> Option<(Vec3, Vec3)> {
         let p = self.player.pos;
         let nav = &self.nav;
         // Nearby and substantial: the cell with the most books for the walk.
-        let Some((_, top)) =
-            (self.loose).best_pile(|_, c, n| nav.open_at(c).then(|| (c.distance(p) + 3.0) / n.len() as f32))
-        else {
-            return;
-        };
+        let (_, top) =
+            (self.loose).best_pile(|_, c, n| nav.open_at(c).then(|| (c.distance(near) + 3.0) / n.len() as f32))?;
         let mut dir = Vec3::new(p.x - top.x, 0.0, p.z - top.z).normalize_or_zero();
         if dir == Vec3::ZERO {
             dir = Vec3::Z;
         }
         let floor = self.lib.world.ground(Vec2::new(top.x, top.z), top.y).unwrap_or(0.0);
-        let from = Vec3::new(top.x, floor, top.z) + dir * 1.6;
-        self.look_at(from, top);
+        Some((Vec3::new(top.x, floor, top.z) + dir * 1.6, top))
+    }
+
+    /// Stand beside the nearest reachable pile and look at its top.
+    pub fn script_face_pile(&mut self) {
+        if let Some((from, top)) = self.pile_spot(self.player.pos) {
+            self.look_at(from, top);
+        }
     }
 
     /// Stand `dist` m from `target` (on the side you are on) and look at it.
@@ -2249,28 +2257,48 @@ impl Game {
         }
     }
 
+    /// Where to stand to watch familiar `i`, a little way off, and where it is.
+    pub fn familiar_spot(&self, i: usize) -> Option<(Vec3, Vec3)> {
+        let p = self.familiar_at(i)?;
+        let floor = self
+            .lib
+            .world
+            .ground(Vec2::new(p.x + 1.2, p.z + 1.2), p.y)
+            .unwrap_or(0.0);
+        Some((Vec3::new(p.x + 1.2, floor, p.z + 1.2), p))
+    }
+
+    /// Where familiar `i` is.
+    pub fn familiar_at(&self, i: usize) -> Option<Vec3> {
+        self.familiars.get(i).map(|f| f.pos)
+    }
+
     /// Look at familiar `i` from a little way off.
     pub fn script_face_familiar(&mut self, i: usize) {
-        if let Some(f) = self.familiars.get(i) {
-            let p = f.pos;
-            let floor = self
-                .lib
-                .world
-                .ground(Vec2::new(p.x + 1.2, p.z + 1.2), p.y)
-                .unwrap_or(0.0);
-            let from = Vec3::new(p.x + 1.2, floor, p.z + 1.2);
+        if let Some((from, p)) = self.familiar_spot(i) {
             self.look_at(from, p);
         }
     }
 
+    /// Where to stand in front of the active book's slot, and the slot.
+    pub fn slot_spot(&self) -> Option<(Vec3, Vec3)> {
+        let info = &self.lib.books[self.active_book()? as usize];
+        let f = &self.lib.faces[info.face as usize];
+        let from = Vec3::new(info.slot_pos.x, f.center.y, info.slot_pos.z) + f.normal * 1.8;
+        Some((from, info.slot_pos))
+    }
+
     /// Stand in front of the active book's slot and look at it.
     pub fn script_face_active_slot(&mut self) {
-        if let Some(b) = self.active_book() {
-            let info = &self.lib.books[b as usize];
-            let f = &self.lib.faces[info.face as usize];
-            let from = Vec3::new(info.slot_pos.x, f.center.y, info.slot_pos.z) + f.normal * 1.8;
-            self.look_at(from, info.slot_pos);
+        if let Some((from, slot)) = self.slot_spot() {
+            self.look_at(from, slot);
         }
+    }
+
+    /// The way from the player to `to`, round the furniture (see `Nav::route`).
+    pub fn route_to(&mut self, to: Vec3) -> Option<Route> {
+        self.nav.fill(&mut self.walk, self.player.pos);
+        self.nav.route(&self.walk, self.player.pos, to)
     }
 
     // -------------------------------------------------------------- rendering

@@ -226,8 +226,14 @@ all back to use.
   directory. They play no sound: theirs is made in step with their frames, for
   their clips (`HUSHFOLD_AUDIO=server|device` plays it, to try the outputs;
   `HUSHFOLD_AUDIO=none`, in any run, makes none at all). They start playing a fresh, unsaved Hall unless `HUSHFOLD_LIBRARY=great`. Commands
-  (one per line): `pose x y z yaw pitch`, `wait frames`, `walk fwd frames`,
-  `click` (a tap), `press` / `release` (hold and release the left button),
+  (one per line): `pose x y z yaw pitch`, `wait frames`, `glide x y z yaw pitch
+  frames` (the camera eased to a pose, for stills), `go x y z|pile [x z]|slot|familiar
+  i [hurry]` (walk there, round the furniture, as a player would: to a spot beside the
+  pile nearest, or nearest x z; before the active book's slot; a little way off a
+  familiar), `aim x y z|pile [x z]|slot|familiar i|ahead|off [slow]` (keep the eyes on
+  it, as a hand on a mouse would; `slow`: looking round, a part of the way at a time),
+  `until there|aimed|near m` (wait for the walk, the eyes, or the walk's end within m
+  metres), `click` (a tap), `press` / `release` (hold and release the left button),
   `cycle n`, `charge [all]` / `throw` (hold and release the toss; `all`: the armful toss, X), `seek`, `regroup`,
   `post`, `cheat lumens n|skills|veils|shelve fraction|goto [department]`,
   `facepile`, `faceslot`, `facefam i`, `lookat x y z dist`, `fill category fraction`,

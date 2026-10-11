@@ -7,18 +7,24 @@ buy Sift
 buy LongToss
 # The toasts and hints from all that learning fade.
 wait 420
-facepile
-wait 10
 record hall-scoop-and-toss
-wait 30
+wait 20
+# Over to a heap in the West Wing, eyes on it, and a scoop.
+aim pile -6 2
+go pile -6 2
+until there
+until aimed
+wait 6
 press
 wait 75
 release
-wait 45
+wait 25
 # Round to the open floor, and the whole armful tossed.
-turn 160 6 70
+aim 0 1.2 -1.5
+wait 10
 charge all
-wait 50
+until aimed
+wait 30
 throw
 wait 150
 stop

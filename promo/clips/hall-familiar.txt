@@ -1,15 +1,25 @@
-# A shelver posted by a heap folds off with books and files them.
+# A shelver posted by a heap folds off with books and files them, watched.
 #   promo/clip.sh promo/clips/hall-familiar.txt <out>
 buy Shelver
 buy Shelver
 buy Shelver
 buy Wings
 wait 420
-# Posted on the floor of a west aisle, between heaps and the cases they belong in.
-glide -20 0 12 0 -40 20
-post
+pose -21 0 18 10 -4
 wait 30
-glide -21 0 17 10 -8 60
 record hall-familiar
-wait 720
+wait 20
+# Up a west aisle, between heaps and the cases they belong in, and the shelver
+# posted on the open floor ahead.
+aim -20 0 11.5
+go -20 0 14
+until there
+until aimed
+wait 10
+post
+wait 45
+# A step back to watch it work.
+aim familiar 0
+go -21 0 17.5
+wait 600
 stop

@@ -4,6 +4,7 @@
 mod audio;
 mod catalog;
 mod controls;
+mod drive;
 mod game;
 mod gfx;
 mod hud;
@@ -94,10 +95,12 @@ struct Script {
     idx: usize,
     wait: u32,
     dir: std::path::PathBuf,
-    /// Walking forward (`walk`), until told otherwise.
-    walk: f32,
     /// A camera move under way (`glide`).
     glide: Option<Glide>,
+    /// The player's stand-in: walks and looks as the script points it (`go`, `aim`).
+    driver: drive::Driver,
+    /// What the script waits for (`until`), and how many more frames it will.
+    until: Option<(drive::Until, u32)>,
 }
 
 /// The view carried from one pose to another, eased in and out, a frame at a time.
@@ -359,9 +362,11 @@ impl Running {
         }
         let k = |c| self.keys.contains(&c);
         let playing = self.playing();
-        if let Some(sc) = &self.script {
-            // Scripted runs drive movement themselves (`walk`, and the pad's).
-            (self.input.forward, self.input.strafe, self.input.sprint) = (sc.walk, 0.0, false);
+        if let Some(sc) = &mut self.script {
+            // Scripted runs move as the stand-in's hands move (and the pad's).
+            let s = sc.driver.steer(&mut self.game, dt);
+            (self.input.forward, self.input.strafe, self.input.sprint) = (s.forward, s.strafe, s.sprint);
+            self.input.look += s.look;
         } else if playing {
             self.input.forward = (k(KeyCode::KeyW) as i32 - k(KeyCode::KeyS) as i32) as f32;
             self.input.strafe = (k(KeyCode::KeyD) as i32 - k(KeyCode::KeyA) as i32) as f32;
@@ -535,6 +540,26 @@ impl Running {
         self.script = Some(sc);
     }
 
+    /// A place a script line names: `x y z`, `pile [x z]` (the nearest, or the nearest
+    /// there), `slot` (the active book's) or `familiar <i>`; where to stand for it, and
+    /// what to look at there.
+    fn spot(&self, w: &[&str]) -> Option<(glam::Vec3, glam::Vec3)> {
+        let n = |i: usize| w.get(i)?.parse::<f32>().ok();
+        match w.first().copied() {
+            Some("pile") => {
+                let p = self.game.player.pos;
+                let near = n(1).zip(n(2)).map_or(p, |(x, z)| glam::Vec3::new(x, p.y, z));
+                self.game.pile_spot(near)
+            }
+            Some("slot") => self.game.slot_spot(),
+            Some("familiar") => self.game.familiar_spot(w.get(1)?.parse().ok()?),
+            _ => {
+                let p = glam::Vec3::new(n(0)?, n(1)?, n(2)?);
+                Some((p, p))
+            }
+        }
+    }
+
     fn step_script(&mut self, sc: &mut Script) {
         if let Some(g) = &mut sc.glide {
             g.at += 1;
@@ -543,6 +568,17 @@ impl Running {
             p.vel = glam::Vec3::ZERO;
             if g.at >= g.frames {
                 sc.glide = None;
+            }
+        }
+        if let Some((u, frames)) = &mut sc.until {
+            if sc.driver.met(*u) {
+                sc.until = None;
+            } else if *frames == 0 {
+                eprintln!("hushfold: script line {}: waited 20 s for {u:?}; going on", sc.idx);
+                sc.until = None;
+            } else {
+                *frames -= 1;
+                return;
             }
         }
         if sc.wait > 0 {
@@ -565,27 +601,21 @@ impl Running {
                     sc.wait = num(1) as u32;
                     return;
                 }
-                // glide x y z yaw pitch frames: from where the view is to that pose (as
-                // `pose`), eased, over that many frames; turn yaw pitch frames: the view
-                // turned by so many degrees where it stands. The script waits for either.
-                Some(c @ ("glide" | "turn")) => {
+                // glide x y z yaw pitch frames: the camera carried from where the view is
+                // to that pose (as `pose`), eased, over that many frames, and the script
+                // waiting for it. For stills; a clip's moves are the stand-in's (`go`, `aim`).
+                Some("glide") => {
                     let p = &self.game.player;
-                    let (at, yaw, pitch, frames) = if c == "glide" {
-                        // The short way round.
-                        let turn = libm::remainderf(num(4).to_radians() - p.yaw, std::f32::consts::TAU);
-                        (glam::Vec3::new(num(1), num(2), num(3)), p.yaw + turn, num(5), num(6))
-                    } else {
-                        (
-                            p.pos,
-                            p.yaw + num(1).to_radians(),
-                            p.pitch.to_degrees() + num(2),
-                            num(3),
-                        )
-                    };
-                    let frames = (frames as u32).max(1);
+                    // The short way round.
+                    let turn = libm::remainderf(num(4).to_radians() - p.yaw, std::f32::consts::TAU);
+                    let frames = (num(6) as u32).max(1);
                     sc.glide = Some(Glide {
                         from: (p.pos, p.yaw, p.pitch),
-                        to: (at, yaw, pitch.to_radians()),
+                        to: (
+                            glam::Vec3::new(num(1), num(2), num(3)),
+                            p.yaw + turn,
+                            num(5).to_radians(),
+                        ),
                         frames,
                         at: 0,
                     });
@@ -620,10 +650,37 @@ impl Running {
                 Some("take") => self.game.script_take(num(1) as usize, num(2) as usize),
                 Some("faceslot") => self.game.script_face_active_slot(),
                 Some("cycle") => self.input.cycle += num(1) as i32,
-                Some("walk") => {
-                    // walk <forward> <frames>
-                    sc.walk = num(1);
-                    sc.wait = num(2) as u32;
+                // go x y z | pile | slot | familiar <i> [hurry]: walk there (beside a pile,
+                // before the active book's slot, a little way off a familiar), round what is
+                // in the way. The script goes on meanwhile; `until` waits.
+                Some("go") => {
+                    if let Some((stand, _)) = self.spot(&w[1..]) {
+                        sc.driver.go(self.game.standable(stand), w.last() == Some(&"hurry"));
+                    }
+                }
+                // aim x y z | pile | slot | familiar <i> | ahead | off [slow]: keep the eyes
+                // on it, as a player would, from now on (`ahead`: where the walk goes;
+                // `slow`: looking round, a part of the way at a time).
+                Some("aim") => {
+                    let aim = match w.get(1).copied() {
+                        Some("off") => Some(drive::Aim::Off),
+                        Some("ahead") => Some(drive::Aim::Ahead),
+                        Some("familiar") => Some(drive::Aim::Familiar(num(2) as usize)),
+                        _ => self.spot(&w[1..]).map(|(_, at)| drive::Aim::At(at)),
+                    };
+                    if let Some(aim) = aim {
+                        sc.driver.aim(aim, w.last() == Some(&"slow"));
+                    }
+                }
+                // until there | aimed | near <m>: wait for the walk's end, the eyes, or the
+                // goal within so many metres (20 s at most).
+                Some("until") => {
+                    let u = match w.get(1).copied() {
+                        Some("aimed") => drive::Until::Aimed,
+                        Some("near") => drive::Until::Near(num(2)),
+                        _ => drive::Until::There,
+                    };
+                    sc.until = Some((u, 1200));
                     return;
                 }
                 // pad press|release <button> | stick left|right <x> <y> | kind <maker>
@@ -797,6 +854,7 @@ impl Running {
                         _ => self.game.layout,
                     };
                     self.open(layout, None);
+                    sc.driver = drive::Driver::default();
                 }
                 Some("quit") => {
                     self.stop_recording();
@@ -880,8 +938,9 @@ impl ApplicationHandler for App {
             idx: 0,
             wait: 10,
             dir: std::env::var("HUSHFOLD_SHOT_DIR").unwrap_or_else(|_| ".".into()).into(),
-            walk: 0.0,
             glide: None,
+            driver: drive::Driver::default(),
+            until: None,
         });
         game.save_path = latest.map(|(_, path)| path);
         let loaded = game.load();

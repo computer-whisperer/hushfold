@@ -972,7 +972,18 @@ to ffmpeg, the mix written in step), and capsules cut from 4K screenshots with t
 logo laid over them (`promo/capsules.py`). Scenes needing a state of play get it
 from the cheats (`cheat finish category`, `cheat shelve`, `buy`) in a fresh library
 each (`library hall`), and wait for the toasts that learning raises to fade.
-`glide` and `turn` move the camera, eased, for clips. The logo (`promo/logo/make.py`)
+Clips are played rather than filmed: a stand-in player (`drive.rs`) walks and looks
+through the inputs a person's hands give, toward what the script points it at
+(`go`, `aim`, `until`), and the game moves it as it moves anyone, footfalls, bob and
+furniture included. Its walks take the nav grid's routes round the furniture,
+turning to the way before setting off and slowing to stop. Its eyes move as a hand
+on a mouse aims (the optimized-submovement picture): a minimum-jerk sweep whose
+length grows with the log of the distance (Fitts), falling a little short or now and
+then past, the pitch trailing the yaw; a beat; a smaller correcting sweep. Small
+errors are followed smoothly, keeping pace with a mark that moves (one passed at
+arm's length swings by at 150 deg/s), and a hand at rest is still. Looking round a
+room (`slow`) goes a part of the way at a time. The eased `glide` of a camera, which
+read as a slew between actions, is kept for stills. The logo (`promo/logo/make.py`)
 is the name in Cinzel, the face of the library's own signs, set as outlines in the
 HUD's gold, under a folded-paper crane (the familiars) alighting on an open book
 before a crescent moon: the night library and its paper helpers.
