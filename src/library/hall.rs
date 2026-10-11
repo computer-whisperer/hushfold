@@ -63,6 +63,8 @@ const RUNNER_RUGS: usize = 6;
 const RUG_SETTLES: f32 = 1.4;
 const RUG_STAGGER: f32 = 0.5;
 const WING_WAKES: f32 = RUNNER_AFTER + (RUNNER_RUGS - 1) as f32 * RUG_STAGGER + RUG_SETTLES;
+/// When the whole Hall is: how long its finale waits, for the last wing's moment.
+const FINALE: f32 = WING_WAKES + 3.0;
 
 pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
     lib.world.levels.push(Level {
@@ -111,11 +113,12 @@ pub(super) fn build(lib: &mut Library, rng: &mut StdRng) {
         counts: vec![0],
         need: 0.4,
     });
-    // What waits for a wing to be put in order (the walls at their ends wake as well:
-    // `wall_map`, `clock`).
+    // What waits for a wing (the walls at their ends wake as well: `wall_map`,
+    // `clock`) and the whole Hall to be put in order.
     for wing in 0..2 {
         lib.runner(wing);
     }
+    lib.finale();
     // Moonbeams through the north windows.
     let beam_dir = Vec3::new(0.0, -0.62, 1.0).normalize();
     for x in WINDOWS_X {
@@ -1555,13 +1558,30 @@ impl Library {
         let moon = Vec3::new(0.0, y + 0.25, 0.065);
         self.disc(m, moon, (0.26, 0.01), kind::METAL, gilt);
         self.disc(m, moon + Vec3::new(0.11, 0.07, 0.005), (0.23, 0.01), kind::PLAIN, field);
+        // Once the whole Hall is in order the emblem kindles, after the stars have
+        // gathered: each gilt piece gets a glowing one just before it, growing from its
+        // middle (the crescent's, as the gilt one's, cut by the field's disc before it).
+        let glow = [1.0, 0.7, 0.3, 0.9];
+        let mut kindles = vec![self.disc_inst(m, moon + Vec3::Z * 0.0065, (0.26, 0.002), kind::CRYSTAL, glow)];
         for s in [-1.0f32, 1.0] {
             let page = Vec3::new(s * 0.25, y - 0.3, 0.068);
             self.mounted(m, page, Vec3::new(0.46, 0.3, 0.01), s * 0.18, kind::METAL, gilt);
+            let lit = page + Vec3::Z * 0.0065;
+            kindles.push(m.boxed(lit, Vec3::new(0.46, 0.3, 0.002), s * 0.18, kind::CRYSTAL, glow));
         }
         for (sx, sy) in [(-0.5f32, 0.35f32), (0.5, 0.45), (-0.4, 0.05), (0.45, 0.0)] {
             let star = Vec3::new(sx, y + sy, 0.065);
             self.mounted(m, star, Vec3::new(0.07, 0.07, 0.01), FRAC_PI_4, kind::METAL, gilt);
+            let lit = star + Vec3::Z * 0.0065;
+            kindles.push(m.boxed(lit, Vec3::new(0.07, 0.07, 0.002), FRAC_PI_4, kind::CRYSTAL, glow));
+        }
+        for (k, i) in kindles.into_iter().enumerate() {
+            let grows = Change::Arrives {
+                from: Vec3::ZERO,
+                grow: 0.0,
+            };
+            let a = Awaits::new(Finish::Library, grows).after(FINALE + 5.0 + k as f32 * 0.25);
+            self.waiting(Vec3::from(i.pos), a.over(2.0), [i]);
         }
         // A rug before the hearth.
         let mut rug = Inst::aabox(
@@ -1975,8 +1995,9 @@ impl Library {
     }
 }
 
-/// What the Hall does when a wing is put in order (`celebrate`): the West Wing ends at
-/// a map and the East at a clock.
+/// What the Hall does when a wing, or the whole of it, is put in order (`celebrate`):
+/// the West Wing ends at a map and the East at a clock, and the reading room between
+/// them is the night sky.
 impl Library {
     /// A runner down wing `wing`'s middle aisle once it is in order, from the reading
     /// room's rug to the wall at its end: rugs like that one settling one after another
@@ -2242,6 +2263,114 @@ impl Library {
             let shape = self.shape(mesh);
             self.moving(turns, shape.at(on_sky(z), m.rot(0.0), kind, color));
         }
+    }
+
+    /// When the whole Hall is in order, after the last wing's moment: stars come down
+    /// from the reading room's painted sky to circle its chandelier, gold sifting down
+    /// after them, and the rings they make turn slowly from then on, a starlight about
+    /// them and motes drifting there. (The emblem over the hearth kindles too:
+    /// `hearth_dressing`.)
+    fn finale(&mut self) {
+        let fin = Finish::Library;
+        let ch = CHANDELIER;
+        self.cue(Cue {
+            finish: fin,
+            delay: FINALE,
+            sound: Sfx::Veil,
+            at: ch,
+            volume: 0.8,
+        });
+        let star = self.shape({
+            let flat = Mesh::prism(&star_outline(&[0.15, 0.075].repeat(4), 0.027), 0.014);
+            let mut star = flat.clone();
+            star.add(&flat, Vec3::ZERO, Quat::from_rotation_y(FRAC_PI_2), Vec3::ONE);
+            star
+        });
+        // Two rings, as an armillary's: twelve stars about the hoop turning one way, and
+        // seven smaller about the crown turning slower the other, once all have come.
+        // Each comes from a coffer of its own, and bobs in its own time.
+        let gathered = FINALE + 4.3;
+        let turns = Awaits::new(fin, Change::Kindles { dim: 1.0 })
+            .after(gathered)
+            .over(8.0)
+            .still();
+        for (count, r, up, period, size, (first, apart), sky_r) in [
+            (12, 2.3, 0.3, 200.0, 1.0, (0.2, 0.15), (2.6, 2.2)),
+            (7, 1.25, 1.2, -300.0, 0.75, (0.4, 0.25), (1.0, 1.2)),
+        ] {
+            let spin = Motion::Spin {
+                axis: Vec3::Y,
+                rate: TAU / period,
+            };
+            let ring = self.mover(ch, spin, 0.0, None);
+            self.awaiting(ring, turns);
+            for k in 0..count {
+                let a = (k as f32 + 0.25) / count as f32 * TAU;
+                let out = Vec3::new(libm::cosf(a), 0.0, libm::sinf(a));
+                let rest = ch + out * r + Vec3::Y * (up + 0.12 * libm::sinf(3.0 * a));
+                let h = (k as f32 * 0.618).fract();
+                let sky = out * (sky_r.0 + sky_r.1 * h) + Vec3::Y * (HALL_H - 0.05);
+                let comes = Change::Arrives {
+                    from: sky - rest,
+                    grow: 0.3,
+                };
+                let bob = Motion::Bob {
+                    amp: 0.06,
+                    period: 6.0 + 3.0 * h,
+                    rock: 0.3,
+                };
+                let m = self.mover(rest, bob, 9.0 * h, Some(ring));
+                let after = FINALE + first + k as f32 * apart;
+                self.awaiting(m, Awaits::new(fin, comes).after(after).over(2.4));
+                let (turn, light) = (Quat::from_rotation_y(a), [0.75, 0.85, 1.0, 3.5]);
+                let i = star.scaled(size).inst(rest, turn, kind::CRYSTAL, light);
+                self.moving(m, i);
+            }
+        }
+        let light = self.mover(ch, Motion::Still, 0.0, None);
+        self.awaiting(
+            light,
+            Awaits::new(fin, Change::Kindles { dim: 0.0 })
+                .after(FINALE + 1.0)
+                .over(6.0),
+        );
+        self.light_riding(
+            light,
+            ch + Vec3::Y * 0.8,
+            11.0,
+            [0.62, 0.72, 1.0],
+            0.9,
+            LightKind::Static,
+        );
+        // Gold sifting down from the painted sky as they come, fading as it falls; a
+        // burst from the chandelier when they have gathered, and motes about it after.
+        self.sparks(Sparks {
+            delay: FINALE + 0.5,
+            lasts: Some(6.0),
+            spread: Vec3::new(8.0, 0.2, 8.0),
+            rate: 60.0,
+            vel: Vec3::Y * -0.45,
+            jitter: Vec3::splat(0.08),
+            lift: -0.05,
+            drag: 0.1,
+            wander: 0.15,
+            life: 6.0,
+            rgba: [1.3, 1.0, 0.55, 2.2],
+            size: Vec3::splat(0.024),
+            ..Sparks::burst(fin, Vec3::new(0.0, HALL_H - 0.4, 0.0))
+        });
+        self.sparks(Sparks {
+            delay: gathered,
+            lasts: Some(1.5),
+            rate: 80.0,
+            spread: Vec3::new(1.2, 0.2, 1.2),
+            ..Sparks::burst(fin, ch + Vec3::Y * 0.3)
+        });
+        self.sparks(Sparks {
+            delay: gathered,
+            rgba: [0.85, 0.9, 1.0, 1.5],
+            ..Sparks::motes(fin, ch + Vec3::Y * 0.3, Vec3::new(2.8, 0.7, 2.8))
+        });
     }
 }
 
