@@ -2,8 +2,13 @@
 //! portraits of poets: the books stand in a row of alcoves along the far wall, and
 //! the near half of the room is a lounge of armchairs, window seats and lecterns,
 //! where words drift up out of an open book and paper cranes hang in the air.
+//!
+//! Put in order, it comes to life: each alcove folds a crane of its own when its
+//! category is done, and when the room is, pages lift from the open book, the cranes
+//! slip their threads and circle the lounge, and a lamp lights over every portrait.
 
 use super::*;
+use crate::audio::Sfx;
 use crate::gfx::Vertex;
 use crate::gfx::crane::{Crane, Fold, Paper, Print};
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
@@ -21,12 +26,49 @@ const GOLD: [f32; 4] = [0.66, 0.48, 0.14, 1.0];
 const DAMASK: [f32; 3] = [0.3, 0.1, 0.12];
 /// What rises from the open book in the lounge, a word at a time.
 const VERSE: &str = "Shelve me gently, said the book, and I will keep a light for you through the long night.";
+const BRASS: [f32; 4] = [0.55, 0.38, 0.13, 1.0];
+/// Where the open book's lectern stands (a).
+const WORDS: f32 = -1.85;
+/// Where the cranes circle once the room is in order (a, o): over the lounge, on two
+/// rings, each its radius and its turn (radians a second).
+const FLOCK: (f32, f32) = (1.0, 20.5);
+const RINGS: [(f32, f32); 2] = [(2.1, TAU / 70.0), (3.6, TAU / 95.0)];
+/// The height of the ridge a crane's wings turn about, at size 1 (`crane`'s).
+const RIDGE: f32 = 0.02;
+/// Where each category's crane hovers (a, o), at the mouth of its alcove (the near
+/// wall's out from its cases), and how high.
+const HOVER: [(f32, f32); 8] = [
+    (-11.0, 26.6),
+    (-7.4, 26.6),
+    (-3.7, 26.6),
+    (0.0, 26.6),
+    (3.7, 26.6),
+    (7.4, 26.6),
+    (11.0, 26.6),
+    (4.7, 15.7),
+];
+const HOVER_Y: f32 = 3.45;
+/// Where each category's crane goes in the flock: its ring, the angle round it
+/// (degrees, from +a toward +o) and its height.
+const ALCOVE_SLOTS: [(usize, f32, f32); 8] = [
+    (1, 220.0, 3.6),
+    (1, 180.0, 3.8),
+    (1, 140.0, 3.5),
+    (1, 100.0, 3.75),
+    (1, 60.0, 3.55),
+    (1, 20.0, 3.85),
+    (1, -20.0, 3.65),
+    (1, -60.0, 3.5),
+];
 
 pub(super) fn furnish(lib: &mut Library, frame: &RoomFrame, rng: &mut StdRng, titles: &mut HashSet<String>) {
     walls(lib, frame);
     alcoves(lib, frame, rng, titles);
     lounge(lib, frame);
-    cranes(lib, frame);
+    let rings = flock(lib, frame);
+    cranes(lib, frame, rings);
+    alcove_cranes(lib, frame, rings);
+    pages_lift(lib, frame);
 }
 
 /// The alcoves along the far wall. Each between two spurs is a category of five, read
@@ -84,8 +126,10 @@ fn alcoves(lib: &mut Library, f: &RoomFrame, rng: &mut StdRng, titles: &mut Hash
 
 /// Stone piers where the spurs meet the far wall, windows high over three alcoves and
 /// tall ones with seats in the side walls, damask on the lounge's walls over the
-/// panelling, portraits hung salon fashion, sconces, and beams across the ceiling.
+/// panelling, portraits hung salon fashion (their lamps lit once the room is in
+/// order), sconces, and beams across the ceiling.
 fn walls(lib: &mut Library, f: &RoomFrame) {
+    let lit = Finish::Room(f.dept);
     let h = RoomFrame::HEIGHT;
     let ah = RoomFrame::A_HALF;
     let (near, far) = (RoomFrame::O_NEAR, RoomFrame::O_FAR);
@@ -98,10 +142,10 @@ fn walls(lib: &mut Library, f: &RoomFrame) {
     }
     lib.light(f.at(0.0, 29.0, 4.2), 9.0, [0.45, 0.55, 1.0], 0.5, LightKind::Static);
     for (i, a) in [-3.7f32, 3.7].into_iter().enumerate() {
-        portrait(lib, &Spot::new(f, a, far, 0.0), (1.0, 1.25), 4.5, 10 + i);
+        portrait(lib, lit, &Spot::new(f, a, far, 0.0), (1.0, 1.25), 4.5, 10 + i);
     }
     for (i, a) in [-11.05f32, 11.05].into_iter().enumerate() {
-        portrait(lib, &Spot::new(f, a, far, 0.0), (1.1, 1.4), 2.2, 12 + i);
+        portrait(lib, lit, &Spot::new(f, a, far, 0.0), (1.1, 1.4), 2.2, 12 + i);
     }
     let t = 0.07;
     let side_end = SIDE_CASES[0] - 1.4;
@@ -122,7 +166,7 @@ fn walls(lib: &mut Library, f: &RoomFrame) {
         ];
         for (i, (o, y, size)) in hangs.into_iter().enumerate() {
             let at = Spot::new(f, s * ah, o, -s * FRAC_PI_2);
-            portrait(lib, &at, size, y, i * 2 + (s > 0.0) as usize);
+            portrait(lib, lit, &at, size, y, i * 2 + (s > 0.0) as usize);
         }
         lib.sconce(f.at(s * (ah - 0.15), 21.0, 2.9), -f.across() * s);
     }
@@ -132,9 +176,9 @@ fn walls(lib: &mut Library, f: &RoomFrame) {
     damask(lib, f, (d + 0.1, -0.75), (near, near + 0.02), 1.16);
     damask(lib, f, (-0.7, ah), (near, near + 0.02), 3.3);
     for (i, a) in [2.0f32, 10.1].into_iter().enumerate() {
-        portrait(lib, &Spot::new(f, a, near, PI), (1.1, 1.3), 4.45, 14 + i);
+        portrait(lib, lit, &Spot::new(f, a, near, PI), (1.1, 1.3), 4.45, 14 + i);
     }
-    portrait(lib, &Spot::new(f, -4.6, near, PI), (1.3, 1.6), 2.45, 16);
+    portrait(lib, lit, &Spot::new(f, -4.6, near, PI), (1.3, 1.6), 2.45, 16);
     lib.sconce(f.at(-2.3, near + 0.15, 2.6), f.out());
     lib.sconce(f.at(-6.9, near + 0.15, 2.6), f.out());
     for o in [16.4f32, 19.5, 22.6, 25.7, 28.8] {
@@ -281,10 +325,20 @@ fn seat_window(lib: &mut Library, f: &RoomFrame, s: f32, wall: &Spot) {
 
 /// A poet's portrait `size` wide and high in a moulded gilt frame, its middle `y` up
 /// the wall at `at` (on the wall's face, facing into the room); `k` picks the sitter.
-/// The small ones are ovals.
-fn portrait(lib: &mut Library, at: &Spot, (w, h): (f32, f32), y: f32, k: usize) {
+/// The small ones are ovals. A brass lamp over it lights when `lit` comes, in turn by
+/// `k`.
+fn portrait(lib: &mut Library, lit: Finish, at: &Spot, (w, h): (f32, f32), y: f32, k: usize) {
     let oval = h < 1.0;
     let bar = 0.09;
+    picture_lamp(
+        lib,
+        at,
+        w,
+        y + h * 0.5 + bar,
+        Awaits::new(lit, Change::Kindles { dim: 0.08 })
+            .after(1.5 + 0.35 * k as f32)
+            .over(1.2),
+    );
     // The frame's section, from its outer edge inward (x) and out from the wall (y): a
     // flat, a bead, a hollow, a raised inner lip, lapping the canvas.
     let profile = [
@@ -419,6 +473,45 @@ fn portrait(lib: &mut Library, at: &Spot, (w, h): (f32, f32), y: f32, k: usize) 
     }
 }
 
+/// A brass picture lamp over a portrait `w` wide whose frame's top is `top` up the wall
+/// at `at`: a backplate, an arm reaching out, and a hood tipped toward the canvas over
+/// a tube that lights as `lights` says.
+fn picture_lamp(lib: &mut Library, at: &Spot, w: f32, top: f32, lights: Awaits) {
+    let len = (w * 0.7).clamp(0.4, 0.85);
+    let p = |x: f32, y: f32, z: f32| at.at + at.q * Vec3::new(x, y, z);
+    at.block(
+        lib,
+        Vec3::new(0.0, top + 0.15, 0.008),
+        Vec3::new(0.07, 0.1, 0.016),
+        kind::METAL,
+        BRASS,
+    );
+    rod(
+        lib,
+        p(0.0, top + 0.15, 0.015),
+        p(0.0, top + 0.11, 0.21),
+        0.014,
+        0.014,
+        kind::METAL,
+        BRASS,
+    );
+    let along = Quat::from_rotation_z(FRAC_PI_2);
+    let hood = lib.shape(Mesh::cylinder(16));
+    lib.decor(hood.sized(Vec3::new(0.05, len, 0.08)).inst(
+        p(0.0, top + 0.1, 0.22),
+        at.q * Quat::from_rotation_x(0.55) * along,
+        kind::METAL,
+        BRASS,
+    ));
+    let tube = lib.shape(Mesh::cylinder(12)).sized(Vec3::new(0.022, len * 0.92, 0.022));
+    let c = p(0.0, top + 0.065, 0.2);
+    lib.waiting(
+        c,
+        lights,
+        [tube.inst(c, at.q * along, kind::EMISSIVE, [1.0, 0.72, 0.4, 1.8])],
+    );
+}
+
 /// A moulding run round a closed outline in xy (`path`, anticlockwise), its section
 /// `profile` given as points (inward from the outline, out along z) round a closed
 /// outline of its own, mitred at the outline's corners (smooth round a curve): a
@@ -485,8 +578,8 @@ fn lounge(lib: &mut Library, f: &RoomFrame) {
     // A third chair by the left window, with its own lamp.
     armchair(lib, f, (-10.6, SEAT + 1.9), -0.6, [0.3, 0.22, 0.1]);
     floor_lamp(lib, f, -11.7, SEAT + 2.9);
-    lectern(lib, f, -1.85, true);
-    lectern(lib, f, 1.85, false);
+    lectern(lib, f, WORDS, true);
+    lectern(lib, f, -WORDS, false);
 }
 
 /// The low table in the middle of the reading group, with a book and a candle on it.
@@ -542,7 +635,7 @@ fn low_table(lib: &mut Library, f: &RoomFrame, a: f32, o: f32) {
         (0.0, 0.03),
     ];
     let dish = lib.shape(Mesh::lathe(&dish.map(Vec2::from), 24));
-    lib.decor(dish.at(foot, at.q, kind::METAL, [0.55, 0.38, 0.13, 1.0]));
+    lib.decor(dish.at(foot, at.q, kind::METAL, BRASS));
     let wax = lib.shape(Mesh::cylinder(16));
     lib.decor(wax.sized(Vec3::new(0.042, 0.14, 0.042)).inst(
         foot + Vec3::Y * 0.1,
@@ -667,7 +760,6 @@ fn rolled_arm(lib: &mut Library, at: &Spot, p: Vec3, len: f32, cloth: [f32; 4]) 
 fn floor_lamp(lib: &mut Library, f: &RoomFrame, a: f32, o: f32) {
     guard(lib, f, (a - 0.2, a + 0.2), (o - 0.2, o + 0.2), 1.7);
     let at = Spot::new(f, a, o, 0.0);
-    let brass = [0.55, 0.38, 0.13, 1.0];
     let foot = [
         (0.0, 0.0),
         (0.17, 0.0),
@@ -678,11 +770,11 @@ fn floor_lamp(lib: &mut Library, f: &RoomFrame, a: f32, o: f32) {
         (0.0, 0.1),
     ];
     let foot = lib.shape(Mesh::lathe(&foot.map(Vec2::from), 32));
-    lib.decor(foot.at(at.at, at.q, kind::METAL, brass));
+    lib.decor(foot.at(at.at, at.q, kind::METAL, BRASS));
     let stem = lib.shape(Mesh::cylinder(12));
     lib.decor(
         stem.sized(Vec3::new(0.03, 1.45, 0.03))
-            .inst(at.at + Vec3::Y * 0.82, at.q, kind::METAL, brass),
+            .inst(at.at + Vec3::Y * 0.82, at.q, kind::METAL, BRASS),
     );
     let shade = Mesh::lathe(&[Vec2::new(0.2, 0.0), Vec2::new(0.13, 0.27)], 32);
     let shade = lib.shape(shade.two_sided());
@@ -691,7 +783,7 @@ fn floor_lamp(lib: &mut Library, f: &RoomFrame, a: f32, o: f32) {
     lib.decor(
         finial
             .sized(Vec3::splat(0.04))
-            .inst(at.at + Vec3::Y * 1.78, at.q, kind::METAL, brass),
+            .inst(at.at + Vec3::Y * 1.78, at.q, kind::METAL, BRASS),
     );
     lib.light(at.at + Vec3::Y * 1.45, 6.0, [1.0, 0.62, 0.32], 1.0, LightKind::Static);
 }
@@ -786,10 +878,88 @@ fn lectern(lib: &mut Library, f: &RoomFrame, a: f32, words: bool) {
     lib.light(at.at + Vec3::Y * 1.6, 3.5, [1.0, 0.78, 0.45], 0.5, LightKind::Static);
 }
 
+/// A change that changes nothing: for a mover whose own motion is all that waits.
+const STAYS: Change = Change::Shifts {
+    by: Vec3::ZERO,
+    turn: Quat::IDENTITY,
+    scale: 1.0,
+};
+
+/// The rings the cranes circle on once the room is in order: a mover each about the
+/// flock's middle, still until then and easing up to its turn after.
+fn flock(lib: &mut Library, f: &RoomFrame) -> [u32; 2] {
+    let fin = Finish::Room(f.dept);
+    let c = f.at(FLOCK.0, FLOCK.1, 0.0);
+    let mut after = 2.0;
+    RINGS.map(|(_, rate)| {
+        let m = lib.mover(c, Motion::Spin { axis: Vec3::Y, rate }, 0.0, None);
+        lib.awaiting(m, Awaits::new(fin, STAYS).after(after).over(12.0).still());
+        after += 1.0;
+        m
+    })
+}
+
+/// Where a crane flies to in the flock, `(ring, degrees round it, height)`, as it is
+/// before the rings turn, and its turn there: along the way its ring goes round,
+/// banked a little into the turn.
+fn slot(f: &RoomFrame, (ring, deg, y): (usize, f32, f32)) -> (Vec3, Quat) {
+    let t = deg.to_radians();
+    let r = RINGS[ring].0;
+    let c = f.at(FLOCK.0, FLOCK.1, y);
+    let p = f.at(FLOCK.0 + r * libm::cosf(t), FLOCK.1 + r * libm::sinf(t), y);
+    let ahead = Vec3::Y.cross(p - c).normalize();
+    let yaw = Quat::from_rotation_y(libm::atan2f(-ahead.x, -ahead.z));
+    // The wing on the inside of the turn dips.
+    let inside = (yaw * Vec3::X).dot(c - p).signum();
+    (p, yaw * Quat::from_rotation_z(-inside * 0.18))
+}
+
+/// Once the room is in order, `bird` flies from where it is to its place in the flock
+/// (`to`, as `slot` takes it) `after` seconds on, over `secs`, and rides its ring
+/// round. Returns the mover its own movers ride.
+fn takes_off(
+    lib: &mut Library,
+    f: &RoomFrame,
+    rings: [u32; 2],
+    bird: &Crane,
+    to: (usize, f32, f32),
+    (after, secs): (f32, f32),
+) -> u32 {
+    let (p, heading) = slot(f, to);
+    let m = lib.mover(bird.at, Motion::Still, 0.0, Some(rings[to.0]));
+    let fly = Change::Shifts {
+        by: p - bird.at,
+        turn: heading * bird.rot.inverse(),
+        scale: 1.0,
+    };
+    lib.awaiting(m, Awaits::new(Finish::Room(f.dept), fly).after(after).over(secs));
+    m
+}
+
+/// A crane's wings (`parts` 1 to 4), each a mover riding `body`, beating slowly about
+/// its ridge once `a` comes; `k` sets their time.
+fn wings(lib: &mut Library, bird: &Crane, parts: &[Inst; 5], body: u32, a: Awaits, k: f32) {
+    let ridge = bird.at + bird.rot * Vec3::Y * (RIDGE * bird.size);
+    for (side, s) in [-1.0f32, 1.0].into_iter().enumerate() {
+        let beat = Motion::Swing {
+            axis: bird.rot * Vec3::Z * s,
+            amp: 0.3,
+            period: 2.4 + 0.13 * k,
+        };
+        let w = lib.mover(ridge, beat, 0.0, Some(body));
+        lib.awaiting(w, a.still());
+        lib.moving(w, parts[1 + side]);
+        lib.moving(w, parts[3 + side]);
+    }
+}
+
 /// Paper cranes hanging on threads from the ceiling over the lounge, faintly aglow,
 /// each folded from a sheet of its own (pages of verse, one of a song, one of plain
-/// rose paper), swaying a little in the air and turning slowly on their threads.
-fn cranes(lib: &mut Library, f: &RoomFrame) {
+/// rose paper), swaying a little in the air and turning slowly on their threads. Once
+/// the room is in order their threads draw up into the ceiling and, one after another,
+/// they fly to the flock's inner ring (the farthest to its outer), beating their wings.
+fn cranes(lib: &mut Library, f: &RoomFrame, rings: [u32; 2]) {
+    let fin = Finish::Room(f.dept);
     let spots = [
         (-2.0f32, 18.0f32, 3.7f32, 0.4f32),
         (0.6, 17.2, 4.1, 2.0),
@@ -808,8 +978,18 @@ fn cranes(lib: &mut Library, f: &RoomFrame) {
         ([0.95, 0.9, 0.74], Print::Text),
         ([0.9, 0.84, 0.92], Print::Text),
     ];
+    // Each one's place in the flock, round from where it hangs.
+    let slots = [
+        (0, -150.0, 4.2),
+        (0, -90.0, 4.4),
+        (0, -30.0, 4.25),
+        (0, 30.0, 4.45),
+        (0, 150.0, 4.15),
+        (0, 90.0, 4.35),
+        (1, 260.0, 3.7),
+    ];
     let thread = lib.shape(Mesh::cylinder(6));
-    for (k, ((a, o, y, yaw), (tint, print))) in spots.into_iter().zip(papers).enumerate() {
+    for (k, (((a, o, y, yaw), (tint, print)), to)) in spots.into_iter().zip(papers).zip(slots).enumerate() {
         let bird = Crane {
             fold: Fold::Crane,
             at: f.at(a, o, y),
@@ -822,23 +1002,35 @@ fn cranes(lib: &mut Library, f: &RoomFrame) {
         };
         // Hung from the ceiling over its back; it sways from there, and turns about
         // its thread.
-        let back = bird.at + bird.rot * Vec3::Y * 0.017;
+        let back = bird.at + bird.rot * Vec3::Y * (RIDGE * bird.size);
         let hook = Vec3::new(back.x, f.y + RoomFrame::HEIGHT, back.z);
         let k = k as f32;
+        let off = 1.0 + 0.35 * k;
+        let flies = takes_off(lib, f, rings, &bird, to, (off, 4.0));
         let sway = Motion::Swing {
             axis: Quat::from_rotation_y(k * 1.3) * Vec3::X,
             amp: 0.025,
             period: 6.0 + 0.7 * k,
         };
-        let air = lib.mover(hook, sway, k * 1.9, None);
+        let air = lib.mover(hook, sway, k * 1.9, Some(flies));
         let twist = Motion::Swing {
             axis: Vec3::Y,
             amp: 0.35,
             period: 13.0 + 1.6 * k,
         };
         let m = lib.mover(hook, twist, k * 3.1, Some(air));
+        let parts = bird.parts();
+        lib.moving(m, parts[0]);
+        // The thread draws up into the ceiling just before it flies.
+        let cut = Change::Shifts {
+            by: Vec3::ZERO,
+            turn: Quat::IDENTITY,
+            scale: 0.0,
+        };
+        let held = lib.mover(hook, Motion::Still, 0.0, Some(m));
+        lib.awaiting(held, Awaits::new(fin, cut).after(off - 0.5).over(1.0));
         lib.moving(
-            m,
+            held,
             thread.sized(Vec3::new(0.003, hook.y - back.y, 0.003)).inst(
                 (hook + back) * 0.5,
                 Quat::IDENTITY,
@@ -846,8 +1038,121 @@ fn cranes(lib: &mut Library, f: &RoomFrame) {
                 [0.8, 0.76, 0.66, 1.0],
             ),
         );
-        for part in bird.parts() {
-            lib.moving(m, part);
-        }
+        wings(lib, &bird, &parts, m, Awaits::new(fin, STAYS).after(off).over(2.0), k);
     }
+}
+
+/// A crane for each category, folded out of its middle case's top shelf when the
+/// category is done: it flies out with a puff of paper and the sound of its unfolding
+/// to hover, beating its wings, at the mouth of its alcove (the near wall's, before its
+/// cases). Once the room is in order they join the flock's outer ring.
+fn alcove_cranes(lib: &mut Library, f: &RoomFrame, rings: [u32; 2]) {
+    let papers = [
+        ([0.92, 0.88, 0.8], Print::Text),
+        ([0.5, 0.16, 0.2], Print::Dots),
+        ([0.9, 0.86, 0.76], Print::Text),
+        ([0.16, 0.24, 0.42], Print::Waves),
+        ([0.94, 0.9, 0.82], Print::Text),
+        ([0.42, 0.32, 0.12], Print::Stripes),
+        ([0.88, 0.9, 0.86], Print::Text),
+        ([0.95, 0.92, 0.84], Print::Music),
+    ];
+    for (i, cat) in f.categories.clone().enumerate() {
+        let fin = Finish::Category(cat);
+        let faces: Vec<usize> = lib.faces_of(cat).collect();
+        let middle = &lib.faces[faces[faces.len() / 2]];
+        let shelf = middle.center + middle.normal * 0.2 + Vec3::Y * 2.75;
+        let (a, o) = HOVER[i];
+        let at = f.at(a, o, HOVER_Y);
+        // Broadside to the lounge, turned a little toward it, so it is seen whole.
+        let toward = (f.at(FLOCK.0, FLOCK.1, HOVER_Y) - at).normalize();
+        let side = if i % 2 == 0 { 1.0 } else { -1.0 };
+        let facing = Vec3::Y.cross(toward) * side + toward * 0.5;
+        let (tint, print) = papers[i];
+        let bird = Crane {
+            fold: Fold::Crane,
+            at,
+            rot: Quat::from_rotation_y(libm::atan2f(-facing.x, -facing.z)),
+            size: 0.85,
+            raise: 0.15,
+            wrist: -0.2,
+            paper: Paper { tint, print },
+            glow: [1.0, 0.85, 0.6, 0.25],
+        };
+        let k = i as f32;
+        let flies = takes_off(lib, f, rings, &bird, ALCOVE_SLOTS[i], (2.2 + 0.3 * k, 6.0));
+        let hover = Motion::Bob {
+            amp: 0.05,
+            period: 5.5 + 0.4 * k,
+            rock: 0.05,
+        };
+        let m = lib.mover(at, hover, k * 1.3, Some(flies));
+        let folds = Change::Arrives {
+            from: shelf - at,
+            grow: 0.15,
+        };
+        lib.awaiting(m, Awaits::new(fin, folds).after(0.3).over(3.0));
+        let parts = bird.parts();
+        lib.moving(m, parts[0]);
+        wings(
+            lib,
+            &bird,
+            &parts,
+            m,
+            Awaits::new(fin, STAYS).after(0.3).over(2.0),
+            k + 7.0,
+        );
+        lib.sparks(Sparks {
+            kind: kind::PAPER,
+            rgba: [1.0, 0.85, 0.6, 0.15],
+            size: Vec3::new(0.04, 0.002, 0.03),
+            vel: Vec3::Y * 0.4,
+            jitter: Vec3::splat(0.35),
+            lift: 0.05,
+            drag: 1.0,
+            wander: 0.4,
+            life: 2.0,
+            rate: 30.0,
+            lasts: Some(0.8),
+            spread: Vec3::splat(0.25),
+            ..Sparks::burst(fin, shelf)
+        });
+        lib.cue(Cue {
+            finish: fin,
+            delay: 0.3,
+            sound: Sfx::Unfold,
+            at: shelf,
+            volume: 0.45,
+        });
+    }
+}
+
+/// When the room is in order, leaves of paper lift from the open book and tumble up
+/// among gold glints, and the cranes are heard unfolding as they take wing.
+fn pages_lift(lib: &mut Library, f: &RoomFrame) {
+    let fin = Finish::Room(f.dept);
+    let book = f.at(WORDS, MOUTH - 0.55, 1.22);
+    lib.sparks(Sparks::burst(fin, book));
+    lib.sparks(Sparks {
+        kind: kind::PAPER,
+        rgba: [1.0, 0.85, 0.6, 0.2],
+        size: Vec3::new(0.06, 0.002, 0.045),
+        vel: Vec3::Y * 1.1,
+        jitter: Vec3::new(0.35, 0.3, 0.35),
+        lift: 0.15,
+        drag: 0.7,
+        wander: 0.6,
+        life: 3.2,
+        rate: 18.0,
+        lasts: Some(2.5),
+        spread: Vec3::new(0.15, 0.03, 0.12),
+        ..Sparks::burst(fin, book)
+    });
+    lib.cue(Cue {
+        finish: fin,
+        delay: 1.0,
+        sound: Sfx::Unfold,
+        at: f.at(FLOCK.0, FLOCK.1, 3.8),
+        volume: 0.8,
+    });
 }
