@@ -26,6 +26,7 @@ fn item(ui: &mut egui::Ui, text: &str, size: f32) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(text.into(), font.clone(), INK);
     let pad = Vec2::new(size * 1.1, size * 0.2);
     let (rect, resp) = ui.allocate_exact_size(galley.size() + pad * 2.0, egui::Sense::click());
+    ui.ctx().data_mut(|d| d.insert_temp(resp.id, ShowsFocus));
     let lit = resp.hovered() || resp.has_focus();
     let p = ui.painter();
     let at = rect.left_center() + Vec2::new(pad.x, 0.0);
@@ -188,12 +189,15 @@ fn load(ui: &mut egui::Ui, hud: &mut Hud, actions: &mut Vec<HudAction>) {
                         if hud.confirm_delete.as_ref() == Some(&save.path) {
                             return;
                         }
-                        if button(ui, "Delete", DIM).clicked() {
-                            ask = Some(save.path.clone());
-                        }
-                        if button(ui, "Open", GOLD).clicked() {
-                            actions.push(HudAction::Open(s.layout, save.path.clone()));
-                        }
+                        // Open made first, so a pad's focus comes to it before Delete.
+                        ui.horizontal(|ui| {
+                            if button(ui, "Open", GOLD).clicked() {
+                                actions.push(HudAction::Open(s.layout, save.path.clone()));
+                            }
+                            if button(ui, "Delete", DIM).clicked() {
+                                ask = Some(save.path.clone());
+                            }
+                        });
                     });
                 });
                 if hud.confirm_delete.as_ref() == Some(&save.path) {
@@ -204,11 +208,16 @@ fn load(ui: &mut egui::Ui, hud: &mut Hud, actions: &mut Vec<HudAction>) {
                             .color(INK),
                     );
                     ui.horizontal(|ui| {
-                        if button(ui, "Delete", GOLD).clicked() {
-                            actions.push(HudAction::Delete(save.path.clone()));
+                        let k = button(ui, "Keep", GOLD);
+                        // A pad's focus, lost with the Delete pressed to ask, comes to Keep.
+                        if hud.prompts.pad() && ui.memory(|m| m.focused().is_none()) {
+                            k.request_focus();
                         }
-                        if button(ui, "Keep", DIM).clicked() {
+                        if k.clicked() {
                             keep = true;
+                        }
+                        if button(ui, "Delete", DIM).clicked() {
+                            actions.push(HudAction::Delete(save.path.clone()));
                         }
                     });
                 }
@@ -270,7 +279,7 @@ pub(super) fn pause(ctx: &egui::Context, g: &Game, actions: &mut Vec<HudAction>)
         });
 }
 
-pub(super) fn intro(ctx: &egui::Context, actions: &mut Vec<HudAction>) {
+pub(super) fn intro(ctx: &egui::Context, p: Prompts, actions: &mut Vec<HudAction>) {
     shade(ctx, 0.6, 0.6);
     egui::Area::new("intro".into())
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
@@ -283,14 +292,14 @@ pub(super) fn intro(ctx: &egui::Context, actions: &mut Vec<HudAction>) {
                     Thousands of books lie in piles across the floor.\n\n\
                     Tap a book to take it, or hold on a pile to scoop an armful. Then find each book's home: \
                     its category's bookcases (look for the signs), the shelf whose letters take its title, \
-                    and its series' run of outlines in its colour. Click anywhere on the run to file a volume.\n\n\
+                    and its series' run of outlines in its colour. Tap anywhere on the run to file a volume.\n\n\
                     Every book you file earns a lumen ✦. Spend them in the Grimoire to make the work lighter.";
                     // Scrolled on a short screen, so Begin stays in view.
                     let tall = (ctx.content_rect().height() - 140.0).max(160.0);
                     egui::ScrollArea::vertical().max_height(tall).show(ui, |ui| {
                         ui.label(RichText::new(body).font(serif(15.0)).color(INK));
                         ui.add_space(8.0);
-                        controls(ui, "intro keys");
+                        controls(ui, "intro keys", p);
                     });
                     ui.add_space(10.0);
                     ui.vertical_centered(|ui| {
@@ -303,35 +312,11 @@ pub(super) fn intro(ctx: &egui::Context, actions: &mut Vec<HudAction>) {
 }
 
 /// Every control and what it does.
-const KEYS: &[(&str, &str)] = &[
-    ("WASD", "walk"),
-    ("Shift", "hurry"),
-    ("Space", "jump"),
-    ("Mouse", "look"),
-    (
-        "Left click",
-        "tap a book to take it · hold on a pile to scoop · click a run to file",
-    ),
-    ("Right mouse", "hold to toss a group, release to throw"),
-    ("X", "the same for the whole armful"),
-    ("F", "seek the kind of the book or shelf you aim at"),
-    ("R", "sort by department, category or series"),
-    ("1–5", "cast the spells you have learned"),
-    ("G", "post a familiar where you aim, or take one back"),
-    ("Scroll, Q / E", "cycle the active book"),
-    ("Tab", "the Grimoire"),
-    ("M", "music on or off"),
-    ("F3", "frame rate"),
-    ("F11", "fullscreen"),
-    ("F12", "screenshot"),
-    ("Esc", "pause"),
-];
-
-fn controls(ui: &mut egui::Ui, id: &str) {
+fn controls(ui: &mut egui::Ui, id: &str, p: Prompts) {
     egui::Grid::new(id).num_columns(2).spacing([18.0, 3.0]).show(ui, |ui| {
-        for (key, what) in KEYS {
-            ui.label(RichText::new(*key).font(serif(13.0)).color(INK));
-            ui.label(RichText::new(*what).font(serif(13.0)).color(DIM));
+        for (key, what) in p.list() {
+            ui.label(RichText::new(key).font(serif(13.0)).color(INK));
+            ui.label(RichText::new(what).font(serif(13.0)).color(DIM));
             ui.end_row();
         }
     });
@@ -376,6 +361,8 @@ pub(super) fn settings(ctx: &egui::Context, hud: &mut Hud, actions: &mut Vec<Hud
                     ui.separator();
                     ui.add_space(6.0);
                     let tab = hud.settings_tab;
+                    // The keys that change a setting too, named while they are in hand.
+                    let keys = !hud.prompts.pad();
                     let st = &mut hud.settings;
                     let before = st.clone();
                     let tall = (ctx.content_rect().height() * 0.6).max(200.0);
@@ -383,15 +370,15 @@ pub(super) fn settings(ctx: &egui::Context, hud: &mut Hud, actions: &mut Vec<Hud
                         ui.set_min_height(280.0);
                         let grid = egui::Grid::new("settings").num_columns(2).spacing([28.0, 12.0]);
                         grid.show(ui, |ui| match tab {
-                            SettingsTab::Video => video(ui, st),
-                            SettingsTab::Audio => audio(ui, st, &hud.outputs),
+                            SettingsTab::Video => video(ui, st, keys),
+                            SettingsTab::Audio => audio(ui, st, &hud.outputs, keys),
                             SettingsTab::Controls => look(ui, st),
                         });
                         if tab == SettingsTab::Controls {
                             ui.add_space(10.0);
                             ui.separator();
                             ui.add_space(4.0);
-                            controls(ui, "keys");
+                            controls(ui, "keys", hud.prompts);
                         }
                     });
                     if *st != before {
@@ -417,22 +404,37 @@ fn row(ui: &mut egui::Ui, name: &str, key: Option<&str>) {
     });
 }
 
-fn pct(v: &mut f32, range: std::ops::RangeInclusive<f32>) -> egui::Slider<'_> {
-    egui::Slider::new(v, range).custom_formatter(|x, _| format!("{:.0}%", x * 100.0))
+/// A slider, its value beside it as words rather than in a box to type into: one stop
+/// fewer for a pad's focus, and nothing a pad can't fill.
+fn slider(
+    ui: &mut egui::Ui,
+    v: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    shape: impl FnOnce(egui::Slider<'_>) -> egui::Slider<'_>,
+    text: impl Fn(f32) -> String,
+) {
+    ui.horizontal(|ui| {
+        ui.add(shape(egui::Slider::new(&mut *v, range).show_value(false)));
+        ui.label(text(*v));
+    });
 }
 
-fn video(ui: &mut egui::Ui, st: &mut Settings) {
-    row(ui, "Fullscreen", Some("F11"));
+fn pct(ui: &mut egui::Ui, v: &mut f32, range: std::ops::RangeInclusive<f32>) {
+    slider(ui, v, range, |s| s, |x| format!("{:.0}%", x * 100.0));
+}
+
+fn video(ui: &mut egui::Ui, st: &mut Settings, keys: bool) {
+    row(ui, "Fullscreen", keys.then_some("F11"));
     ui.checkbox(&mut st.fullscreen, "");
     ui.end_row();
     row(ui, "Field of view", None);
-    ui.add(egui::Slider::new(&mut st.fov, 55.0..=90.0).suffix("°").integer());
+    slider(ui, &mut st.fov, 55.0..=90.0, |s| s.integer(), |x| format!("{x:.0}°"));
     ui.end_row();
     row(ui, "Head bob while walking", None);
     ui.checkbox(&mut st.head_bob, "");
     ui.end_row();
     row(ui, "Brightness", None);
-    ui.add(pct(&mut st.brightness, 0.6..=1.6));
+    pct(ui, &mut st.brightness, 0.6..=1.6);
     ui.end_row();
     row(ui, "Interface size", None);
     let size = |x: f32| format!("{:.0}%", x * 100.0);
@@ -444,12 +446,12 @@ fn video(ui: &mut egui::Ui, st: &mut Settings) {
             }
         });
     ui.end_row();
-    row(ui, "Show frame rate", Some("F3"));
+    row(ui, "Show frame rate", keys.then_some("F3"));
     ui.checkbox(&mut st.show_fps, "");
     ui.end_row();
 }
 
-fn audio(ui: &mut egui::Ui, st: &mut Settings, outputs: &Outputs) {
+fn audio(ui: &mut egui::Ui, st: &mut Settings, outputs: &Outputs, keys: bool) {
     row(ui, "Output", None);
     ui.vertical(|ui| {
         let system = match &outputs.system {
@@ -483,25 +485,27 @@ fn audio(ui: &mut egui::Ui, st: &mut Settings, outputs: &Outputs) {
     });
     ui.end_row();
     row(ui, "Master volume", None);
-    ui.add(pct(&mut st.master_volume, 0.0..=1.0));
+    pct(ui, &mut st.master_volume, 0.0..=1.0);
     ui.end_row();
-    row(ui, "Music", Some("M"));
+    row(ui, "Music", keys.then_some("M"));
     ui.checkbox(&mut st.music, "");
     ui.end_row();
     row(ui, "Music volume", None);
-    ui.add_enabled(st.music, pct(&mut st.music_volume, 0.0..=1.0));
+    ui.add_enabled_ui(st.music, |ui| pct(ui, &mut st.music_volume, 0.0..=1.0));
     ui.end_row();
     row(ui, "Effects and ambience", None);
-    ui.add(pct(&mut st.effects_volume, 0.0..=1.0));
+    pct(ui, &mut st.effects_volume, 0.0..=1.0);
     ui.end_row();
 }
 
 fn look(ui: &mut egui::Ui, st: &mut Settings) {
     row(ui, "Look speed", None);
-    ui.add(
-        egui::Slider::new(&mut st.look_speed, 0.2..=4.0)
-            .logarithmic(true)
-            .fixed_decimals(2),
+    slider(
+        ui,
+        &mut st.look_speed,
+        0.2..=4.0,
+        |s| s.logarithmic(true),
+        |x| format!("{x:.2}"),
     );
     ui.end_row();
     row(ui, "Invert vertical look", None);

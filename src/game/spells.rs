@@ -82,7 +82,7 @@ impl Game {
         let Some(&u) = SPELLS.get(slot) else { return };
         let (lvl, name) = (self.level(u), upg_def(u).name);
         if lvl == 0 {
-            self.hint = Some((format!("{name} is learned in the Grimoire (Tab)."), 2.0));
+            self.hint = Some((format!("{name} is learned in the Grimoire ([grimoire])."), 2.0));
             return;
         }
         if self.quieted(Magic::Spells, self.player.pos) {
@@ -138,7 +138,10 @@ impl Game {
             .sought()
             .or_else(|| self.active_book().map(|b| (self.group, self.group_of(b))));
         let Some((group, key)) = kind else {
-            self.hint = Some(("Seek a kind first (F at a book or a shelf), or hold one.".into(), 2.0));
+            self.hint = Some((
+                "Seek a kind first ([seek] at a book or a shelf), or hold one.".into(),
+                2.0,
+            ));
             return false;
         };
         let (eye, reach) = (self.player.eye(), echo_reach(lvl));
@@ -185,7 +188,7 @@ impl Game {
         let held = self.active_book().map(|b| self.lib.books[b as usize].series);
         let Some(series) = sought.or(held) else {
             let seek = if self.level(Upg::Fine) > 0 {
-                "sort by series (R) and seek it (F)"
+                "sort by series ([sortby]) and seek it ([seek])"
             } else {
                 "seek it by series (Fine Fingers)"
             };

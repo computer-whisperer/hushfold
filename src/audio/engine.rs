@@ -378,8 +378,6 @@ impl Engine {
         }
     }
 
-    /// Take a command, refusing anything not finite: one NaN in a filter or the
-    /// reverb would silence the mix for good.
     /// Take in what was asked while nothing played the mix: where the listener is,
     /// the gains, the clips. The effects asked for then are passed over, not played
     /// all at once when sound comes back.
@@ -391,6 +389,8 @@ impl Engine {
         }
     }
 
+    /// Take a command, refusing anything not finite: one NaN in a filter or the
+    /// reverb would silence the mix for good.
     fn command(&mut self, c: Cmd) {
         let finite = |v: Vec3| v.is_finite();
         match c {

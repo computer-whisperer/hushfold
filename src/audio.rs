@@ -14,10 +14,11 @@ mod engine;
 mod music;
 mod output;
 
+pub use dsp::SR;
 use engine::{Cmd, Engine};
 use glam::Vec3;
-use output::Output;
 pub use output::{Device, Outputs, Playing};
+use output::{Feed, Output};
 use std::sync::Arc;
 use std::sync::mpsc::{SyncSender, sync_channel};
 
@@ -201,6 +202,8 @@ pub struct Audio {
     out: Option<Output>,
     /// The output last asked for (an id; None: the system's).
     chosen: Option<String>,
+    /// The mix, when it is rendered as the game asks (`taped`) rather than played.
+    tape: Option<Feed>,
 }
 
 impl Audio {
@@ -220,17 +223,43 @@ impl Audio {
             tx: Some(tx),
             out: Some(out),
             chosen,
+            tape: None,
         }
     }
 
-    /// No output device and no synthesis; every play is a no-op. Used by tests.
-    #[cfg(test)]
+    /// Nothing played: the mix is rendered as the game goes (`tape`), to be recorded
+    /// with a clip or let go. Scripted runs' sound, so it is the same each run, and no
+    /// run made for pictures or tests is heard.
+    pub fn taped(seed: u64) -> Self {
+        let (tx, rx) = sync_channel(1024);
+        // The clips at once, so the first effects a clip asks for are in it.
+        let _ = tx.send(Cmd::Banks(Arc::new(clips::Banks::synthesize())));
+        Audio {
+            tx: Some(tx),
+            out: None,
+            chosen: None,
+            tape: Some(Feed::taped(Engine::new(rx, seed))),
+        }
+    }
+
+    /// No output and no synthesis; every play is a no-op. Tests', and
+    /// `HUSHFOLD_AUDIO=none`.
     pub fn silent() -> Self {
         Audio {
             tx: None,
             out: None,
             chosen: None,
+            tape: None,
         }
+    }
+
+    /// The next `frames` frames of a taped mix (`taped`), interleaved stereo at
+    /// `SR`; none from one played on an output.
+    pub fn tape(&mut self, frames: usize) -> Vec<f32> {
+        let Some(feed) = &mut self.tape else {
+            return Vec::new();
+        };
+        (0..frames).flat_map(|_| feed.frame()).collect()
     }
 
     /// Move the sound to the output `chosen` (as for `new`).
@@ -243,9 +272,17 @@ impl Audio {
         self.chosen = chosen;
     }
 
-    /// The outputs as last listed, and where the sound is playing.
+    /// The outputs as last listed, and where the sound is playing (a taped mix's
+    /// as if on the system's output, the settings saying nothing of it).
     pub fn outputs(&self) -> Outputs {
-        self.out.as_ref().map(Output::outputs).unwrap_or_default()
+        match &self.out {
+            Some(out) => out.outputs(),
+            None if self.tape.is_some() => Outputs {
+                playing: Playing::System,
+                ..Outputs::default()
+            },
+            None => Outputs::default(),
+        }
     }
 
     /// Ask for the outputs to be listed again (while they are on show; at most

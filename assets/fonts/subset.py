@@ -42,7 +42,8 @@ CHARS = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcd
 # The HUD: Latin-1 and the common punctuation (anything else falls back to egui's own
 # fonts); its symbols come from the symbol font.
 HUD_CHARS = "".join(map(chr, [*range(0x20, 0x7F), *range(0xA0, 0x100), *range(0x2010, 0x2028), *range(0x2030, 0x203B)]))
-SYMBOL_CHARS = "✦▼"
+# ✦ and ▼ marks; the D-pad's triangles and the PlayStation pad's buttons, in the controls' names.
+SYMBOL_CHARS = "✦▼◀▶▲✕○□△"
 
 # (folder, google/fonts directory, file, axes to instance at, use, upstream repository)
 FACES = [

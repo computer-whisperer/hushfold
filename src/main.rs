@@ -3,13 +3,16 @@
 
 mod audio;
 mod catalog;
+mod controls;
 mod game;
 mod gfx;
 mod hud;
 mod library;
 mod loose;
 mod nav;
+mod pad;
 mod platform;
+mod record;
 mod saves;
 mod scene;
 mod settings;
@@ -53,6 +56,9 @@ struct Running {
     /// Render without waiting for the compositor (`HUSHFOLD_UNPACED`).
     unpaced: bool,
     quit: bool,
+    /// A scripted run (`HUSHFOLD_SCRIPT`): `script` is out of here while a line of it
+    /// runs, and this says so all the while.
+    scripted: bool,
     script: Option<Script>,
     /// Where the saves and settings are.
     data: PathBuf,
@@ -62,6 +68,16 @@ struct Running {
     /// While the title screen is up, the way the view faced when it opened: the view
     /// drifts from there, and is put back before the game is saved or played.
     title_yaw: Option<f32>,
+    pads: pad::Pads,
+    /// The window has the keyboard (the pads are heeded only while it does).
+    focused: bool,
+    /// Whether the mouse's pointer is showing: not while playing, nor while a pad is
+    /// in the player's hands.
+    cursor_shown: bool,
+    /// Where the pointer was last, to tell the mouse being taken up.
+    cursor_at: Option<(f64, f64)>,
+    /// A clip being recorded (scripted runs' `record`).
+    recording: Option<record::Recording>,
 }
 
 struct Opening {
@@ -78,6 +94,28 @@ struct Script {
     idx: usize,
     wait: u32,
     dir: std::path::PathBuf,
+    /// Walking forward (`walk`), until told otherwise.
+    walk: f32,
+    /// A camera move under way (`glide`).
+    glide: Option<Glide>,
+}
+
+/// The view carried from one pose to another, eased in and out, a frame at a time.
+struct Glide {
+    from: (glam::Vec3, f32, f32),
+    to: (glam::Vec3, f32, f32),
+    frames: u32,
+    at: u32,
+}
+
+impl Glide {
+    /// The pose `at` frames in: feet, yaw and pitch.
+    fn pose(&self) -> (glam::Vec3, f32, f32) {
+        let t = self.at as f32 / self.frames.max(1) as f32;
+        let t = t * t * (3.0 - 2.0 * t);
+        let (a, b) = (self.from, self.to);
+        (a.0.lerp(b.0, t), a.1 + (b.1 - a.1) * t, a.2 + (b.2 - a.2) * t)
+    }
 }
 
 #[derive(Default)]
@@ -93,7 +131,6 @@ impl Running {
                 .set_cursor_grab(CursorGrabMode::Locked)
                 .or_else(|_| w.set_cursor_grab(CursorGrabMode::Confined))
                 .is_ok();
-            w.set_cursor_visible(false);
             self.grabbed = ok;
             if !ok {
                 // Still allow play without a grab; the cursor is merely visible.
@@ -101,11 +138,39 @@ impl Running {
             }
         } else {
             let _ = w.set_cursor_grab(CursorGrabMode::None);
-            w.set_cursor_visible(true);
             self.grabbed = false;
         }
         self.input.primary_down = false;
         self.input.toss_down = false;
+        self.input.armful_down = false;
+    }
+
+    /// Esc: from the stacks to the pause screen, and back from any other.
+    fn back(&mut self) {
+        if self.opening.is_some() {
+            return;
+        }
+        match self.hud.screen {
+            Screen::Settings { .. } => self.settings_done(),
+            Screen::Play => {
+                self.save_game();
+                self.show(Screen::Pause);
+            }
+            screen => {
+                if let Some(to) = screen.back() {
+                    self.show(to);
+                }
+            }
+        }
+    }
+
+    /// Tab: the Grimoire, from the stacks or the cheats, and back.
+    fn grimoire(&mut self) {
+        match self.hud.screen {
+            Screen::Play | Screen::Cheats => self.show(Screen::Grimoire),
+            Screen::Grimoire => self.show(Screen::Play),
+            _ => {}
+        }
     }
 
     /// Put `layout` in place of the current library, saved at `path`: the save there if
@@ -191,13 +256,13 @@ impl Running {
 
     /// Persist settings (never from scripted runs, which use the defaults).
     fn save_settings(&self) {
-        if self.script.is_none() {
+        if !self.scripted {
             self.hud.settings.save();
         }
     }
 
     fn playing(&self) -> bool {
-        (self.grabbed || self.script.is_some()) && self.hud.screen == Screen::Play
+        (self.grabbed || self.scripted) && self.hud.screen == Screen::Play
     }
 
     fn on_key(&mut self, code: KeyCode, pressed: bool, event_loop: &ActiveEventLoop) {
@@ -206,34 +271,22 @@ impl Running {
                 return; // key repeat
             }
             self.keys.insert(code);
+            self.use_keys();
         } else {
             self.keys.remove(&code);
+            if code == KeyCode::KeyX {
+                self.input.armful_down = false;
+            }
             return;
         }
-        let screen = self.hud.screen;
         match code {
-            KeyCode::Tab => match screen {
-                Screen::Play | Screen::Cheats => self.show(Screen::Grimoire),
-                Screen::Grimoire => self.show(Screen::Play),
-                _ => {}
-            },
-            KeyCode::F9 => match screen {
+            KeyCode::Tab => self.grimoire(),
+            KeyCode::F9 => match self.hud.screen {
                 Screen::Play | Screen::Grimoire => self.show(Screen::Cheats),
                 Screen::Cheats => self.show(Screen::Play),
                 _ => {}
             },
-            KeyCode::Escape if self.opening.is_none() => match screen {
-                Screen::Settings { .. } => self.settings_done(),
-                Screen::Play => {
-                    self.save_game();
-                    self.show(Screen::Pause);
-                }
-                _ => {
-                    if let Some(to) = screen.back() {
-                        self.show(to);
-                    }
-                }
-            },
+            KeyCode::Escape => self.back(),
             KeyCode::KeyM => {
                 self.hud.settings.music = !self.hud.settings.music;
                 self.apply_settings();
@@ -252,7 +305,10 @@ impl Running {
             KeyCode::KeyR => self.input.regroup = true,
             KeyCode::KeyG => self.input.post = true,
             // Latched so a tap shorter than a frame still tosses.
-            KeyCode::KeyX => self.input.armful_pressed = true,
+            KeyCode::KeyX if self.playing() => {
+                self.input.armful_down = true;
+                self.input.armful_pressed = true;
+            }
             KeyCode::Digit1 => self.input.cast = Some(0),
             KeyCode::Digit2 => self.input.cast = Some(1),
             KeyCode::Digit3 => self.input.cast = Some(2),
@@ -285,11 +341,7 @@ impl Running {
         // Scripted runs step a fixed 60 Hz so `wait N` means N/60 s of game time; the
         // frame rate shown is real either way.
         let real = (now - self.last).as_secs_f32();
-        let dt = if self.script.is_some() {
-            1.0 / 60.0
-        } else {
-            real.min(0.05)
-        };
+        let dt = if self.scripted { 1.0 / 60.0 } else { real.min(0.05) };
         self.last = now;
         self.fps_acc.0 += real;
         self.fps_acc.1 += 1;
@@ -299,7 +351,7 @@ impl Running {
             self.fps_acc = (0.0, 0);
         }
 
-        if self.script.is_some() {
+        if self.scripted {
             self.run_script();
         }
         if self.title_yaw.is_some() {
@@ -307,21 +359,30 @@ impl Running {
         }
         let k = |c| self.keys.contains(&c);
         let playing = self.playing();
-        if self.script.is_some() {
-            // Scripted runs drive movement themselves (`walk`).
+        if let Some(sc) = &self.script {
+            // Scripted runs drive movement themselves (`walk`, and the pad's).
+            (self.input.forward, self.input.strafe, self.input.sprint) = (sc.walk, 0.0, false);
         } else if playing {
             self.input.forward = (k(KeyCode::KeyW) as i32 - k(KeyCode::KeyS) as i32) as f32;
             self.input.strafe = (k(KeyCode::KeyD) as i32 - k(KeyCode::KeyA) as i32) as f32;
             self.input.sprint = k(KeyCode::ShiftLeft) || k(KeyCode::ShiftRight);
-            self.input.armful_down = k(KeyCode::KeyX);
         } else {
             self.input.forward = 0.0;
             self.input.strafe = 0.0;
             self.input.armful_down = false;
             self.input.look = glam::Vec2::ZERO;
         }
+        self.pads(dt);
+        let playing = self.playing();
+        self.hud.spell_pick = self.hud.prompts.pad().then(|| self.spell_picked());
         self.game.update(dt, &self.input, &mut self.audio, playing);
         self.game.update_sound(&mut self.audio);
+        // A scripted run's sound is made in step with its frames (and kept with a clip).
+        let mix = if self.scripted {
+            self.audio.tape((dt * audio::SR as f32).round() as usize)
+        } else {
+            Vec::new()
+        };
         if matches!(self.hud.screen, Screen::Settings { .. }) && self.hud.settings_tab == hud::SettingsTab::Audio {
             self.audio.list_outputs();
             self.hud.outputs = self.audio.outputs();
@@ -346,7 +407,16 @@ impl Running {
         let aspect = self.renderer.aspect();
         self.game.build_instances(aspect);
 
-        let raw = self.egui_state.take_egui_input(&self.renderer.window);
+        let shown = !self.grabbed && !self.hud.prompts.pad();
+        if shown != self.cursor_shown {
+            self.renderer.window.set_cursor_visible(shown);
+            self.cursor_shown = shown;
+        }
+        let mut raw = self.egui_state.take_egui_input(&self.renderer.window);
+        // egui shows what has the keyboard's focus only while the window has it; it is
+        // told so as the game is (scripted runs pass over the window's focus, and have it).
+        raw.focused = self.focused;
+        self.pad_menus(&mut raw);
         let mut actions = Vec::new();
         let out = self.egui_ctx.run_ui(raw, |ui| {
             actions = hud::draw(ui.ctx(), &self.game, &mut self.hud, aspect);
@@ -382,13 +452,18 @@ impl Running {
         // Say where an F12 screenshot went (not a scripted one's: the note would be in
         // the next shot).
         if let Some(shot) = shot
-            && self.script.is_none()
+            && !self.scripted
         {
             let msg = match shot {
                 Ok(path) => format!("Screenshot saved to {}", path.display()),
                 Err(e) => format!("No screenshot: {e}."),
             };
             self.game.hint = Some((msg, 3.0));
+        }
+        if let Some(rec) = &mut self.recording
+            && let Some(pixels) = self.renderer.recorded.take()
+        {
+            rec.frame(&pixels, self.renderer.size(), &mix);
         }
         let render_ms = render_start.elapsed().as_secs_f32() * 1000.0;
         self.hud.cpu_ms = self.hud.cpu_ms * 0.9 + cpu_ms * 0.1;
@@ -461,6 +536,15 @@ impl Running {
     }
 
     fn step_script(&mut self, sc: &mut Script) {
+        if let Some(g) = &mut sc.glide {
+            g.at += 1;
+            let p = &mut self.game.player;
+            (p.pos, p.yaw, p.pitch) = g.pose();
+            p.vel = glam::Vec3::ZERO;
+            if g.at >= g.frames {
+                sc.glide = None;
+            }
+        }
         if sc.wait > 0 {
             sc.wait -= 1;
             return;
@@ -479,6 +563,33 @@ impl Running {
                 }
                 Some("wait") => {
                     sc.wait = num(1) as u32;
+                    return;
+                }
+                // glide x y z yaw pitch frames: from where the view is to that pose (as
+                // `pose`), eased, over that many frames; turn yaw pitch frames: the view
+                // turned by so many degrees where it stands. The script waits for either.
+                Some(c @ ("glide" | "turn")) => {
+                    let p = &self.game.player;
+                    let (at, yaw, pitch, frames) = if c == "glide" {
+                        // The short way round.
+                        let turn = libm::remainderf(num(4).to_radians() - p.yaw, std::f32::consts::TAU);
+                        (glam::Vec3::new(num(1), num(2), num(3)), p.yaw + turn, num(5), num(6))
+                    } else {
+                        (
+                            p.pos,
+                            p.yaw + num(1).to_radians(),
+                            p.pitch.to_degrees() + num(2),
+                            num(3),
+                        )
+                    };
+                    let frames = (frames as u32).max(1);
+                    sc.glide = Some(Glide {
+                        from: (p.pos, p.yaw, p.pitch),
+                        to: (at, yaw, pitch.to_radians()),
+                        frames,
+                        at: 0,
+                    });
+                    sc.wait = frames;
                     return;
                 }
                 // click: a tap (takes one book, or files); press … wait N … release: a hold.
@@ -511,10 +622,12 @@ impl Running {
                 Some("cycle") => self.input.cycle += num(1) as i32,
                 Some("walk") => {
                     // walk <forward> <frames>
-                    self.input.forward = num(1);
+                    sc.walk = num(1);
                     sc.wait = num(2) as u32;
                     return;
                 }
+                // pad press|release <button> | stick left|right <x> <y> | kind <maker>
+                Some("pad") => self.script_pad(&w[1..]),
                 Some("grant") => self.game.lumens += num(1) as u64,
                 Some("buy") => {
                     if let Some(u) = skill_named(w.get(1).copied().unwrap_or("")) {
@@ -601,6 +714,22 @@ impl Running {
                     }
                 }
                 Some("stats") => self.hud.settings.show_fps = w.get(1) == Some(&"on"),
+                // hud off|on: what is drawn over the stacks while playing, for pictures.
+                Some("hud") => self.hud.hidden = w.get(1) == Some(&"off"),
+                // record <name>: a clip, <name>.mkv and <name>.wav, from this frame on
+                // (60 a second of game time) until `stop`.
+                Some("record") => {
+                    self.stop_recording();
+                    let stem = sc.dir.join(w.get(1).copied().unwrap_or("clip"));
+                    match record::Recording::start(&stem, self.renderer.size(), 60, audio::SR) {
+                        Ok(rec) => {
+                            self.recording = Some(rec);
+                            self.renderer.record = true;
+                        }
+                        Err(e) => eprintln!("hushfold: no clip: {e}"),
+                    }
+                }
+                Some("stop") => self.stop_recording(),
                 Some("shot") => {
                     let name = w.get(1).copied().unwrap_or("shot");
                     self.renderer.capture = Some(sc.dir.join(format!("{name}.png")));
@@ -669,10 +798,21 @@ impl Running {
                     };
                     self.open(layout, None);
                 }
-                Some("quit") => std::process::exit(0),
+                Some("quit") => {
+                    self.stop_recording();
+                    std::process::exit(0)
+                }
                 _ => {}
             }
         }
+    }
+}
+
+impl Running {
+    fn stop_recording(&mut self) {
+        // Dropped, its files are finished.
+        self.recording = None;
+        self.renderer.record = false;
     }
 }
 
@@ -740,6 +880,8 @@ impl ApplicationHandler for App {
             idx: 0,
             wait: 10,
             dir: std::env::var("HUSHFOLD_SHOT_DIR").unwrap_or_else(|_| ".".into()).into(),
+            walk: 0.0,
+            glide: None,
         });
         game.save_path = latest.map(|(_, path)| path);
         let loaded = game.load();
@@ -754,6 +896,13 @@ impl ApplicationHandler for App {
         renderer.set_static(&game.lib.static_insts, &game.lib.meshes);
         renderer.set_text(&game.lib.text);
         renderer.set_books(&game.lib.series);
+        // Scripted runs are silent, their sound made in step with them for clips, unless
+        // HUSHFOLD_AUDIO names a way to an output (to try the outputs); `none`: no sound.
+        let audio = match std::env::var("HUSHFOLD_AUDIO").ok().as_deref() {
+            Some("none") => Audio::silent(),
+            None if scripted => Audio::taped(1),
+            _ => Audio::new(settings.output.as_ref().map(|d| d.id.clone())),
+        };
         let egui_ctx = egui::Context::default();
         hud::install_fonts(&egui_ctx);
         egui_ctx.set_visuals(egui::Visuals::dark());
@@ -772,7 +921,7 @@ impl ApplicationHandler for App {
             egui_ctx,
             egui_state,
             game,
-            audio: Audio::new(settings.output.as_ref().map(|d| d.id.clone())),
+            audio,
             hud: Hud {
                 settings,
                 screen: Screen::Play,
@@ -781,6 +930,9 @@ impl ApplicationHandler for App {
                 loading: None,
                 settings_tab: hud::SettingsTab::default(),
                 outputs: Default::default(),
+                prompts: Default::default(),
+                spell_pick: None,
+                hidden: false,
                 fps: 0.0,
                 frame_ms: 0.0,
                 cpu_ms: 0.0,
@@ -795,10 +947,16 @@ impl ApplicationHandler for App {
             scroll_acc: 0.0,
             unpaced: std::env::var_os("HUSHFOLD_UNPACED").is_some(),
             quit: false,
+            scripted,
             script,
             data,
             opening: None,
             title_yaw: None,
+            pads: pad::Pads::new(scripted),
+            focused: true,
+            cursor_shown: true,
+            cursor_at: None,
+            recording: None,
         };
         run.apply_settings();
         if !scripted {
@@ -810,12 +968,13 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         let Some(r) = self.run.as_mut() else { return };
         // Scripted runs are deterministic: ignore the real keyboard and mouse.
-        if r.script.is_some()
+        if r.scripted
             && matches!(
                 event,
                 WindowEvent::KeyboardInput { .. }
                     | WindowEvent::MouseInput { .. }
                     | WindowEvent::MouseWheel { .. }
+                    | WindowEvent::CursorMoved { .. }
                     | WindowEvent::Focused(_)
             )
         {
@@ -834,7 +993,9 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(s) => r.renderer.resize(s.width, s.height),
             WindowEvent::RedrawRequested => r.frame(),
+            WindowEvent::Focused(true) => r.focused = true,
             WindowEvent::Focused(false) => {
+                r.focused = false;
                 // A release that happens in another window never arrives.
                 r.input.toss_down = false;
                 if r.hud.screen == Screen::Play {
@@ -842,6 +1003,14 @@ impl ApplicationHandler for App {
                     r.show(Screen::Pause);
                 }
                 r.keys.clear();
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                // Taken up, not nudged: a pad player's mouse may yet be bumped.
+                let at = (position.x, position.y);
+                if r.cursor_at.is_some_and(|(x, y)| libm::hypot(at.0 - x, at.1 - y) > 6.0) {
+                    r.use_keys();
+                }
+                r.cursor_at = Some(at);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
@@ -854,6 +1023,9 @@ impl ApplicationHandler for App {
                 ..
             } => {
                 let pressed = state == ElementState::Pressed;
+                if pressed {
+                    r.use_keys();
+                }
                 if r.grabbed {
                     r.input.primary_down = pressed;
                     if pressed {
@@ -874,6 +1046,7 @@ impl ApplicationHandler for App {
                 r.input.toss_pressed |= pressed;
             }
             WindowEvent::MouseWheel { delta, .. } if r.playing() => {
+                r.use_keys();
                 // One book per wheel notch (a line) or per 40 px of touchpad travel. Smooth
                 // scrolling reports fractions of either, so accumulate; horizontal is ignored.
                 r.scroll_acc += match delta {
@@ -892,8 +1065,11 @@ impl ApplicationHandler for App {
         let Some(r) = self.run.as_mut() else { return };
         if let DeviceEvent::MouseMotion { delta } = event
             && r.playing()
-            && r.script.is_none()
+            && !r.scripted
         {
+            if libm::hypot(delta.0, delta.1) > 2.0 {
+                r.use_keys();
+            }
             let s = &r.hud.settings;
             let y = if s.invert_look { -delta.1 } else { delta.1 };
             r.input.look += glam::Vec2::new(delta.0 as f32, y as f32) * MOUSE_SENS * s.look_speed;
@@ -907,6 +1083,10 @@ impl ApplicationHandler for App {
                 r.save_settings();
                 event_loop.exit();
                 return;
+            }
+            // Frames may not come while the window is hidden; the pads are read anyway.
+            if !r.focused {
+                r.pads.pass_over();
             }
             // Benchmark switch: render as fast as possible instead of on the compositor's frame callback.
             if r.unpaced {

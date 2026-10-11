@@ -484,9 +484,9 @@ impl Game {
             });
         let Some(i) = riding else {
             let msg = if self.familiars.is_empty() {
-                "Familiars are learned in the Grimoire (Tab)."
+                "Familiars are learned in the Grimoire ([grimoire])."
             } else {
-                "No familiar is riding with you — G at a perch takes one back."
+                "No familiar is riding with you — [post] at a perch takes one back."
             };
             self.hint = Some((msg.into(), 2.5));
             return;
@@ -538,7 +538,7 @@ impl Game {
         self.recall(i);
         self.familiars[i].pos = self.player.eye() + self.player.right() * 0.5;
         let msg = format!(
-            "A {} found nothing to do and came back to you (G posts it).",
+            "A {} found nothing to do and came back to you ([post] posts it).",
             role.name()
         );
         self.hint = Some((msg, 3.0));

@@ -20,8 +20,8 @@ Prebuilt Linux and Windows binaries are on the
 cargo run --release
 ```
 
-On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
-`alsa-lib` on Arch).
+On Linux, building needs the ALSA and udev headers (`libasound2-dev` and
+`libudev-dev` on Debian/Ubuntu, `alsa-lib` and `systemd-libs` on Arch).
 
 ## Controls
 
@@ -46,6 +46,27 @@ On Linux, building needs the ALSA headers (`libasound2-dev` on Debian/Ubuntu,
 | F12 | screenshot to `~/Pictures` (`%USERPROFILE%\Pictures` on Windows); a note says where it went |
 | Esc | pause: resume, settings, save and return to the title screen, or save and quit |
 
+A gamepad plays it all, menus too (Xbox names; PlayStation and Nintendo pads are
+named by their own labels in the prompts):
+
+| | |
+|---|---|
+| Left stick / click it | walk / hurry (until the stick comes back to rest) |
+| Right stick | look |
+| A | jump |
+| RT | take, scoop, file (as the left button) |
+| LT | charge a toss (as the right button) |
+| B | the armful toss (as X) |
+| X / Y | seek / the level you seek at (as F / R) |
+| LB / RB | cycle the active book |
+| D-pad ◀ ▶ / ▲ | choose a spell / cast it |
+| D-pad ▼ | post a familiar, or take one back (as G) |
+| View / Menu | the Grimoire / pause |
+
+In the menus the D-pad or left stick moves from one thing to the next, A presses,
+B goes back, and LB / RB turn the settings' tabs. The prompts name the buttons of
+whatever was touched last, keys or pad; unplugging the pad mid-play pauses the game.
+
 The game opens on a title screen over the library played last: **Continue** plays
 on there, **New Game** begins a fresh save of either library, and **Load** lists
 every save (its library, books home, time played, when it was last played) to
@@ -55,7 +76,7 @@ Windows, one file per game; settings are in `settings.json` beside the folder.
 **Settings** (on the title and pause screens) has three tabs: Video (fullscreen,
 field of view, head bob, brightness, interface size, frame rate), Audio (output,
 master, music on/off and its volume, effects and ambience) and Controls (look speed,
-invert vertical look, and every key). Each applies as it changes. The sound plays
+invert vertical look, and every control, the pad's while it is in hand). Each applies as it changes. The sound plays
 on the system's output unless another is chosen; on Linux the game is a stream of
 the sound server (PulseAudio, or PipeWire's stand-in), so a mixer lists it and can
 move it too.
@@ -196,11 +217,15 @@ all back to use.
   walking and the reading basics at face value). Skill costs are fitted to the purchase schedules
   in `tuning/` (the order and minute each purchase should come) with
   `tuning/retune.py`; see its header.
-- Scripted runs for screenshots and smoke tests:
+- Scripted runs for screenshots, clips and smoke tests:
+  `promo/shoot.sh script.txt out` runs one in a headless sway of its own (no window,
+  data kept apart), or by hand
   `HUSHFOLD_UNPACED=1 HUSHFOLD_SCRIPT=script.txt HUSHFOLD_SHOT_DIR=out cargo run --release`.
   Scripted runs use a fixed 60 Hz step and default settings, and keep their saves
   apart from the player's: in `HUSHFOLD_SCRIPT_DATA` if set, else a temporary
-  directory. They start playing a fresh, unsaved Hall unless `HUSHFOLD_LIBRARY=great`. Commands
+  directory. They play no sound: theirs is made in step with their frames, for
+  their clips (`HUSHFOLD_AUDIO=server|device` plays it, to try the outputs;
+  `HUSHFOLD_AUDIO=none`, in any run, makes none at all). They start playing a fresh, unsaved Hall unless `HUSHFOLD_LIBRARY=great`. Commands
   (one per line): `pose x y z yaw pitch`, `wait frames`, `walk fwd frames`,
   `click` (a tap), `press` / `release` (hold and release the left button),
   `cycle n`, `charge [all]` / `throw` (hold and release the toss; `all`: the armful toss, X), `seek`, `regroup`,
@@ -212,7 +237,11 @@ all back to use.
   named as in `settings.json`, for this run), `outputs` (the sound's outputs as
   last listed, and list them again),
   `act continue|new hall|new great|open n|delete n|title` (as the menus do; `n`: the
-  nth save listed), `stats on|off`, `shot name`, `print` (includes where a charging
+  nth save listed), `pad press|release a|b|x|y|lb|rb|lt|rt|ls|rs|view|menu|up|down|left|right`,
+  `pad stick left|right x y`, `pad kind xbox|playstation|nintendo` (a gamepad, as a
+  player's would play), `stats on|off`, `hud off|on` (nothing drawn over the stacks),
+  `shot name`, `record name` … `stop` (a clip from that frame: `name.mkv`, through
+  ffmpeg, and its sound, `name.wav`), `print` (includes where a charging
   toss would land), `printactive`, `quit`. `fill` and `take` pull books from
   anywhere in the piles, which then settle.
 

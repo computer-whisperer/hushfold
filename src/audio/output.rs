@@ -57,6 +57,9 @@ pub struct Feed {
     at: usize,
     /// When a block was last rendered.
     rendered: Instant,
+    /// Read by an output as it plays, and so to catch up after a while unheard;
+    /// not when taped (`Audio::taped`), read in step with the game however slowly.
+    live: bool,
 }
 
 /// Longer than any output waits between asks: nothing is playing the mix.
@@ -69,13 +72,23 @@ impl Feed {
             block: [0.0; BLOCK * 2],
             at: BLOCK * 2,
             rendered: Instant::now(),
+            live: true,
+        }
+    }
+
+    pub fn taped(engine: Engine) -> Self {
+        Feed {
+            live: false,
+            ..Feed::new(engine)
         }
     }
 
     /// The next frame, left and right, at `SR`.
     pub fn frame(&mut self) -> [f32; 2] {
         if self.at == self.block.len() {
-            self.idle();
+            if self.live {
+                self.idle();
+            }
             self.engine.render(&mut self.block);
             self.rendered = Instant::now();
             self.at = 0;

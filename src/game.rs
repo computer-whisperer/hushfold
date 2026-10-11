@@ -119,7 +119,7 @@ impl Tier {
             Tier::Moving => "Moving many books a long way, roughly.",
             Tier::Filing => "Putting books exactly in their place.",
             Tier::Familiars => "Paper helpers that work where you post them.",
-            Tier::Spells => "Bursts of help, each with its own recharge; cast with the number keys.",
+            Tier::Spells => "Bursts of help, each with its own recharge; cast with [cast].",
         }
     }
 }
@@ -218,17 +218,17 @@ pub fn upg_def(u: Upg) -> UpgDef {
         ),
         Upg::Sift => (
             "Sifting Touch",
-            "Press F at a book to seek its kind: a held scoop then takes only those books, from any depth. Each level scoops wider.",
+            "Press [seek] at a book to seek its kind: a held scoop then takes only those books, from any depth. Each level scoops wider.",
             Tier::Moving,
         ),
         Upg::Broad => (
             "Broad Strokes",
-            "Press R to seek by department: scoop and toss whole departments at once.",
+            "Press [sortby] to seek by department: scoop and toss whole departments at once.",
             Tier::Moving,
         ),
         Upg::Fine => (
             "Fine Fingers",
-            "Press R to seek by series: scoop and toss a single series.",
+            "Press [sortby] to seek by series: scoop and toss a single series.",
             Tier::Moving,
         ),
         Upg::LongToss => ("Long Toss", "Throw harder, and the books scatter less.", Tier::Moving),
@@ -257,12 +257,12 @@ pub fn upg_def(u: Upg) -> UpgDef {
         ),
         Upg::Shelver => (
             "Shelver",
-            "A paper crane that rides with you until you post it (G). It files loose books lying near its post whose shelves are close by.",
+            "A paper crane that rides with you until you post it ([post]). It files loose books lying near its post whose shelves are close by.",
             Tier::Familiars,
         ),
         Upg::Courier => (
             "Courier",
-            "A paper swift that carries loose books lying near its post (G) to a shelver that can file them, or else to their room.",
+            "A paper swift that carries loose books lying near its post ([post]) to a shelver that can file them, or else to their room.",
             Tier::Familiars,
         ),
         Upg::Wings => (
@@ -982,7 +982,7 @@ impl Game {
         if let Some(role) = role {
             self.fit_familiars(role);
             let msg = format!(
-                "Your {} rides with you: aim at the floor and press G to post it.",
+                "Your {} rides with you: aim at the floor and press [post] to post it.",
                 role.name()
             );
             self.hint = Some((msg, 4.0));
@@ -1578,7 +1578,7 @@ impl Game {
     fn press_seek(&mut self, audio: &mut Audio) {
         if self.level(Upg::Sift) == 0 {
             self.hint = Some((
-                "Seeking is learned with Sifting Touch, in the Grimoire (Tab).".into(),
+                "Seeking is learned with Sifting Touch, in the Grimoire ([grimoire]).".into(),
                 2.0,
             ));
             return;

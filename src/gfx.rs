@@ -503,6 +503,9 @@ pub struct Renderer {
     /// When set, the next frame is also written to this PNG path; `render` returns
     /// how that went.
     pub capture: Option<std::path::PathBuf>,
+    /// Every frame is copied out (as RGBA rows) into `recorded`, for a clip.
+    pub record: bool,
+    pub recorded: Option<Vec<u8>>,
     can_capture: bool,
     /// Diagnostics: time blocked acquiring the swapchain image, and when `sync_gpu`, GPU
     /// time for the frame and for its scene pass (from timestamps where the adapter
@@ -1148,6 +1151,8 @@ impl Renderer {
             targets,
             egui,
             capture: None,
+            record: false,
+            recorded: None,
             can_capture,
             acquire_ms: 0.0,
             gpu_ms: 0.0,
@@ -1281,7 +1286,13 @@ impl Renderer {
         self.config.width as f32 / self.config.height.max(1) as f32
     }
 
-    fn save_capture(&self, path: &std::path::Path, buf: &wgpu::Buffer, row: u32) -> Result<(), String> {
+    /// The size of the frames drawn.
+    pub fn size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
+    }
+
+    /// The frame copied into `buf` (rows `row` bytes apart), as RGBA rows.
+    fn read_capture(&self, buf: &wgpu::Buffer, row: u32) -> Vec<u8> {
         let (w, h) = (self.config.width, self.config.height);
         buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
         let _ = self.device.poll(wgpu::PollType::Wait {
@@ -1304,12 +1315,17 @@ impl Renderer {
                 }
             }
         }
+        pixels
+    }
+
+    fn save_capture(&self, path: &std::path::Path, pixels: &[u8]) -> Result<(), String> {
+        let (w, h) = (self.config.width, self.config.height);
         let result = std::fs::File::create(path).map_err(|e| e.to_string()).and_then(|f| {
             let mut enc = png::Encoder::new(std::io::BufWriter::new(f), w, h);
             enc.set_color(png::ColorType::Rgba);
             enc.set_depth(png::BitDepth::Eight);
             let mut wr = enc.write_header().map_err(|e| e.to_string())?;
-            wr.write_image_data(&pixels).map_err(|e| e.to_string())
+            wr.write_image_data(pixels).map_err(|e| e.to_string())
         });
         match &result {
             Ok(()) => eprintln!("hushfold: saved {}", path.display()),
@@ -1674,7 +1690,8 @@ impl Renderer {
             }
             self.can_capture
         });
-        let readback = capture.as_ref().map(|_| {
+        let copy = capture.is_some() || (self.record && self.can_capture);
+        let readback = copy.then(|| {
             let (w, h) = (self.config.width, self.config.height);
             let row = (w * 4).div_ceil(256) * 256;
             let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1728,8 +1745,14 @@ impl Renderer {
                 self.gpu_scene_ms = ms(ticks[0], ticks[1]);
             }
         }
-        if let (Some(path), Some((buf, row))) = (capture, readback) {
-            captured = Some(self.save_capture(&path, &buf, row).map(|()| path));
+        if let Some((buf, row)) = readback {
+            let pixels = self.read_capture(&buf, row);
+            if let Some(path) = capture {
+                captured = Some(self.save_capture(&path, &pixels).map(|()| path));
+            }
+            if self.record {
+                self.recorded = Some(pixels);
+            }
         }
         self.window.pre_present_notify();
         frame.present();

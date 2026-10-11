@@ -1,6 +1,7 @@
 //! egui HUD: crosshair, armful, active-book card, signposts, toasts, Grimoire.
 
 use crate::catalog;
+use crate::controls::{Act, Prompts};
 use crate::game::{Aim, Cheat, ECHO_SPEED, Game, Group, SPELLS, Tier, UPGRADES, Upg, spell_times, upg_costs, upg_def};
 use crate::library::{Finish, LabelKind, Layout, ROWS};
 use crate::saves::Save;
@@ -23,6 +24,12 @@ pub struct Hud {
     pub settings_tab: SettingsTab,
     /// The sound's outputs, for the settings screen (kept up while its Audio tab is up).
     pub outputs: crate::audio::Outputs,
+    /// Whose names the prompts give: the keys', or the pad's in the player's hands.
+    pub prompts: Prompts,
+    /// The spell the pad's D-pad casts, by its hotbar slot (while the pad is in hand).
+    pub spell_pick: Option<usize>,
+    /// Nothing drawn over the stacks while playing (scripts' `hud off`, for pictures).
+    pub hidden: bool,
     pub fps: f32,
     pub frame_ms: f32,
     pub cpu_ms: f32,
@@ -109,8 +116,9 @@ fn serif(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("serif".into()))
 }
 
-/// The symbols the HUD's face lacks (✦, ▼), from Noto Sans Symbols 2.
-const SYMBOLS: &[u8] = include_bytes!("../assets/fonts/NotoSansSymbols2/NotoSansSymbols2-Subset.ttf");
+/// The symbols the HUD's face lacks (✦, ▼, and the D-pad's and PlayStation pad's marks in
+/// `controls`), from Noto Sans Symbols 2 (`assets/fonts/subset.py` keeps just those).
+pub(crate) const SYMBOLS: &[u8] = include_bytes!("../assets/fonts/NotoSansSymbols2/NotoSansSymbols2-Subset.ttf");
 
 /// The HUD is set in Libre Caslon Text, the Caslon of the books' spines, with
 /// `SYMBOLS` for what it lacks: both built in (assets/fonts/<Family>: their licences
@@ -172,6 +180,9 @@ fn panel_frame() -> egui::Frame {
 
 pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<HudAction> {
     let mut actions = Vec::new();
+    if hud.hidden && hud.screen == Screen::Play {
+        return actions;
+    }
     if hud.settings.show_fps {
         stats(ctx, g, hud);
     }
@@ -183,18 +194,44 @@ pub fn draw(ctx: &egui::Context, g: &Game, hud: &mut Hud, aspect: f32) -> Vec<Hu
         Screen::Play => play(ctx, g, hud, aspect),
         Screen::Grimoire => {
             play(ctx, g, hud, aspect);
-            grimoire(ctx, g, &mut actions);
+            grimoire(ctx, g, hud.prompts, &mut actions);
         }
         Screen::Cheats => {
             play(ctx, g, hud, aspect);
             cheat_window(ctx, g, &mut actions);
         }
         Screen::Title(page) => menus::title(ctx, hud, page, &mut actions),
-        Screen::Intro => menus::intro(ctx, &mut actions),
+        Screen::Intro => menus::intro(ctx, hud.prompts, &mut actions),
         Screen::Pause => menus::pause(ctx, g, &mut actions),
         Screen::Settings { .. } => menus::settings(ctx, hud, &mut actions),
     }
+    if hud.prompts.pad() {
+        focus_ring(ctx);
+    }
     actions
+}
+
+/// Marks a widget that shows itself when it has the focus (`menus::item`).
+#[derive(Clone, Copy)]
+struct ShowsFocus;
+
+/// A ring round what has the focus, for a player on a pad (unless it shows that
+/// itself).
+fn focus_ring(ctx: &egui::Context) {
+    let Some(id) = ctx.memory(|m| m.focused()) else {
+        return;
+    };
+    if ctx.data(|d| d.get_temp::<ShowsFocus>(id)).is_some() {
+        return;
+    }
+    // Only as much of it as is in view.
+    let Some(r) = ctx.read_response(id).filter(|r| r.interact_rect.is_positive()) else {
+        return;
+    };
+    let layer = egui::LayerId::new(egui::Order::Foreground, "focus".into());
+    let ring = Stroke::new(1.5_f32, GOLD);
+    ctx.layer_painter(layer)
+        .rect_stroke(r.interact_rect.expand(3.0), 4.0, ring, egui::StrokeKind::Outside);
 }
 
 /// What is drawn over the stacks while playing.
@@ -203,6 +240,8 @@ fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
     let vp = g.view_proj(aspect);
     let painter = ctx.layer_painter(egui::LayerId::background());
     let eye = g.player.eye();
+    let p = hud.prompts;
+    let seek = p.name(Act::Seek);
 
     // ---- Signposts: the signs of the categories (and departments) you carry, from
     // anywhere on your floor (dimmed when hidden). Signs are otherwise lettered in the
@@ -407,9 +446,9 @@ fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
             } else if g.level(Upg::Sift) == 0 {
                 "tap take · hold scoop".to_string()
             } else if g.sought().is_some_and(|(group, key)| group.of(&g.lib, book) == key) {
-                "tap take · hold scoop · F stop seeking".to_string()
+                format!("tap take · hold scoop · {seek} stop seeking")
             } else {
-                format!("tap take · hold scoop · F seek {}", g.group.name())
+                format!("tap take · hold scoop · {seek} seek {}", g.group.name())
             };
             let name = &g.lib.catalog.categories[cat].name;
             let many = g.lib.catalog.departments.len() > 2;
@@ -441,9 +480,9 @@ fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
                     if g.level(Upg::Sift) > 0 {
                         let book = g.lib.series_books[r.series as usize][0];
                         if g.sought().is_some_and(|(group, key)| group.of(&g.lib, book) == key) {
-                            extra.push_str(" · F stop seeking");
+                            extra.push_str(&format!(" · {seek} stop seeking"));
                         } else {
-                            extra.push_str(&format!(" · F seek {}", g.group.name()));
+                            extra.push_str(&format!(" · {seek} seek {}", g.group.name()));
                         }
                     }
                     tip = Some((format!("{} · {}/{} shelved{}", s.title, done, s.volumes, extra), col));
@@ -466,7 +505,10 @@ fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
         Aim::Familiar(i) => {
             painter.circle_stroke(c, 7.0, Stroke::new(1.5_f32, GOLD));
             if let Some((role, _)) = g.familiars().nth(i) {
-                tip = Some((format!("A {} at its post · G take it back", role.name()), INK));
+                tip = Some((
+                    format!("A {} at its post · {} take it back", role.name(), p.name(Act::Post)),
+                    INK,
+                ));
             }
         }
         Aim::Clock(k) => {
@@ -593,11 +635,11 @@ fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
                     g.group.name()
                 );
                 if g.groups().len() > 1 {
-                    status.push_str(" (R)");
+                    status.push_str(&format!(" ({})", p.name(Act::SortBy)));
                 }
                 let riding = g.familiars().filter(|&(_, posted)| !posted).count();
                 if riding > 0 {
-                    status.push_str(&format!("  ·  {riding} riding (G posts)"));
+                    status.push_str(&format!("  ·  {riding} riding ({} posts)", p.name(Act::Post)));
                 }
                 ui.label(RichText::new(status).font(serif(13.0)).color(DIM));
                 if let Some((group, key)) = g.sought() {
@@ -605,7 +647,8 @@ fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Seeking").font(serif(13.0)).color(DIM));
                         ui.label(RichText::new(name).font(serif(14.0)).color(col));
-                        ui.label(RichText::new("(F at nothing stops)").font(serif(12.0)).color(DIM));
+                        let stop = format!("({seek} at nothing stops)");
+                        ui.label(RichText::new(stop).font(serif(12.0)).color(DIM));
                     });
                 }
                 if let Some(b) = g.active_book() {
@@ -682,9 +725,18 @@ fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
                     for (i, u) in learned {
                         let (lasts, recharge) = spell_times(u, g.level(u));
                         let (left, wait) = (g.spell_left[i], g.spell_wait[i]);
-                        panel_frame().show(ui, |ui| {
+                        // The one the pad's D-pad casts is ringed; the keys cast each by its number.
+                        let mut frame = panel_frame();
+                        if hud.spell_pick == Some(i) {
+                            frame = frame.stroke(Stroke::new(1.5_f32, GOLD));
+                        }
+                        frame.show(ui, |ui| {
                             let ready = wait <= 0.0 || left > 0.0;
-                            let name = format!("{}  {}", i + 1, upg_def(u).name);
+                            let name = if hud.spell_pick.is_some() {
+                                upg_def(u).name.to_string()
+                            } else {
+                                format!("{}  {}", i + 1, upg_def(u).name)
+                            };
                             ui.label(
                                 RichText::new(name)
                                     .font(serif(14.0))
@@ -715,13 +767,27 @@ fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
             // Wrapped clear of the armful's card on a narrow screen (or a big interface).
             ui.set_max_width((screen.x - 460.0).max(220.0));
             let m = if hud.settings.music { "on" } else { "off" };
-            ui.label(
-                RichText::new(format!(
+            let n = |act| p.name(act);
+            let keys = if p.pad() {
+                format!(
+                    "{} tap take · hold scoop · tap a run file · {} toss · {} throw all · {} seek · {} sort by · {} spell, {} cast · {} cycle · {} Grimoire · {} pause",
+                    n(Act::Take),
+                    n(Act::Toss),
+                    n(Act::Armful),
+                    n(Act::Seek),
+                    n(Act::SortBy),
+                    n(Act::Choose),
+                    n(Act::Cast).trim_start_matches("D-pad "),
+                    n(Act::Cycle),
+                    n(Act::Grimoire),
+                    n(Act::Pause),
+                )
+            } else {
+                format!(
                     "Tap take · Hold scoop · Click a run file · Hold right toss · X throw all · F seek · R sort by · 1–5 spells · Scroll cycle · Tab Grimoire · M music ({m}) · Esc pause"
-                ))
-                .font(serif(12.0))
-                .color(DIM.gamma_multiply(0.8)),
-            );
+                )
+            };
+            ui.label(RichText::new(keys).font(serif(12.0)).color(DIM.gamma_multiply(0.8)));
         });
 
     // ---- Toasts and hints.
@@ -736,7 +802,7 @@ fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
                     let a = (t.age / 0.3).min(1.0) * ((life - t.age) / 0.8).clamp(0.0, 1.0);
                     let size = if t.big { 26.0 } else { 17.0 };
                     ui.label(
-                        RichText::new(&t.text)
+                        RichText::new(p.fill(&t.text))
                             .font(serif(size))
                             .color(bright(t.color).gamma_multiply(a)),
                     );
@@ -745,7 +811,7 @@ fn play(ctx: &egui::Context, g: &Game, hud: &Hud, aspect: f32) {
         });
     if let Some((h, t)) = &g.hint {
         let a = t.min(1.0);
-        let galley = painter.layout_no_wrap(h.clone(), serif(15.0), INK.gamma_multiply(a));
+        let galley = painter.layout_no_wrap(p.fill(h), serif(15.0), INK.gamma_multiply(a));
         let r = Rect::from_center_size(c + Vec2::new(0.0, 70.0), galley.size() + Vec2::new(14.0, 6.0));
         painter.rect_filled(r, 4.0, Color32::from_rgba_unmultiplied(10, 8, 6, (150.0 * a) as u8));
         painter.galley(r.min + Vec2::new(7.0, 3.0), galley, INK);
@@ -774,7 +840,7 @@ fn stats(ctx: &egui::Context, g: &Game, hud: &Hud) {
 }
 
 /// The Grimoire (Tab), where lumens buy skills.
-fn grimoire(ctx: &egui::Context, g: &Game, actions: &mut Vec<HudAction>) {
+fn grimoire(ctx: &egui::Context, g: &Game, p: Prompts, actions: &mut Vec<HudAction>) {
     let screen = ctx.content_rect().size();
     let mut open = true;
     egui::Window::new(RichText::new("The Grimoire").font(serif(24.0)).color(GOLD))
@@ -801,16 +867,21 @@ fn grimoire(ctx: &egui::Context, g: &Game, actions: &mut Vec<HudAction>) {
                     }
                     ui.add_space(6.0);
                     ui.label(RichText::new(tier.name()).font(serif(19.0)).color(GOLD));
-                    ui.label(RichText::new(tier.blurb()).font(serif(12.0)).color(DIM).italics());
+                    ui.label(
+                        RichText::new(p.fill(tier.blurb()))
+                            .font(serif(12.0))
+                            .color(DIM)
+                            .italics(),
+                    );
                     ui.separator();
                     for u in skills {
-                        grimoire_entry(ui, g, u, actions);
+                        grimoire_entry(ui, g, u, p, actions);
                     }
                 }
             });
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Press Tab to return to the stacks.")
+                RichText::new(format!("Press {} to return to the stacks.", p.name(Act::Grimoire)))
                     .font(serif(13.0))
                     .color(DIM),
             );
@@ -846,7 +917,7 @@ fn cheat_window(ctx: &egui::Context, g: &Game, actions: &mut Vec<HudAction>) {
                     actions.push(HudAction::Cheat(c));
                 }
             };
-            note(ui, "These change this library's save; Start over (Esc) undoes them.");
+            note(ui, "These change this library's save for good; New Game, on the title screen, begins a fresh one.");
             heading(ui, format!("Lumens  ✦ {}", g.lumens));
             ui.horizontal(|ui| {
                 for n in [1_000, 10_000, 100_000] {
@@ -902,7 +973,7 @@ fn cheat_window(ctx: &egui::Context, g: &Game, actions: &mut Vec<HudAction>) {
 
 /// One skill in the Grimoire: its name, level and blurb, the level it is used at
 /// (once learned; any level up to that, or off), and the button to learn the next.
-fn grimoire_entry(ui: &mut egui::Ui, g: &Game, u: Upg, actions: &mut Vec<HudAction>) {
+fn grimoire_entry(ui: &mut egui::Ui, g: &Game, u: Upg, p: Prompts, actions: &mut Vec<HudAction>) {
     let def = upg_def(u);
     let lvl = g.learned(u);
     let max = upg_costs(g.layout, u).len() as u32;
@@ -915,7 +986,7 @@ fn grimoire_entry(ui: &mut egui::Ui, g: &Game, u: Upg, actions: &mut Vec<HudActi
                 def.name.to_string()
             };
             ui.label(RichText::new(title).font(serif(17.0)).color(INK));
-            ui.label(RichText::new(def.blurb).font(serif(13.0)).color(DIM));
+            ui.label(RichText::new(p.fill(def.blurb)).font(serif(13.0)).color(DIM));
             if lvl > 0 {
                 ui.horizontal(|ui| {
                     // The level in use marked in the progress bars' brown, not egui's blue.

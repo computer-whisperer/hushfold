@@ -504,6 +504,35 @@ semi-physics rather than rigid bodies (see SCALING.md for why):
   is shelved), shelving the library to a fraction (open departments first, then
   those whose veils that lifts; books are credited as if filed, without the
   sparkle), and going to any room's doorway (outside its veil while veiled).
+- **Gamepad** (`pad.rs`, gilrs; `controls.rs` names the controls). The left stick
+  walks (analog), pressed in it hurries until the stick comes back to rest; the
+  right stick looks, squared past a small dead zone so small tilts aim finely,
+  and at a little over half speed while the crosshair is on a loose book or a
+  run (a light stickiness, since a book's spine is a small target for a stick).
+  RT is the left button and LT the right, B the armful toss, X and Y seek and its
+  level, the bumpers cycle, A jumps. Five spells don't fit the D-pad's four
+  ways, so ◀ ▶ choose one (ringed on the hotbar) and ▲ casts it; ▼ posts a
+  familiar. View and Menu are Tab and Esc. In the menus the pad moves egui's
+  focus: up and down as Shift+Tab and Tab, through things in the order they are
+  read (egui's own arrow search looks in a 45° cone, and in the settings' grid of
+  names and settings jumped rows), left and right as the arrows (which move a
+  slider); A is Enter, B goes back, or closes a drop-down's list (and the focus
+  goes back to the drop-down). Nothing has the focus on a fresh screen until the pad
+  is pressed, and that press only brings it up, so no press does something unseen
+  (the review found two A's on the Load page deleting a save when a fresh screen
+  focused its first button, then Delete, at once); the Load page's rows put Open
+  before Delete, and its confirmation Keep before Delete, with the focus on Keep.
+  What takes the focus is ringed and scrolled into view (an AccessKit scroll
+  request). A pad that stops being the one played with (another pressed, or it
+  unplugged) lets go of what it held; while the window hasn't the keyboard the pads
+  are read and passed over, so presses made in another program never land later. The
+  prompts are tokens in the text (`[seek]`), filled in as it is drawn with the
+  names of whatever was touched last: keys, or the pad's (Xbox's, PlayStation's
+  marks, Nintendo's), so a hint given on one reads right on the other. Sliders
+  show their values as words, not in a box to type into that a pad can't fill.
+  Steam Input stands its own pad in for each it handles and lists the real ones
+  in `SDL_GAMECONTROLLER_IGNORE_DEVICES`, which is honoured, or each press would
+  come twice.
 
 ## Progression (Lumens ✦)
 1 per book, +volumes on series completion, +100 per category.
@@ -876,6 +905,12 @@ bells and glints where something magical happens. Everything is synthesised;
   saw neither. cpal 0.18's own PulseAudio host was passed over: it names every
   stream `cpal-pulseaudio-<pid>` and pins even the default output's stream to the
   sink that was the default when it opened.
+- **Scripted runs** play nothing: the mix is rendered in step with their fixed
+  60 Hz frames (`Audio::taped`, a fixed seed, the clips synthesised before the
+  first frame), 735 samples a frame, and written beside a clip's frames while one
+  is recorded; else let go. So a clip's sound is in step with it however slowly
+  its frames are drawn and encoded, and no run made for pictures or tests is
+  heard on the player's speakers.
 
 ### Wanted next (sound)
 - Footsteps by surface (boards, stone, rugs, stairs) and by pace.
